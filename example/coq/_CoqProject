@@ -1,0 +1,8 @@
+-arg -w -arg -notation-overridden
+-arg -w -arg -ambiguous-paths
+-I .
+-R . extra
+
+nbitonic.v
+more_tuple.v
+nsort.v
