@@ -7,3 +7,4 @@ nbitonic.v
 nbatcher.v
 more_tuple.v
 nsort.v
+sort_batcher.v
