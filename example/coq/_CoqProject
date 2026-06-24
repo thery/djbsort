@@ -4,5 +4,6 @@
 -R . extra
 
 nbitonic.v
+nbatcher.v
 more_tuple.v
 nsort.v
