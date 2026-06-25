@@ -70,21 +70,32 @@ Definition level_pairs (N p d : nat) (b : bool) : seq (nat * nat) :=
   [seq (i, i + d) |
      i <- [seq i <- iota 0 N | (i + d < N) && (odd (i %/ p) == b)]].
 
+(* The merge cascade at base distance p, IN sort.c's EXACT ORDER.             *)
+(* For each base position j (p-bit of j clear, lines 40/50), sort.c keeps      *)
+(* x[j+p] live in the register `a` and runs the whole r-loop                   *)
+(*    for (r = q; r > p; r >>= 1) int32_MINMAX(a, x[j+r]);                      *)
+(* i.e. it emits the entire distance chain (j+p, j+r) for r = top, ..., 2p     *)
+(* (largest distance first) for THAT position before moving to the next j.     *)
+(* So the cascade is grouped BY POSITION, then by distance -- not by distance  *)
+(* as a closed-form transcription of Knuth's step M3 would naturally give.     *)
+(* Reproducing this exact order is what makes [me_pairs n] equal to the trace  *)
+(* sort.c performs (verified against example/portable4/sort.ml); a coarser     *)
+(* by-distance grouping yields the same *multiset* but a different *order*,    *)
+(* and a different order is in general a different network.                    *)
+Definition casc_pairs (N top p : nat) : seq (nat * nat) :=
+  flatten
+    [seq [seq (j + p, j + r)
+            | r <- [seq r <- halves top top | (p < r) && (j + r < N)]]
+       | j <- [seq j <- iota 0 N | ~~ odd (j %/ p)]].
+
 (* The full comparator sequence, mirroring sort.c line by line:               *)
 (*   for p = top, top/2, ..., 1:                                              *)
-(*     - base pass (lines 15-22):   distance p, r = 0  (p-bit of i clear)      *)
-(*     - merge cascade (lines 26-56): for q = top, ..., 2p (q > p),            *)
-(*         distance q - p, r = p  (p-bit of i set).                           *)
-(* The register variable `a` in sort.c (lines 29/41/51) just keeps x[j+p]     *)
-(* live across the r-loop; semantically that is the sequential composition    *)
-(* of the individual compare-exchanges, which is what we list here.           *)
+(*     - base pass (lines 15-22):   distance p, p-bit of j clear               *)
+(*     - merge cascade (lines 24-58): per-position chains, as in casc_pairs.   *)
 Definition me_pairs (n : nat) : seq (nat * nat) :=
   let top := me_top n in
-  flatten
-    [seq level_pairs n p p false
-         ++ flatten [seq level_pairs n p (q - p) true
-                       | q <- [seq q <- halves top top | p < q]]
-       | p <- halves top top].
+  flatten [seq level_pairs n p p false ++ casc_pairs n top p
+             | p <- halves top top].
 
 (* -------------------------------------------------------------------------- *)
 (*  Part 2.  Turning the index pairs into a `network`                         *)
@@ -123,9 +134,10 @@ Admitted.
 (* OBLIGATION B.  Every comparator sort.c emits is a genuine compare-exchange  *)
 (* of two in-range wires (a < b < n).  Needed so that `pmap` drops nothing     *)
 (* and every cswap really sorts a pair.                                        *)
-(*   Strategy: unfold me_pairs; in level_pairs the filter keeps only i with    *)
-(*   i + d < N, and d >= 1 in every level (base d = p >= 1; cascade            *)
-(*   d = q - p >= 1 since q > p), giving i < i + d = b < N.                    *)
+(*   Strategy: unfold me_pairs; the base (level_pairs n p p false) keeps only  *)
+(*   j with j + p < n and p >= 1, so j < j + p = b < n; the cascade            *)
+(*   (casc_pairs) emits (j+p, j+r) only when r > p and j + r < n, so           *)
+(*   j + p < j + r = b < n.                                                    *)
 Lemma me_pairs_bounded n :
   all (fun ab => (ab.1 < ab.2) && (ab.2 < n)) (me_pairs n).
 Proof.
@@ -136,28 +148,32 @@ Admitted.
 (* Knuth's Algorithm M for arbitrary n is obtained from the algorithm on       *)
 (* `2^ (mlog n) wires by deleting every comparator that touches a wire >= n.    *)
 (* Because mlog n = ceil(log2 n), the two runs share the SAME `top`, hence the  *)
-(* same ranges of p and q and the same bit-conditions; the generators differ   *)
-(* ONLY in the in-range test (i + d < N).  Filtering the larger list by         *)
-(* (b < n) therefore reproduces the smaller list exactly.                       *)
+(* same range of p, the same cascade distances and the same bit-conditions;     *)
+(* the generators differ ONLY in the in-range tests (j + p < N, j + r < N).     *)
+(* Filtering the larger list by (b < n) therefore reproduces the smaller list   *)
+(* exactly.                                                                     *)
 (*   Strategy: prove me_top n = me_top (`2^ (mlog n)) (both equal              *)
-(*   `2^ (mlog n).-1), then push the filter through flatten / level_pairs;     *)
-(*   the bit-condition `odd (i %/ p)` and the distances are N-independent.     *)
+(*   `2^ (mlog n).-1), then push the filter through flatten / level_pairs /    *)
+(*   casc_pairs; the bit-condition `odd (j %/ p)` and the distances are        *)
+(*   N-independent.                                                            *)
 Lemma me_pairs_prune n :
   me_pairs n = [seq ab <- me_pairs (`2^ (mlog n)) | ab.2 < n].
 Proof.
 (* admitted: me_top agreement + commuting the (b < n) filter through me_pairs *)
 Admitted.
 
-(* OBLIGATION D  (re-use of the verified Batcher network).                     *)
-(* On `2^ m wires the iterative Algorithm M and the recursive odd-even merge    *)
-(* network `batcher m` are the SAME sorting network: each connector of          *)
-(* `batcher m` is a set of pairwise-disjoint compare-exchanges, and me_pairs    *)
-(* lists exactly those, just one-cswap-per-connector and in a sequential order  *)
-(* that has the same effect (disjoint compare-exchanges commute).               *)
-(*   Strategy: prove nfun (int32_sort_network (`2^ m)) =1 nfun (batcher m) by    *)
-(*   induction on m following the odd-even merge recursion, then conclude with  *)
-(*   `sorting_batcher`.  (Alternatively: redo the 0-1 induction of              *)
-(*   `sorted_nfun_batcher` directly on me_pairs.)                               *)
+(* OBLIGATION D  (the iterative network on `2^ m wires sorts).                  *)
+(* On `2^ m wires this is djbsort's iterative merge-exchange network, in        *)
+(* sort.c's EXACT comparator order.  Note it is NOT merely a reordering of      *)
+(* `batcher m`: although the two share the same comparator MULTISET, the        *)
+(* cascade comparators for a fixed base position share the wire j+p, so their   *)
+(* order matters and one may not appeal to "disjoint comparators commute".      *)
+(* This obligation is attacked structurally in batcher_alt.v, which mirrors     *)
+(* nbatcher.v but for the iterative order; see sorting_batcher_alt there.       *)
+(*   Strategy: either a fresh 0-1 induction following the p / per-position      *)
+(*   cascade structure, or prove nfun (int32_sort_network (`2^ m)) =1           *)
+(*   nfun (batcher m) -- which, since both are sorting networks, holds, but     *)
+(*   establishing it requires more than the shared multiset.                    *)
 Lemma sorting_int32_sort_network_e2n m :
   int32_sort_network (`2^ m) \is sorting.
 Proof.
@@ -215,6 +231,14 @@ Qed.
 (*  the axiom states the transcription is faithful.  Discharging this axiom    *)
 (*  against a real C semantics is the only thing between this file and an      *)
 (*  end-to-end proof of djbsort's `int32_sort`.                                *)
+(*                                                                             *)
+(*  The axiom is a LIST equality (same pairs, same ORDER), which is the only   *)
+(*  faithfulness strong enough to transfer sorting: a mere permutation of the  *)
+(*  comparators need not sort the same way.  `me_pairs n` has been defined to  *)
+(*  reproduce sort.c's exact emission order, and this list equality has been   *)
+(*  checked against the executable transcription example/portable4/sort.ml     *)
+(*  (which is itself byte-for-byte sort.c's control flow) for many n, powers   *)
+(*  of two and not.                                                            *)
 
 Parameter sortc_trace : nat -> seq (nat * nat).
 
