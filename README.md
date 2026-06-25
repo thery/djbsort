@@ -41,6 +41,7 @@ sorting network is verified by the Coq development.
 | `sort.c`          | `int32_sort`: sorts an array of signed 32-bit integers in place using Batcher's merge-exchange sorting network (data-independent compare-and-swap order). |
 | `int32_minmax.c`  | The `int32_MINMAX` macro: a branchless, constant-time compare-and-swap that leaves the min in `a` and the max in `b` using only bitwise/arithmetic operations. |
 | `int32_sort.h`    | Public header declaring `int32_sort` and the implementation/version/compiler metadata symbols. |
+| `sort.ml`         | OCaml companion: a line-by-line transcription of `int32_sort` that, instead of sorting an array of length `n`, emits the sequence of compare-exchanges (the `int32_MINMAX` calls) the network performs. Run with `ocaml sort.ml <n>`. |
 
 ## Requirements
 
