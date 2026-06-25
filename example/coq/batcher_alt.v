@@ -1,6 +1,6 @@
 From mathcomp Require Import all_boot order perm algebra.zmodp.
 From mathcomp Require Import zify.
-Require Import more_tuple nsort nbatcher sort_batcher.
+Require Import more_tuple nsort sort_batcher.
 
 Import Order POrderTheory TotalTheory.
 
