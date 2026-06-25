@@ -1,6 +1,6 @@
 From mathcomp Require Import all_boot order perm algebra.zmodp.
 From mathcomp Require Import zify.
-Require Import more_tuple nsort nbatcher.
+Require Import more_tuple nsort.
 
 Import Order POrderTheory TotalTheory.
 
@@ -163,22 +163,22 @@ Proof.
 Admitted.
 
 (* OBLIGATION D  (the iterative network on `2^ m wires sorts).                  *)
-(* On `2^ m wires this is djbsort's iterative merge-exchange network, in        *)
-(* sort.c's EXACT comparator order.  Note it is NOT merely a reordering of      *)
-(* `batcher m`: although the two share the same comparator MULTISET, the        *)
-(* cascade comparators for a fixed base position share the wire j+p, so their   *)
-(* order matters and one may not appeal to "disjoint comparators commute".      *)
-(* This obligation is attacked structurally in batcher_alt.v, which mirrors     *)
-(* nbatcher.v but for the iterative order; see sorting_batcher_alt there.       *)
-(*   Strategy: either a fresh 0-1 induction following the p / per-position      *)
-(*   cascade structure, or prove nfun (int32_sort_network (`2^ m)) =1           *)
-(*   nfun (batcher m) -- which, since both are sorting networks, holds, but     *)
-(*   establishing it requires more than the shared multiset.                    *)
+(* On `2^ m wires this is djbsort's iterative merge-exchange network (Knuth's    *)
+(* Algorithm 5.2.2M), in sort.c's EXACT comparator order.                       *)
+(*   IMPORTANT: this is NOT nbatcher.v's recursive odd-even mergesort network    *)
+(*   `batcher m`, and NOT a reordering of it.  For n = `2^ m >= 8 the two are    *)
+(*   different sorting networks -- different comparator SETS, not just order:    *)
+(*   e.g. at n = 8 sort.c uses the distance-3 comparators (1,4) and (3,6),       *)
+(*   which `batcher 3` lacks, while `batcher 3` repeats (1,2) and (5,6).  So     *)
+(*   `sorting_batcher` cannot be reused here, by permutation or otherwise.       *)
+(*   Strategy: a self-contained 0-1 induction following the p / per-position     *)
+(*   cascade structure of Algorithm M (the proof technique of nbatcher.v is a    *)
+(*   useful template, but its theorem is not a usable lemma).  This obligation   *)
+(*   is set up structurally as sorting_batcher_alt in batcher_alt.v.            *)
 Lemma sorting_int32_sort_network_e2n m :
   int32_sort_network (`2^ m) \is sorting.
 Proof.
-(* admitted: nfun (int32_sort_network (`2^ m)) =1 nfun (batcher m), then
-   exact: sorting_batcher *)
+(* admitted: needs an independent 0-1 induction on Algorithm M's structure *)
 Admitted.
 
 (* OBLIGATION E  (generic "set the suffix to +infinity" pruning).             *)
