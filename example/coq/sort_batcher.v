@@ -52,6 +52,31 @@ Fixpoint top_loop (fuel top n : nat) : nat :=
 
 Definition me_top (n : nat) : nat := top_loop n 1 n.
 
+Lemma me_topE k n : 1 < n -> `2^ k < n <= `2^ k.+1 -> me_top n = `2^ k.
+Proof.
+move=> n_gt1.
+rewrite /me_top.
+set f := (X in top_loop X _ _).
+pose x := 0; rewrite -[X in top_loop _ X _]/(`2^ x).
+have : x <= k by [].
+have : n < `2^ (x + f) by apply: ltn_ne2n.
+have : `2^ x < n by [].
+move: f => f; elim: f x => /= [x| f IH x xLn nL2f xLk /andP[kLn nLk1]].
+  rewrite addn0 => xLn nLx xLk /andP[kLn _].
+  suff -> : x = k by [].
+  suff : k <= x by case: ltngtP xLk.
+  by rewrite ltnW // -ltn_e2n (ltn_trans kLn).
+rewrite ltn_subRL -e2Sn.
+case: ltnP => xLnx.
+  apply: IH => //; first by rewrite addSnnS.
+    case: ltngtP xLk => // xEk _.
+    by move: nLk1; rewrite -e2Sn leqNgt -xEk xLnx.
+  by rewrite kLn.
+case: ltngtP xLk => //; last by move->.
+move=> xLk.
+by move: xLnx; rewrite leqNgt (leq_ltn_trans _ kLn) // leq_e2n.
+Qed.
+
 (* [halves top top] = [:: top; top./2; ...; 1]  (powers of two when top is).  *)
 (* This enumerates the successive values of `p` (and of `q`) in sort.c, which *)
 (* are produced by the `>>= 1` shifts on lines 14, 26, 30.                    *)
@@ -123,39 +148,113 @@ Fixpoint mlog_aux (fuel pw m n : nat) : nat :=
 
 Definition mlog (n : nat) : nat := mlog_aux n 1 0 n.
 
-(* OBLIGATION A.  `2^ (mlog n) is an upper bound for n.                        *)
+Lemma mem_halves_gt0 f x n : n \in halves f x -> 0 < n.
+Proof.
+elim: f x => //= f1 IH  [//|/= x].
+by rewrite in_cons => /orP[/eqP-> //| /IH].
+Qed.
+
+(* OBLIGATION A.  `2^ (mlog n) is an upper bound for n.                       *)
 (*   Strategy: induction on the fuel of mlog_aux, with the invariant          *)
 (*   pw = `2^ m; the loop stops exactly when n <= pw.  Pure arithmetic.       *)
 Lemma n_le_e2n_mlog n : n <= `2^ (mlog n).
 Proof.
-(* admitted: routine induction on mlog_aux with invariant pw = `2^ m *)
-Admitted.
+rewrite /mlog.
+set f := (X in (mlog_aux X _ _ _)); rewrite -[1]/(`2^ 0); set x := 0.
+have : n = f + x by rewrite addn0.
+move: f => f.
+elim: f x => /= [x| f IH x nLfx].
+  rewrite add0n if_same => nLx.
+  by rewrite nLx (ltnW (ltn_ne2n _)).
+case: (leqP n (`2^ x)) => // _.
+by rewrite -e2Sn IH // addnS.
+Qed.
 
-(* OBLIGATION B.  Every comparator sort.c emits is a genuine compare-exchange  *)
-(* of two in-range wires (a < b < n).  Needed so that `pmap` drops nothing     *)
-(* and every cswap really sorts a pair.                                        *)
-(*   Strategy: unfold me_pairs; the base (level_pairs n p p false) keeps only  *)
-(*   j with j + p < n and p >= 1, so j < j + p = b < n; the cascade            *)
-(*   (casc_pairs) emits (j+p, j+r) only when r > p and j + r < n, so           *)
-(*   j + p < j + r = b < n.                                                    *)
+Lemma n_lt_e2n_mlog n : 1 < n -> `2^ (mlog n).-1 < n.
+Proof.
+rewrite /mlog => n_gt1.
+set f := (X in (mlog_aux X _ _ _)); rewrite -[1]/(`2^ 0); set x := 0.
+have : n = f + x by rewrite addn0.
+have : `2^ x.-1 < n by []. 
+move: f => f.
+elim: f x => /= [x xLn| f IH x xLn nLfx].
+  by rewrite add0n if_same => nLx.
+case: (leqP n (`2^ x)) => // x1Ln.
+by rewrite -e2Sn IH -?addSnnS.
+Qed.
+
+Lemma me_top_mlog n : me_top n = `2^ (mlog n).-1.
+Proof.
+have [n_gt1|] := ltnP 1 n; last by case: n => // [] [|].
+apply: me_topE => //.
+rewrite prednK; last first.
+  by have := n_le_e2n_mlog n; case: mlog => //; case: n n_gt1 => // [] [|].
+by rewrite n_lt_e2n_mlog // n_le_e2n_mlog.
+Qed.
+
+Lemma me_top_mlog_log n : me_top (`2^ (mlog n)) = `2^ (mlog n).-1.
+Proof.
+have [n_gt1|] := ltnP 1 n; last by case: n => // [] [|].
+apply: me_topE => //.
+  apply: leq_trans n_gt1 (n_le_e2n_mlog _).
+rewrite prednK; last first.
+  by have := n_le_e2n_mlog n; case: mlog => //; case: n n_gt1 => // [] [|].
+rewrite leqnn andbT ltn_e2n prednK //.
+by have := n_le_e2n_mlog n; case: mlog => //; case: n n_gt1 => // [] [|].
+Qed.
+
+Lemma me_top_mlogE n : me_top (`2^ (mlog n)) = me_top n.
+Proof. by rewrite me_top_mlog_log me_top_mlog. Qed.
+
+Lemma mlog_e2n n : mlog (`2^ n) = n.
+Proof.
+rewrite /mlog.
+set f := (X in (mlog_aux X _ _ _)); rewrite -{1}[1]/(`2^ 0); set x := 0.
+have : if x is x1.+1 then x1 < n else true by [].
+have : `2^ n  = f + x by rewrite addn0.
+elim: {n}f (n) x => /= [n x| f IH n x nLfx].
+  case: x => // [|x1] en2E; first by have := e2n_gt0 n; rewrite en2E.
+  by rewrite ltnNge -ltnS -[X in _ < X]add0n -en2E ltn_ne2n.
+rewrite leq_e2n.
+case: x nLfx => /= [|x1 H1 H2].
+  case: n => //= n1 H _.
+  by rewrite -e2Sn -[1+1](e2Sn 0) IH //; first by rewrite addn1 e2Sn H addn0.
+case: (ltngtP n x1.+1) H2 => // x1Ln _.
+by rewrite -!e2Sn IH // -addSnnS.
+Qed.
+
+(* OBLIGATION B.  Every comparator sort.c emits is a genuine compare-exchange *)
+(* of two in-range wires (a < b < n).  Needed so that `pmap` drops nothing    *)
+(* and every cswap really sorts a pair.                                       *)
+(*   Strategy: unfold me_pairs; the base (level_pairs n p p false) keeps only *)
+(*   j with j + p < n and p >= 1, so j < j + p = b < n; the cascade           *)
+(*   (casc_pairs) emits (j+p, j+r) only when r > p and j + r < n, so          *)
+(*   j + p < j + r = b < n.                                                   *)
 Lemma me_pairs_bounded n :
   all (fun ab => (ab.1 < ab.2) && (ab.2 < n)) (me_pairs n).
 Proof.
-(* admitted: case analysis on the levels, d >= 1 and the (i + d < N) filter *)
-Admitted.
+apply/allP => p /flattenP [/= l /mapP[/= d dE ->]].
+rewrite mem_cat => /orP[|/flattenP[/= l1 /mapP[/= d1 d1E ->]]].
+  move=> /mapP[/= l2].
+  rewrite mem_filter => /andP[/andP[l2dLn /eqP/idP/negP oN l2Ii ->/=]].
+  by rewrite -[X in X < _]addn0 ltn_add2l (mem_halves_gt0 dE).
+move=> /mapP[/= l2].
+rewrite mem_filter => /andP[/andP[l2dLn d1dLn] l2Ii ->/=].
+by rewrite ltn_add2l l2dLn.
+Qed.
 
-(* OBLIGATION C  (the crux: Algorithm M is a pruned power-of-two network).     *)
-(* Knuth's Algorithm M for arbitrary n is obtained from the algorithm on       *)
-(* `2^ (mlog n) wires by deleting every comparator that touches a wire >= n.    *)
-(* Because mlog n = ceil(log2 n), the two runs share the SAME `top`, hence the  *)
-(* same range of p, the same cascade distances and the same bit-conditions;     *)
-(* the generators differ ONLY in the in-range tests (j + p < N, j + r < N).     *)
-(* Filtering the larger list by (b < n) therefore reproduces the smaller list   *)
-(* exactly.                                                                     *)
-(*   Strategy: prove me_top n = me_top (`2^ (mlog n)) (both equal              *)
-(*   `2^ (mlog n).-1), then push the filter through flatten / level_pairs /    *)
-(*   casc_pairs; the bit-condition `odd (j %/ p)` and the distances are        *)
-(*   N-independent.                                                            *)
+(* OBLIGATION C  (the crux: Algorithm M is a pruned power-of-two network).    *)
+(* Knuth's Algorithm M for arbitrary n is obtained from the algorithm on      *)
+(* `2^ (mlog n) wires by deleting every comparator that touches a wire >= n.  *)
+(* Because mlog n = ceil(log2 n), the two runs share the SAME `top`, hence the*)
+(* same range of p, the same cascade distances and the same bit-conditions;   *)
+(* the generators differ ONLY in the in-range tests (j + p < N, j + r < N).   *)
+(* Filtering the larger list by (b < n) therefore reproduces the smaller list *)
+(* exactly.                                                                   *)
+(*   Strategy: prove me_top n = me_top (`2^ (mlog n)) (both equal             *)
+(*   `2^ (mlog n).-1), then push the filter through flatten / level_pairs /   *)
+(*   casc_pairs; the bit-condition `odd (j %/ p)` and the distances are       *)
+(*   N-independent.                                                           *)
 Lemma me_pairs_prune n :
   me_pairs n = [seq ab <- me_pairs (`2^ (mlog n)) | ab.2 < n].
 Proof.
