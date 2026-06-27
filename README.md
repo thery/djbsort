@@ -24,6 +24,12 @@ The Rocq/Coq sources. The build order and namespace (`-R . extra`) are given in
 | `more_tuple.v` | Utility lemmas for sorting networks: tuple/sequence manipulation (e.g. taking even/odd elements), operations on indexed types, and properties of sorted boolean sequences. |
 | `nsort.v`      | Core theory of sorting networks: `connector`s (linking pairs of wires) and `network`s (sequences of connectors), with the proof that a sorting network always returns a sorted tuple (the 0‑1 principle). |
 | `nbitonic.v`   | Formalization of the bitonic sorting network: bitonic sequences, half-cleaner / rhalf-cleaner components, and proofs that the `bsort`/`bfsort` networks sort sequences of up to `2^m` elements. |
+| `nbatcher.v`   | Batcher's odd-even merge sorting network (`batcher m`), defined recursively, with a proof that it sorts (the 0‑1 principle). |
+| `nbjsort.v`    | Knuth's "merge exchange" sort (TAOCP 5.2.2M): the recursive network `knuth_exchange m` and an iterative list version `iknuth_exchange`, both proved to sort. This is the algorithm djbsort's `sort.c` implements (see `Note1.pdf`). |
+| `sort_batcher.v` | Bridge from djbsort's C `int32_sort` to the verified networks: `me_pairs n` models `sort.c`'s exact comparator sequence and `int32_sort_network` the network it runs, reduced to a handful of obligations. |
+| `batcher_alt.v` | The network of `me_pairs` built structurally (`base_net`/`casc_net`/`stage_net`), proved equal to `int32_sort_network` (`batcher_alt_eq`). |
+| `sort_commute.v` | Commutation core: disjoint connectors commute (`cfun_comm`, `nfun_nswap`); used to relate `sort.c`'s network to `nbjsort`'s `knuth_exchange` and so discharge the "sorts on `2^m` wires" obligation via the proven Knuth-exchange result. |
+| `Note1.pdf`    | Note explaining the merge-exchange / Knuth-exchange algorithms formalized in `nbjsort.v`. |
 
 ### Build files
 

@@ -270,10 +270,13 @@ Admitted.
 (*   e.g. at n = 8 sort.c uses the distance-3 comparators (1,4) and (3,6),       *)
 (*   which `batcher 3` lacks, while `batcher 3` repeats (1,2) and (5,6).  So     *)
 (*   `sorting_batcher` cannot be reused here, by permutation or otherwise.       *)
-(*   Strategy: a self-contained 0-1 induction following the p / per-position     *)
-(*   cascade structure of Algorithm M (the proof technique of nbatcher.v is a    *)
-(*   useful template, but its theorem is not a usable lemma).  This obligation   *)
-(*   is set up structurally as sorting_batcher_alt in batcher_alt.v.            *)
+(*   It IS, however, the SAME network as nbjsort.v's Knuth-exchange             *)
+(*   `knuth_exchange m` up to COMMUTATION (same comparators, orders differ only  *)
+(*   by swaps of wire-disjoint connectors).  sort_commute.v exploits exactly     *)
+(*   that: it proves the commutation core and discharges this obligation from    *)
+(*   nbjsort's proven `sorted_nfun_knuth_exchange` (see                          *)
+(*   sort_commute.sorting_int32_sort_network_e2n).  We keep the local copy       *)
+(*   admitted here to avoid an import cycle.                                     *)
 Lemma sorting_int32_sort_network_e2n m :
   int32_sort_network (`2^ m) \is sorting.
 Proof.
