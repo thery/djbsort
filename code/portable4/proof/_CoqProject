@@ -5,5 +5,7 @@
 
 more_tuple.v
 nsort.v
-nbitonic.v
-nbatcher.v
+nbjsort.v
+sort_batcher.v
+batcher_alt.v
+sort_commute.v
