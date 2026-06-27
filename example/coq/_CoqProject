@@ -3,6 +3,7 @@
 -I .
 -R . extra
 
+nbjsort.v
 nbitonic.v
 nbatcher.v
 more_tuple.v

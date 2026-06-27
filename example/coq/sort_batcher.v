@@ -27,8 +27,8 @@ Import Order POrderTheory TotalTheory.
 (*  by accident: the obligations are all true statements (Knuth's analysis).  *)
 (*                                                                            *)
 (*  Defined here:                                                             *)
-(*    me_top n            == sort.c's `top`: the doubling loop of lines 11-12  *)
-(*    me_pairs n          == the list of (a,b) compare-exchanges that sort.c   *)
+(*    me_top n            == sort.c's `top`: the doubling loop of lines 11-12 *)
+(*    me_pairs n          == the list of (a,b) compare-exchanges that sort.c  *)
 (*                           performs, in order, on an array of length n      *)
 (*                           (the closed form of Knuth's Algorithm M)         *)
 (*    pnet n ps           == turn a list of index pairs into a network n      *)
@@ -89,24 +89,24 @@ Fixpoint halves (fuel x : nat) : seq nat :=
 (* i+d still in range, and the p-bit of i equal to `b`.                       *)
 (* This is exactly Knuth's step M3 -- for all i with 0 <= i < N - d and       *)
 (* (i bitand p) = r, compare/exchange (i, i+d) -- using                       *)
-(*    (i bitand p) = 0  <->  ~~ odd (i %/ p)     (r = 0, the base pass)        *)
-(*    (i bitand p) = p  <->     odd (i %/ p)     (r = p, the merge cascade)    *)
+(*    (i bitand p) = 0  <->  ~~ odd (i %/ p)     (r = 0, the base pass)       *)
+(*    (i bitand p) = p  <->     odd (i %/ p)     (r = p, the merge cascade)   *)
 Definition level_pairs (N p d : nat) (b : bool) : seq (nat * nat) :=
   [seq (i, i + d) |
      i <- [seq i <- iota 0 N | (i + d < N) && (odd (i %/ p) == b)]].
 
 (* The merge cascade at base distance p, IN sort.c's EXACT ORDER.             *)
-(* For each base position j (p-bit of j clear, lines 40/50), sort.c keeps      *)
-(* x[j+p] live in the register `a` and runs the whole r-loop                   *)
-(*    for (r = q; r > p; r >>= 1) int32_MINMAX(a, x[j+r]);                      *)
-(* i.e. it emits the entire distance chain (j+p, j+r) for r = top, ..., 2p     *)
-(* (largest distance first) for THAT position before moving to the next j.     *)
-(* So the cascade is grouped BY POSITION, then by distance -- not by distance  *)
-(* as a closed-form transcription of Knuth's step M3 would naturally give.     *)
-(* Reproducing this exact order is what makes [me_pairs n] equal to the trace  *)
-(* sort.c performs (verified against example/portable4/sort.ml); a coarser     *)
-(* by-distance grouping yields the same *multiset* but a different *order*,    *)
-(* and a different order is in general a different network.                    *)
+(* For each base position j (p-bit of j clear, lines 40/50), sort.c keeps     *)
+(* x[j+p] live in the register `a` and runs the whole r-loop                  *)
+(*    for (r = q; r > p; r >>= 1) int32_MINMAX(a, x[j+r]);                    *)
+(* i.e. it emits the entire distance chain (j+p, j+r) for r = top, ..., 2p    *)
+(* (largest distance first) for THAT position before moving to the next j.    *)
+(* So the cascade is grouped BY POSITION, then by distance -- not by distance *)
+(* as a closed-form transcription of Knuth's step M3 would naturally give.    *)
+(* Reproducing this exact order is what makes [me_pairs n] equal to the trace *)
+(* sort.c performs (verified against example/portable4/sort.ml); a coarser    *)
+(* by-distance grouping yields the same *multiset* but a different *order*,   *)
+(* and a different order is in general a different network.                   *)
 Definition casc_pairs (N top p : nat) : seq (nat * nat) :=
   flatten
     [seq [seq (j + p, j + r)
@@ -115,8 +115,8 @@ Definition casc_pairs (N top p : nat) : seq (nat * nat) :=
 
 (* The full comparator sequence, mirroring sort.c line by line:               *)
 (*   for p = top, top/2, ..., 1:                                              *)
-(*     - base pass (lines 15-22):   distance p, p-bit of j clear               *)
-(*     - merge cascade (lines 24-58): per-position chains, as in casc_pairs.   *)
+(*     - base pass (lines 15-22):   distance p, p-bit of j clear              *)
+(*     - merge cascade (lines 24-58): per-position chains, as in casc_pairs.  *)
 Definition me_pairs (n : nat) : seq (nat * nat) :=
   let top := me_top n in
   flatten [seq level_pairs n p p false ++ casc_pairs n top p
@@ -126,9 +126,9 @@ Definition me_pairs (n : nat) : seq (nat * nat) :=
 (*  Part 2.  Turning the index pairs into a `network`                         *)
 (* -------------------------------------------------------------------------- *)
 
-(* A pair (a,b) with a < b < n becomes the connector [cswap a b], which puts   *)
-(* the min on wire a and the max on wire b -- exactly int32_MINMAX(x[a],x[b]). *)
-(* Out-of-range pairs are dropped (they never occur, see me_pairs_bounded).    *)
+(* A pair (a,b) with a < b < n becomes the connector [cswap a b], which puts  *)
+(* the min on wire a and the max on wire b -- exactly int32_MINMAX(x[a],x[b]).*)
+(* Out-of-range pairs are dropped (they never occur, see me_pairs_bounded).   *)
 Definition oconn (n : nat) (ab : nat * nat) : option (connector n) :=
   obind (fun i => omap (fun j => cswap i j) (insub ab.2)) (insub ab.1).
 
