@@ -255,28 +255,95 @@ Qed.
 (*   `2^ (mlog n).-1), then push the filter through flatten / level_pairs /   *)
 (*   casc_pairs; the bit-condition `odd (j %/ p)` and the distances are       *)
 (*   N-independent.                                                           *)
+
+
+Lemma eq_nil_mem (A : eqType) (l : seq A) : l =i [::] -> l = [::].
+Proof. by case: l => // a l /(_ a); rewrite !inE eqxx in_nil. Qed.
+
 Lemma me_pairs_prune n :
   me_pairs n = [seq ab <- me_pairs (`2^ (mlog n)) | ab.2 < n].
 Proof.
-(* admitted: me_top agreement + commuting the (b < n) filter through me_pairs *)
-Admitted.
+rewrite /me_pairs me_top_mlogE.
+rewrite filter_flatten; congr flatten.
+rewrite -map_comp /=.
+apply: eq_map => m /=.
+rewrite filter_cat; congr (_ ++ _).
+  rewrite /level_pairs.
+  rewrite -{2}(subnK (n_le_e2n_mlog n)) addnC iotaD.
+  rewrite filter_map /= !filter_cat.
+  rewrite map_cat.
+  set x := (X in _ = _ ++ X).
+  suff -> : x = [::].
+    rewrite cats0 -filter_map.
+    apply: etrans (_ : 
+       [seq (i, i + m)  | i <- iota 0 n  & 
+             [pred i0 |  i0 + m < `2^ mlog n &
+              odd (i0 %/ m) == false] i && (i + m < n)]
+         = _); last first.
+      elim: iota => //= a l IH.
+      case: (a + m < `2^ mlog n) => //=.
+      case: (odd _ == false) => //=.
+      case: (_ < _) => //=.      
+      by rewrite -IH.
+    congr map.
+    apply: eq_filter => y.  
+    case: ltnP => ymLn //; last by rewrite andbF.
+    rewrite andbT andTb /=.
+    by rewrite (leq_trans ymLn) // n_le_e2n_mlog.
+  apply: eq_nil_mem => /= y.
+  rewrite in_nil; apply/idP => /mapP[/= z].
+  rewrite !mem_filter /= => /andP[zmLn /andP[_]].
+  rewrite mem_iota add0n => /andP[nLz _] _.
+  by move: zmLn; rewrite ltnNge (leq_trans nLz _) // leq_addr.
+rewrite /casc_pairs.
+rewrite -{2}(subnK (n_le_e2n_mlog n)) addnC iotaD.
+rewrite filter_cat map_cat flatten_cat filter_cat.
+set x := (X in _ = _ ++ X).
+suff -> : x = [::].
+  rewrite cats0.
+  set l := [seq j <- iota 0 n  | ~~ odd (j %/ m)].
+  set h := halves _ _.
+  apply: etrans (_ : 
+    [seq (j + m, j + r)  | j <- l,  r <- [seq r <- h  | m < r  & 
+                              (j + r < `2^ mlog n) && (j + r < n)]] = _); last first.
+    elim: l => //= a l IH.
+    rewrite filter_cat; congr (_ ++ _) => //.
+    elim: {IH}h => //= b h IH.
+    case: (m < b) => //=.
+    case: (a + b < _) => //=.
+    by case: (a + b < _) => //=; rewrite IH.
+  congr flatten.
+  apply: eq_map => i.
+  congr map.
+  apply: eq_filter => j.
+  have [ijLn|] := ltnP (i + j) n; last by rewrite !andbF.
+  case: (m < j) => //=; rewrite andbT.
+  by rewrite (leq_trans ijLn) // n_le_e2n_mlog.
+rewrite /x.
+apply: eq_nil_mem => /= y.
+rewrite in_nil; apply/idP.
+  rewrite mem_filter => /andP[yLn /flattenP[/= l]].
+  move=> /mapP[/= z].
+  rewrite mem_filter mem_iota => /and3P[_ nLx _] -> /mapP[/= x1 _ yE].
+  by move: yLn; rewrite yE /= ltnNge (leq_trans nLx) // leq_addr.
+Qed.
 
-(* OBLIGATION D  (the iterative network on `2^ m wires sorts).                  *)
-(* On `2^ m wires this is djbsort's iterative merge-exchange network (Knuth's    *)
-(* Algorithm 5.2.2M), in sort.c's EXACT comparator order.                       *)
-(*   IMPORTANT: this is NOT nbatcher.v's recursive odd-even mergesort network    *)
-(*   `batcher m`, and NOT a reordering of it.  For n = `2^ m >= 8 the two are    *)
-(*   different sorting networks -- different comparator SETS, not just order:    *)
-(*   e.g. at n = 8 sort.c uses the distance-3 comparators (1,4) and (3,6),       *)
-(*   which `batcher 3` lacks, while `batcher 3` repeats (1,2) and (5,6).  So     *)
-(*   `sorting_batcher` cannot be reused here, by permutation or otherwise.       *)
-(*   It IS, however, the SAME network as nbjsort.v's Knuth-exchange             *)
-(*   `knuth_exchange m` up to COMMUTATION (same comparators, orders differ only  *)
-(*   by swaps of wire-disjoint connectors).  sort_commute.v exploits exactly     *)
-(*   that: it proves the commutation core and discharges this obligation from    *)
-(*   nbjsort's proven `sorted_nfun_knuth_exchange` (see                          *)
-(*   sort_commute.sorting_int32_sort_network_e2n).  We keep the local copy       *)
-(*   admitted here to avoid an import cycle.                                     *)
+(* OBLIGATION D  (the iterative network on `2^ m wires sorts).                *)
+(* On `2^ m wires this is djbsort's iterative merge-exchange network (Knuth's *)
+(* Algorithm 5.2.2M), in sort.c's EXACT comparator order.                     *)
+(*   IMPORTANT: this is NOT nbatcher.v's recursive odd-even mergesort network *)
+(*   `batcher m`, and NOT a reordering of it.  For n = `2^ m >= 8 the two are *)
+(*   different sorting networks -- different comparator SETS, not just order: *)
+(*   e.g. at n = 8 sort.c uses the distance-3 comparators (1,4) and (3,6),    *)
+(*   which `batcher 3` lacks, while `batcher 3` repeats (1,2) and (5,6).  So  *)
+(*   `sorting_batcher` cannot be reused here, by permutation or otherwise.    *)
+(*   It IS, however, the SAME network as nbjsort.v's Knuth-exchange           *)
+(*   `knuth_exchange m` up to COMMUTATION (same comparators, orders differ    *)
+(*   only by swaps of wire-disjoint connectors).  sort_commute.v exploits     *)
+(*   exactly that: it proves the commutation core and discharges this         *)
+(*   obligation from nbjsort's proven `sorted_nfun_knuth_exchange` (see       *)
+(*   sort_commute.sorting_int32_sort_network_e2n).  We keep the local copy    *)
+(*   admitted here to avoid an import cycle.                                  *)
 Lemma sorting_int32_sort_network_e2n m :
   int32_sort_network (`2^ m) \is sorting.
 Proof.
@@ -284,15 +351,15 @@ Proof.
 Admitted.
 
 (* OBLIGATION E  (generic "set the suffix to +infinity" pruning).             *)
-(* If a pair-network on N wires sorts, then keeping only the comparators with   *)
-(* both endpoints < n yields a network on n wires that also sorts.              *)
-(*   Strategy: 0-1 principle.  Given r : n.-tuple bool, pad with (N - n) ones   *)
-(*   to r' : N.-tuple bool.  Any comparator (a,b) with b >= n acts on a wire    *)
-(*   holding `true` (the maximum), so min stays on the low wire (unchanged) and *)
-(*   max = true stays high: it is a no-op on the low block and preserves the    *)
-(*   all-true suffix.  Hence the low n wires of (nfun (pnet N ps) r') evolve    *)
-(*   exactly like (nfun (pnet n (filter ... ps)) r); since the former is        *)
-(*   sorted, so is the latter.                                                  *)
+(* If a pair-network on N wires sorts, then keeping only the comparators with *)
+(* both endpoints < n yields a network on n wires that also sorts.            *)
+(*   Strategy: 0-1 principle.  Given r : n.-tuple bool, pad with (N - n) ones *)
+(*   to r' : N.-tuple bool.  Any comparator (a,b) with b >= n acts on a wire  *)
+(*   holding `true` (the maximum), so min stays on the low wire (unchanged)   *)
+(*   and max = true stays high: it is a no-op on the low block and preserves  *)
+(*   the all-true suffix.  Hence the low n wires of (nfun (pnet N ps) r')     *)
+(*   evolve exactly like (nfun (pnet n (filter ... ps)) r); since the former  *)
+(*   is sorted, so is the latter.                                             *)
 Lemma sorting_pnet_prune (N n : nat) (ps : seq (nat * nat)) :
   n <= N ->
   all (fun ab => (ab.1 < ab.2) && (ab.2 < N)) ps ->
