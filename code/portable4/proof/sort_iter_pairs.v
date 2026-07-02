@@ -44,11 +44,39 @@ rewrite -!e2nE prednK //.
 by rewrite n_lt_e2n_mlog // n_le_e2n_mlog.
 Qed.
 
+(* Two cascade positions cannot differ by an odd multiple of p (their p-bits
+   would disagree).  This is what makes the transpose's flipped comparators
+   wire-disjoint (rules out j+r = j'+p and j+p = j'+r'). *)
+Lemma cross_neq p m (j j' : nat) :
+  0 < p -> odd m -> ~~ odd (j %/ p) -> ~~ odd (j' %/ p) -> (j + p * m) != j'.
+Proof.
+move=> p_gt0 mO joE j'oE; apply/eqP => E.
+have H : odd (j' %/ p) = ~~ odd (j %/ p).
+  by rewrite -E [p * m]mulnC addnC divnMDl // oddD mO addTb.
+by move: j'oE; rewrite H (negPf joE).
+Qed.
+
+(* Two comparators share a wire. *)
+Definition cdep (c c' : nat * nat) : bool :=
+  [|| c.1 == c'.1, c.1 == c'.2, c.2 == c'.1 | c.2 == c'.2].
+
+(* Every comparator of l2 is wire-disjoint from every comparator of l1. *)
+Definition indep_blocks (l1 l2 : seq (nat * nat)) : bool :=
+  all (fun b => all (fun a => ~~ cdep b a) l1) l2.
+
 Section IterPairs.
 Variable d : disp_t.
 Variable A : orderType d.
 
 Local Notation swseq := (foldl (fun s ab => swap ab.1 ab.2 s)).
+
+(* Every comparator in [l] is an in-range ordered pair (a < b < size s). *)
+Definition is_size_ordered (s : seq A) (l : seq (nat * nat)) : bool :=
+  all (fun c => c.1 < c.2 < size s) l.
+
+Lemma is_size_orderedE (s s' : seq A) l :
+  size s = size s' -> is_size_ordered s l = is_size_ordered s' l.
+Proof. by move=> ss; rewrite /is_size_ordered ss. Qed.
 
 (* -------------------------------------------------------------------------- *)
 (*  Commutation primitive: wire-disjoint swaps commute.  This is the seq-level *)
@@ -87,6 +115,36 @@ case: (k =P a) => [->|/eqP kNa].
 case: (k =P b) => [->|/eqP kNb].
   by rewrite (negbTE bNc) (negbTE bNe).
 by [].
+Qed.
+
+(* A comparator floats left past a block of wire-disjoint comparators. *)
+Lemma swseq_bubble_left (c : nat * nat) (L : seq (nat * nat)) (s : seq A) :
+  c.1 < c.2 < size s -> is_size_ordered s L -> all (fun c' => ~~ cdep c c') L ->
+  swseq s (rcons L c) = swseq s (c :: L).
+Proof.
+rewrite -cats1.
+elim: L s => [|c0 L IH] s cR; first by [].
+move=> /andP[c0R Hord] /andP[ncd Hdep].
+have szE : size (swap c0.1 c0.2 s) = size s by apply: size_swap.
+rewrite cat_cons /= IH ?szE //; last by rewrite /is_size_ordered szE.
+rewrite [foldl _ (swap c0.1 c0.2 s) (c :: L)]/=.
+congr (foldl _ _ L).
+apply: swap_swapC => //.
+by move: ncd; rewrite /cdep !negb_or.
+Qed.
+
+(* Two wire-disjoint blocks commute in a swap-fold. *)
+Lemma swseq_comm_blocks (l1 l2 : seq (nat * nat)) (s : seq A) :
+  is_size_ordered s l1 -> is_size_ordered s l2 -> indep_blocks l1 l2 ->
+  swseq s (l1 ++ l2) = swseq s (l2 ++ l1).
+Proof.
+elim: l2 s => [|b l2 IH] s Hl1; first by rewrite cats0.
+move=> /andP[bR Hl2] /andP[bindep Hdep].
+have szE : size (swap b.1 b.2 s) = size s by apply: size_swap.
+have -> : l1 ++ b :: l2 = rcons l1 b ++ l2 by rewrite -cats1 -catA.
+rewrite foldl_cat swseq_bubble_left // -/(foldl _ (swap b.1 b.2 s) l1) -foldl_cat.
+rewrite !cat_cons /= IH //; first by rewrite /is_size_ordered szE.
+by rewrite /is_size_ordered szE.
 Qed.
 
 (* -------------------------------------------------------------------------- *)
@@ -217,10 +275,10 @@ Proof. by move=> p_gt0; rewrite /iter3 iter3_auxE. Qed.
 (*  They are the SAME multiset (a transpose of the position x distance grid)   *)
 (*  and equal as swap-folds: the reordering only ever transposes comparators   *)
 (*  (j+p,j+r) and (j'+p,j'+r') with j<j' and r<r', which are always WIRE-      *)
-(*  DISJOINT here (swap_swapC applies): both are cascade positions, so          *)
-(*  ~~ odd (j %/ p) and ~~ odd (j' %/ p); the only possible collision           *)
-(*  j+r = j'+p would force odd (j' %/ p) -- contradiction.  This is the only    *)
-(*  admitted step of the whole int32_sort development.                          *)
+(*  DISJOINT here (swap_swapC / swseq_comm_blocks apply): both are cascade      *)
+(*  positions, so ~~ odd (j %/ p) and ~~ odd (j' %/ p); the only possible       *)
+(*  collision j+r = j'+p would force odd (j' %/ p) (cross_neq) -- contradiction.*)
+(*  This is the only admitted step of the whole int32_sort development.         *)
 (* -------------------------------------------------------------------------- *)
 Lemma swseq_casc_dcasc (s : seq A) p top : 0 < p ->
   swseq s (casc_pairs (size s) top p) =
