@@ -64,6 +64,21 @@ Definition cdep (c c' : nat * nat) : bool :=
 Definition indep_blocks (l1 l2 : seq (nat * nat)) : bool :=
   all (fun b => all (fun a => ~~ cdep b a) l1) l2.
 
+(* n is a power of two.  The cascade transpose only holds when the base p and
+   the top distance are powers of two (it is FALSE otherwise, e.g. top=6,p=2):
+   only then are the order-flipped comparators wire-disjoint. *)
+Definition is2 n := n == `2^ (up_log 2 n).
+
+Lemma is2_e2n k : is2 (`2^ k).
+Proof. by rewrite /is2 !e2nE up_expnK. Qed.
+
+Lemma is2_half p : is2 p -> 0 < p -> (p == 1) || is2 (p./2).
+Proof.
+move=> /eqP pE _; case E : (up_log 2 p) => [|k].
+  by rewrite pE E eqxx.
+by apply/orP; right; rewrite pE E e2Sn addnn doubleK is2_e2n.
+Qed.
+
 Section IterPairs.
 Variable d : disp_t.
 Variable A : orderType d.
@@ -272,15 +287,16 @@ Proof. by move=> p_gt0; rewrite /iter3 iter3_auxE. Qed.
 (*                                                                            *)
 (*  [dcasc_aux] lists the cascade by distance (q = top,top/2,...; inner:       *)
 (*  positions), [casc_pairs] by position (j; inner: distances r = top,...,2p). *)
-(*  They are the SAME multiset (a transpose of the position x distance grid)   *)
-(*  and equal as swap-folds: the reordering only ever transposes comparators   *)
-(*  (j+p,j+r) and (j'+p,j'+r') with j<j' and r<r', which are always WIRE-      *)
-(*  DISJOINT here (swap_swapC / swseq_comm_blocks apply): both are cascade      *)
-(*  positions, so ~~ odd (j %/ p) and ~~ odd (j' %/ p); the only possible       *)
-(*  collision j+r = j'+p would force odd (j' %/ p) (cross_neq) -- contradiction.*)
+(*  For POWERS OF TWO p, top they are the SAME multiset (a transpose of the    *)
+(*  position x distance grid) and equal as swap-folds: the reordering only     *)
+(*  ever transposes comparators (j+p,j+r) and (j'+p,j'+r') with j<j' and r<r', *)
+(*  which are then WIRE-DISJOINT (swap_swapC / swseq_comm_blocks apply): both   *)
+(*  are cascade positions, so ~~ odd (j %/ p) and ~~ odd (j' %/ p); the only   *)
+(*  possible collision j+r = j'+p would force odd (j' %/ p) (cross_neq) --      *)
+(*  contradiction.  (For NON-powers-of-two it is FALSE, e.g. top=6, p=2.)      *)
 (*  This is the only admitted step of the whole int32_sort development.         *)
 (* -------------------------------------------------------------------------- *)
-Lemma swseq_casc_dcasc (s : seq A) p top : 0 < p ->
+Lemma swseq_casc_dcasc (s : seq A) p top : 0 < p -> is2 p -> is2 top ->
   swseq s (casc_pairs (size s) top p) =
   swseq s (dcasc_aux (size s).+1 (size s) p top).
 Proof.
@@ -291,11 +307,11 @@ Admitted.
 (* -------------------------------------------------------------------------- *)
 
 (* One outer level: base pass ++ cascade = iter3 top p (iter1 p s). *)
-Lemma per_level (s : seq A) p top : 0 < p ->
+Lemma per_level (s : seq A) p top : 0 < p -> is2 p -> is2 top ->
   swseq s (level_pairs (size s) p p false ++ casc_pairs (size s) top p)
   = iter3 top p (iter1 p s).
 Proof.
-move=> p_gt0.
+move=> p_gt0 p2 top2.
 rewrite foldl_cat -iter1_swseq //.
 have si : size (iter1 p s) = size s by rewrite size_iter1.
 rewrite -{1}si swseq_casc_dcasc // si.
@@ -304,15 +320,20 @@ Qed.
 
 (* Outer loop: the flatten over halves matches iknuth_exchange_aux. *)
 Lemma loop_align n (s : seq A) top p hf kf :
+  is2 top -> (p == 0) || is2 p ->
   size s = n -> p < `2^ hf -> p < `2^ kf ->
   swseq s (flatten [seq level_pairs n p' p' false ++ casc_pairs n top p'
                      | p' <- halves hf p])
   = iknuth_exchange_aux kf top p s.
 Proof.
-elim: hf kf p s => [|hf IH] kf p s sE.
+move=> top2.
+elim: hf kf p s => [|hf IH] kf p s p2 sE.
   by rewrite e2nE expn0 ltnS leqn0 => /eqP-> _; case: kf.
 move=> pLhf pLkf.
-have [->|p_gt0] := posnP p; first by case: kf {pLkf}.
+have [->|p_gt0] := posnP p; first by case: kf {pLkf p2}.
+have {}p2 : is2 p by move: p2; rewrite (gtn_eqF p_gt0).
+have p2h : (p./2 == 0) || is2 (p./2).
+  by move: (is2_half p2 p_gt0) => /orP[/eqP->|->]; rewrite ?eqxx ?orbT.
 have hf_ok : p./2 < `2^ hf.
   have H : p < (`2^ hf).*2 by rewrite -addnn -e2Sn.
   by move: H; move: (`2^ hf) => m; lia.
@@ -337,7 +358,11 @@ have [s0|s_gt0] := posnP (size s).
   by have /size0nil-> : size s = 0 by [].
 have H : up_log 2 (size s) <= size s.
   by apply: up_log_min => //; rewrite -e2nE ltnW // ltn_ne2n.
-apply: (loop_align (n := size s)) => //; first exact: ltn_ne2n.
+apply: (loop_align (n := size s)).
+- exact: is2_e2n.
+- by rewrite is2_e2n orbT.
+- by [].
+- exact: ltn_ne2n.
 by rewrite ltn_e2n; move: H s_gt0; move: (up_log 2 (size s)) => u; lia.
 Qed.
 
