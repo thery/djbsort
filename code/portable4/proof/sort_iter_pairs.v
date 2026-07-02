@@ -64,6 +64,13 @@ Definition cdep (c c' : nat * nat) : bool :=
 Definition indep_blocks (l1 l2 : seq (nat * nat)) : bool :=
   all (fun b => all (fun a => ~~ cdep b a) l1) l2.
 
+Lemma all_flattenb T (p : pred T) ls : all p (flatten ls) = all (all p) ls.
+Proof. by elim: ls => //= l ls IH; rewrite all_cat IH. Qed.
+
+Lemma indep_blocks_flatten l1 ls :
+  indep_blocks l1 (flatten ls) = all (indep_blocks l1) ls.
+Proof. by rewrite /indep_blocks all_flattenb. Qed.
+
 (* n is a power of two.  The cascade transpose only holds when the base p and
    the top distance are powers of two (it is FALSE otherwise, e.g. top=6,p=2):
    only then are the order-flipped comparators wire-disjoint. *)
@@ -123,6 +130,10 @@ Definition is_size_ordered (s : seq A) (l : seq (nat * nat)) : bool :=
 Lemma is_size_orderedE (s s' : seq A) l :
   size s = size s' -> is_size_ordered s l = is_size_ordered s' l.
 Proof. by move=> ss; rewrite /is_size_ordered ss. Qed.
+
+Lemma is_size_ordered_flatten (s : seq A) ls :
+  is_size_ordered s (flatten ls) = all (is_size_ordered s) ls.
+Proof. by rewrite /is_size_ordered all_flattenb. Qed.
 
 (* -------------------------------------------------------------------------- *)
 (*  Commutation primitive: wire-disjoint swaps commute.  This is the seq-level *)
