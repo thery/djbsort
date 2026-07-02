@@ -21,11 +21,13 @@ Import Order POrderTheory TotalTheory.
 (*      nfun_nswap      == swapping two adjacent disjoint connectors in a      *)
 (*                         network preserves nfun                              *)
 (*                                                                            *)
-(*  We then use nbjsort's proven `sorted_nfun_knuth_exchange` to discharge     *)
-(*  Obligation D of sort_batcher.v (sorting_int32_sort_network_e2n), via the   *)
-(*  bridge `nfun_int32_eq_knuth` (admitted: the index combinatorics that the   *)
-(*  two specific orders differ only by independent swaps; verified by Compute  *)
-(*  and against example/portable4/sort.ml).                                    *)
+(*  We then discharge Obligation D of sort_batcher.v                           *)
+(*  (sorting_int32_sort_network_e2n) via nbjsort's proven ITERATIVE            *)
+(*  `sorted_iknuth_exchange` -- iknuth_exchange is the same iterative           *)
+(*  algorithm as sort.c, so it matches `me_pairs` directly (unlike the         *)
+(*  recursive `knuth_exchange`).  Two proved bridges (swap_cswap,              *)
+(*  tval_nfun_pnet) reduce the obligation to a single pure seq/nat identity     *)
+(*  `foldl_swap_me_pairs_iknuth` (admitted; roadmap given at its statement).    *)
 (******************************************************************************)
 
 Set Implicit Arguments.
@@ -99,26 +101,101 @@ End Commutation.
 (* -------------------------------------------------------------------------- *)
 (*  Bridge to nbjsort and discharge of Obligation D                           *)
 (* -------------------------------------------------------------------------- *)
+(*                                                                            *)
+(*  We bridge sort.c's network NOT to the recursive `knuth_exchange` but to    *)
+(*  nbjsort's ITERATIVE `iknuth_exchange`.  The recursive network deinterleaves *)
+(*  (even/odd) and recurses innermost-first, whereas `me_pairs` -- like sort.c  *)
+(*  -- is a flat loop `p = top, top/2, ..., 1` outermost-first; those two       *)
+(*  structures do not line up by adjacent commutation.  `iknuth_exchange`, on   *)
+(*  the other hand, is the SAME iterative algorithm as sort.c, so the match is  *)
+(*  direct.  Two proved bridges reduce Obligation D to a single pure seq/nat    *)
+(*  identity:                                                                   *)
+(*      swap_cswap      : nbjsort's seq-level [swap] = nsort's [cfun (cswap)]   *)
+(*      tval_nfun_pnet  : running a pair-network = folding [swap] over the pairs *)
+(*  leaving `foldl_swap_me_pairs_iknuth` (me_pairs applied via [swap]-folds     *)
+(*  equals iknuth_exchange) as the only remaining hole -- pure seq/nat, no      *)
+(*  tuples or ordinals.  The commutation core above (cfun_comm / nfun_nswap) is *)
+(*  what discharges the cascade reordering inside that identity.                *)
 
-(* sort.c's network and nbjsort's knuth_exchange m have the same comparators   *)
-(* on `2^ m wires, and the two orders differ only by swaps of independent      *)
-(* (wire-disjoint) connectors.  By the commutation lemmas above such a         *)
-(* reordering preserves nfun, hence:                                          *)
-(*    nfun (int32_sort_network (`2^ m)) =1 nfun (knuth_exchange m).            *)
-(* The index combinatorics establishing "differ only by independent swaps"     *)
-(* (verified by Compute and against example/portable4/sort.ml) is left         *)
-(* admitted; cfun_comm / nfun_nswap above are the semantic core it would use.  *)
-Lemma nfun_int32_eq_knuth m (t : (`2^ m).-tuple bool) :
-  nfun (int32_sort_network (`2^ m)) t = nfun (knuth_exchange m) t.
+Section Bridge.
+
+Variable d : disp_t.
+Variable A : orderType d.
+
+(* The seq-level [swap] of nbjsort equals the tuple-level [cswap] of nsort. *)
+Lemma swap_cswap n (i j : 'I_n) (t : n.-tuple A) :
+  (i : nat) < j -> swap i j (tval t) = tval (cfun (cswap i j) t).
+Proof.
+move=> iLj.
+have jLn : (j : nat) < n by [].
+have szt : size (tval t) = n by rewrite size_tuple.
+pose x0 := tnth t i.
+apply: (@eq_from_nth _ x0).
+  by rewrite size_tuple size_swap ?szt // iLj jLn.
+move=> k kLs.
+have kLn : k < n by move: kLs; rewrite size_swap ?szt // ?iLj ?jLn // szt.
+rewrite nth_swap ?szt ?iLj ?jLn //.
+have -> : nth x0 (cfun (cswap i j) t) k = tnth (cfun (cswap i j) t) (Ordinal kLn).
+  by rewrite (tnth_nth x0).
+have -> : nth x0 (tval t) i = tnth t i by rewrite (tnth_nth x0).
+have -> : nth x0 (tval t) j = tnth t j by rewrite (tnth_nth x0).
+case: (k =P (i:nat)) => [kEi|/eqP kNi].
+  have oi : Ordinal kLn = i by apply/val_inj => /=; exact: kEi.
+  by rewrite oi cswapE_min.
+case: (k =P (j:nat)) => [kEj|/eqP kNj].
+  have oj : Ordinal kLn = j by apply/val_inj => /=; exact: kEj.
+  by rewrite oj cswapE_max.
+rewrite cswapE_neq.
+- by rewrite (tnth_nth x0).
+- exact: kNi.
+exact: kNj.
+Qed.
+
+(* Running the network built from a list of (in-range) index pairs is the same *)
+(* as folding the seq-level [swap] over the same list.  This moves the whole    *)
+(* problem from tuples/ordinals to plain seq/nat.                              *)
+Lemma tval_nfun_pnet n (ps : seq (nat * nat)) (t : n.-tuple A) :
+  all (fun ab => (ab.1 < ab.2) && (ab.2 < n)) ps ->
+  tval (nfun (pnet n ps) t) =
+  foldl (fun s ab => swap ab.1 ab.2 s) (tval t) ps.
+Proof.
+elim: ps t => [|[a b] ps IH] t; first by [].
+rewrite /= => /andP[/andP[aLb bLn] allps].
+have aLn : a < n by apply: ltn_trans bLn.
+rewrite /pnet /= /oconn /= insubT /= insubT /=.
+rewrite -/(pnet n ps) IH //.
+by rewrite -(swap_cswap (i := Sub a aLn) (j := Sub b bLn)).
+Qed.
+
+End Bridge.
+
+(* THE REMAINING HOLE: a pure seq/nat identity (no tuples, no ordinals).       *)
+(* This is the real algorithmic content -- me_pairs (sort.c's iterative         *)
+(* comparator emission) applied via [swap]-folds equals iknuth_exchange.        *)
+(* Roadmap: [me_pairs n = flatten [seq level_pairs .. ++ casc_pairs .. | ..]],  *)
+(* so [foldl swap] splits per level (foldl_cat) into a base pass and a cascade; *)
+(*   (K1)  foldl swap (level_pairs (size s) p p false) s = iter1 p s            *)
+(*   (K2)  foldl swap (casc_pairs (size s) top p) s     = iter3 top p s         *)
+(* matched against iknuth_exchange_aux's [iter3 top p (iter1 p s)] per level    *)
+(* (the p-loops coincide since me_top (`2^ m) = `2^ m.-1 = iknuth's top).       *)
+Lemma foldl_swap_me_pairs_iknuth (s : seq bool) :
+  foldl (fun s ab => swap ab.1 ab.2 s) s (me_pairs (size s)) = iknuth_exchange s.
 Proof.
 Admitted.
 
-(* OBLIGATION D, discharged via nbjsort's proven Knuth-exchange sorting. *)
+(* OBLIGATION D, discharged via nbjsort's proven ITERATIVE Knuth exchange.     *)
+Lemma nfun_int32_eq_iknuth m (t : (`2^ m).-tuple bool) :
+  nfun (int32_sort_network (`2^ m)) t = iknuth_exchange (tval t) :> seq bool.
+Proof.
+rewrite /int32_sort_network tval_nfun_pnet; last exact: me_pairs_bounded.
+by rewrite -[in me_pairs _](size_tuple t) foldl_swap_me_pairs_iknuth.
+Qed.
+
 Lemma sorting_int32_sort_network_e2n m :
   int32_sort_network (`2^ m) \is sorting.
 Proof.
-apply/forallP => t; rewrite nfun_int32_eq_knuth.
-exact: sorted_nfun_knuth_exchange.
+apply/forallP => t; rewrite nfun_int32_eq_iknuth.
+exact: sorted_iknuth_exchange.
 Qed.
 
 (* The full result for arbitrary n, now resting on nbjsort for the e2n case    *)
