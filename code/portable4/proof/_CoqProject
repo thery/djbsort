@@ -8,4 +8,5 @@ nsort.v
 nbjsort.v
 sort_batcher.v
 batcher_alt.v
+sort_iter_pairs.v
 sort_commute.v
