@@ -79,6 +79,37 @@ move=> /eqP pE _; case E : (up_log 2 p) => [|k].
 by apply/orP; right; rewrite pE E e2Sn addnn doubleK is2_e2n.
 Qed.
 
+Lemma is2_gt0 p : is2 p -> 0 < p.
+Proof. by move=> /eqP->; rewrite e2n_gt0. Qed.
+
+(* If p, r are powers of two with p < r, then r = p + p*m with m odd. *)
+Lemma is2_sub p r : is2 p -> is2 r -> p < r ->
+  exists m, odd m && (r == p + p * m).
+Proof.
+move=> /eqP pE /eqP rE pLr.
+set b := up_log 2 p in pE; set a := up_log 2 r in rE.
+have bLa : b < a by rewrite -ltn_e2n -pE -rE.
+exists (`2^ (a - b) - 1).
+apply/andP; split.
+  by rewrite oddB ?e2n_gt0 // odd_e2 addbT subn_eq0 -ltnNge.
+have bLa' : b <= a := ltnW bLa.
+have e2L : `2^ b <= `2^ a by rewrite leq_e2n.
+by rewrite rE pE mulnBr muln1 -e2nD (subnKC bLa') (subnKC e2L).
+Qed.
+
+(* The cross wire-collision j+r = j'+p cannot happen between two cascade
+   positions when p, r are powers of two with p < r. *)
+Lemma is2_cross p r (j j' : nat) :
+  is2 p -> is2 r -> p < r -> ~~ odd (j %/ p) -> ~~ odd (j' %/ p) ->
+  j + r != j' + p.
+Proof.
+move=> p2 r2 pLr joE j'oE.
+have [m /andP[mO /eqP rpm]] := is2_sub p2 r2 pLr.
+apply/eqP => E.
+move: E; rewrite rpm addnA addnAC => /addIn E2.
+by move: (cross_neq (is2_gt0 p2) mO joE j'oE); rewrite E2 eqxx.
+Qed.
+
 Section IterPairs.
 Variable d : disp_t.
 Variable A : orderType d.
@@ -292,9 +323,9 @@ Proof. by move=> p_gt0; rewrite /iter3 iter3_auxE. Qed.
 (*  ever transposes comparators (j+p,j+r) and (j'+p,j'+r') with j<j' and r<r', *)
 (*  which are then WIRE-DISJOINT (swap_swapC / swseq_comm_blocks apply): both   *)
 (*  are cascade positions, so ~~ odd (j %/ p) and ~~ odd (j' %/ p); the only   *)
-(*  possible collision j+r = j'+p would force odd (j' %/ p) (cross_neq) --      *)
-(*  contradiction.  (For NON-powers-of-two it is FALSE, e.g. top=6, p=2.)      *)
-(*  This is the only admitted step of the whole int32_sort development.         *)
+(*  possible collision j+r = j'+p would force odd (j' %/ p) (cross_neq /        *)
+(*  is2_cross) -- contradiction.  (For NON-powers-of-two it is FALSE, e.g.     *)
+(*  top=6, p=2.)  This is the only admitted step of the whole development.     *)
 (* -------------------------------------------------------------------------- *)
 Lemma swseq_casc_dcasc (s : seq A) p top : 0 < p -> is2 p -> is2 top ->
   swseq s (casc_pairs (size s) top p) =
