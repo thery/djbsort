@@ -40,6 +40,45 @@ Variable A : orderType d.
 Local Notation swseq := (foldl (fun s ab => swap ab.1 ab.2 s)).
 
 (* -------------------------------------------------------------------------- *)
+(*  Commutation primitive: wire-disjoint swaps commute.  This is the seq-level *)
+(*  analogue of sort_commute's cfun_comm, and the tool for the remaining K2    *)
+(*  reordering (distance-major dcasc_aux -> position-major casc_pairs).        *)
+(* -------------------------------------------------------------------------- *)
+Lemma swap_swapC (s : seq A) a b c e :
+  a < b < size s -> c < e < size s ->
+  [&& a != c, a != e, b != c & b != e] ->
+  swap a b (swap c e s) = swap c e (swap a b s).
+Proof.
+move=> /andP[ab bs] /andP[ce es] /and4P[aNc aNe bNc bNe].
+move: bs es; case: s => [|x0 s1] // bs es.
+set t := x0 :: s1.
+have scet : size (swap c e t) = size t by apply: size_swap; rewrite ce es.
+have sabt : size (swap a b t) = size t by apply: size_swap; rewrite ab bs.
+apply: (@eq_from_nth _ x0).
+  by rewrite !size_swap ?scet ?sabt ?ab ?bs ?ce ?es.
+move=> k _.
+rewrite nth_swap; last by rewrite scet ab bs.
+rewrite [in RHS]nth_swap; last by rewrite sabt ce es.
+have Ece : forall X, nth x0 (swap c e t) X =
+   (if X == c then Def.min (nth x0 t c) (nth x0 t e)
+    else if X == e then Def.max (nth x0 t c) (nth x0 t e) else nth x0 t X).
+  by move=> X; rewrite nth_swap // ce es.
+have Eab : forall X, nth x0 (swap a b t) X =
+   (if X == a then Def.min (nth x0 t a) (nth x0 t b)
+    else if X == b then Def.max (nth x0 t a) (nth x0 t b) else nth x0 t X).
+  by move=> X; rewrite nth_swap // ab bs.
+rewrite !Ece !Eab.
+rewrite (negbTE aNc) (negbTE aNe) (negbTE bNc) (negbTE bNe).
+rewrite ![c == a]eq_sym ![e == a]eq_sym ![c == b]eq_sym ![e == b]eq_sym.
+rewrite (negbTE aNc) (negbTE aNe) (negbTE bNc) (negbTE bNe).
+case: (k =P a) => [->|/eqP kNa].
+  by rewrite (negbTE aNc) (negbTE aNe).
+case: (k =P b) => [->|/eqP kNb].
+  by rewrite (negbTE bNc) (negbTE bNe).
+by [].
+Qed.
+
+(* -------------------------------------------------------------------------- *)
 (*  K1 -- the base pass                                                        *)
 (* -------------------------------------------------------------------------- *)
 
@@ -172,10 +211,8 @@ End IterPairs.
 (*  They are the SAME multiset (a row/column transpose of the position x       *)
 (*  distance grid) and equal as swap-folds: going from one order to the other  *)
 (*  only ever transposes comparators (j+p,j+r) and (j'+p,j'+r') with j<j' and  *)
-(*  r<r', and those are always WIRE-DISJOINT here.  Indeed both are cascade    *)
-(*  positions, so ~~ odd (j %/ p) and ~~ odd (j' %/ p); the only possible      *)
-(*  collision j+r = j'+p would force j' = j + (r-p) with r-p an odd multiple   *)
-(*  of p, hence odd (j' %/ p) -- contradiction.  So the reordering is by       *)
-(*  disjoint adjacent transpositions, and disjoint swaps commute (provable on  *)
-(*  seqs via nth_swap; the tuple-level analogue is sort_commute's cfun_comm).  *)
+(*  r<r', and those are always WIRE-DISJOINT here (swap_swapC applies).  Indeed *)
+(*  both are cascade positions, so ~~ odd (j %/ p) and ~~ odd (j' %/ p); the   *)
+(*  only possible collision j+r = j'+p would force j' = j + (r-p) with r-p an   *)
+(*  odd multiple of p, hence odd (j' %/ p) -- contradiction.                    *)
 (******************************************************************************)
