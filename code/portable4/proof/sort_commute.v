@@ -1,6 +1,6 @@
 From mathcomp Require Import all_boot order perm algebra.zmodp.
 From mathcomp Require Import zify.
-Require Import more_tuple nsort nbjsort sort_batcher.
+Require Import more_tuple nsort nbjsort sort_batcher sort_iter_pairs.
 
 Import Order POrderTheory TotalTheory.
 
@@ -26,8 +26,9 @@ Import Order POrderTheory TotalTheory.
 (*  `sorted_iknuth_exchange` -- iknuth_exchange is the same iterative           *)
 (*  algorithm as sort.c, so it matches `me_pairs` directly (unlike the         *)
 (*  recursive `knuth_exchange`).  Two proved bridges (swap_cswap,              *)
-(*  tval_nfun_pnet) reduce the obligation to a single pure seq/nat identity     *)
-(*  `foldl_swap_me_pairs_iknuth` (admitted; roadmap given at its statement).    *)
+(*  tval_nfun_pnet) reduce the obligation to the pure seq/nat identity          *)
+(*  `foldl_swap_me_pairs_iknuth`, proved in sort_iter_pairs (K1 + K2), now      *)
+(*  resting only on the cascade transpose `swseq_casc_dcasc`.                    *)
 (******************************************************************************)
 
 Set Implicit Arguments.
@@ -113,9 +114,9 @@ End Commutation.
 (*      swap_cswap      : nbjsort's seq-level [swap] = nsort's [cfun (cswap)]   *)
 (*      tval_nfun_pnet  : running a pair-network = folding [swap] over the pairs *)
 (*  leaving `foldl_swap_me_pairs_iknuth` (me_pairs applied via [swap]-folds     *)
-(*  equals iknuth_exchange) as the only remaining hole -- pure seq/nat, no      *)
-(*  tuples or ordinals.  The commutation core above (cfun_comm / nfun_nswap) is *)
-(*  what discharges the cascade reordering inside that identity.                *)
+(*  equals iknuth_exchange, proved in sort_iter_pairs) resting only on the      *)
+(*  cascade transpose.  The commutation core above (cfun_comm / nfun_nswap) is  *)
+(*  the tuple-level analogue of that transpose's engine.                        *)
 
 Section Bridge.
 
@@ -169,19 +170,9 @@ Qed.
 
 End Bridge.
 
-(* THE REMAINING HOLE: a pure seq/nat identity (no tuples, no ordinals).       *)
-(* This is the real algorithmic content -- me_pairs (sort.c's iterative         *)
-(* comparator emission) applied via [swap]-folds equals iknuth_exchange.        *)
-(* Roadmap: [me_pairs n = flatten [seq level_pairs .. ++ casc_pairs .. | ..]],  *)
-(* so [foldl swap] splits per level (foldl_cat) into a base pass and a cascade; *)
-(*   (K1)  foldl swap (level_pairs (size s) p p false) s = iter1 p s            *)
-(*   (K2)  foldl swap (casc_pairs (size s) top p) s     = iter3 top p s         *)
-(* matched against iknuth_exchange_aux's [iter3 top p (iter1 p s)] per level    *)
-(* (the p-loops coincide since me_top (`2^ m) = `2^ m.-1 = iknuth's top).       *)
-Lemma foldl_swap_me_pairs_iknuth (s : seq bool) :
-  foldl (fun s ab => swap ab.1 ab.2 s) s (me_pairs (size s)) = iknuth_exchange s.
-Proof.
-Admitted.
+(* The seq/nat identity [foldl swap s (me_pairs (size s)) = iknuth_exchange s]  *)
+(* is proved in sort_iter_pairs as [foldl_swap_me_pairs_iknuth] (K1 + K2), now  *)
+(* resting only on the cascade transpose [swseq_casc_dcasc].                    *)
 
 (* OBLIGATION D, discharged via nbjsort's proven ITERATIVE Knuth exchange.     *)
 Lemma nfun_int32_eq_iknuth m (t : (`2^ m).-tuple bool) :

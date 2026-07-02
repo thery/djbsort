@@ -16,22 +16,33 @@ Unset Printing Implicit Defensive.
 (*                                                                            *)
 (*  nbjsort's iter1/iter2/iter3 PERFORM their comparators via [swap]; here we  *)
 (*  show each equals the [swap]-fold of the very comparator list sort.c emits  *)
-(*  (sort_batcher's level_pairs / casc_pairs).                                 *)
+(*  (sort_batcher's level_pairs / casc_pairs), then assemble the whole         *)
+(*  identity foldl_swap_me_pairs_iknuth.                                        *)
 (*                                                                            *)
-(*  K1 (base pass), proved:                                                   *)
-(*      iter1 p s = foldl swap s (level_pairs (size s) p p false)             *)
+(*  K1 (base pass):  iter1 p s = foldl swap s (level_pairs (size s) p p false) *)
 (*    -- an EXACT list match (iter1_aux's i,i+1,... walk is level_pairs'       *)
 (*       [iota i (n-i)] scan, one recursion step per iota head).               *)
+(*  K2 (cascade):    iter3 top p s = foldl swap s (dcasc_aux .. p top)         *)
+(*    where dcasc_aux is the DISTANCE-major cascade (q = top,top/2,...,2p).    *)
 (*                                                                            *)
-(*  K2 (cascade), reification half proved here:                               *)
-(*      iter3 top p s = foldl swap s (dcasc_aux (size s).+1 (size s) p top)   *)
-(*    where dcasc_aux is the DISTANCE-major cascade (q = top,top/2,...,2p),    *)
-(*    the order iter3 performs the sweeps.  What remains for K2 is the pure    *)
-(*    reordering                                                              *)
-(*      foldl swap s (dcasc_aux ..) = foldl swap s (casc_pairs (size s) top p) *)
-(*    from distance-major to sort.c's POSITION-major order -- see the note at  *)
-(*    the end of the file.                                                     *)
+(*  The ONLY admitted step is [swseq_casc_dcasc], the distance-major ->        *)
+(*  position-major cascade transpose (see its statement).  Everything else,    *)
+(*  including the assembly foldl_swap_me_pairs_iknuth, is fully proved.        *)
 (******************************************************************************)
+
+(* me_top's exponent is ceil(log2), same as iknuth_exchange's [up_log 2]. *)
+Lemma mlog_up_log n : mlog n = up_log 2 n.
+Proof.
+case: (leqP n 1) => [|n_gt1].
+  by case: n => [|[|]] // _; rewrite ?up_log0 ?up_log1.
+have mlog_gt0 : 0 < mlog n.
+  case: (posnP (mlog n)) => // m0.
+  by move: (n_le_e2n_mlog n); rewrite m0 /=; lia.
+rewrite -[mlog n]prednK //.
+apply/esym/up_log_eq => //.
+rewrite -!e2nE prednK //.
+by rewrite n_lt_e2n_mlog // n_le_e2n_mlog.
+Qed.
 
 Section IterPairs.
 Variable d : disp_t.
@@ -198,21 +209,78 @@ Lemma iter3_swseq (s : seq A) top p : 0 < p ->
   iter3 top p s = swseq s (dcasc_aux (size s).+1 (size s) p top).
 Proof. by move=> p_gt0; rewrite /iter3 iter3_auxE. Qed.
 
-End IterPairs.
-
-(******************************************************************************)
-(*  What remains for K2: the distance-major -> position-major reordering       *)
-(*                                                                            *)
-(*    foldl swap s (dcasc_aux (size s).+1 (size s) p top)                      *)
-(*      = foldl swap s (casc_pairs (size s) top p).                            *)
+(* -------------------------------------------------------------------------- *)
+(*  K2 -- the remaining hole: the distance-major -> position-major reordering. *)
 (*                                                                            *)
 (*  [dcasc_aux] lists the cascade by distance (q = top,top/2,...; inner:       *)
 (*  positions), [casc_pairs] by position (j; inner: distances r = top,...,2p). *)
-(*  They are the SAME multiset (a row/column transpose of the position x       *)
-(*  distance grid) and equal as swap-folds: going from one order to the other  *)
-(*  only ever transposes comparators (j+p,j+r) and (j'+p,j'+r') with j<j' and  *)
-(*  r<r', and those are always WIRE-DISJOINT here (swap_swapC applies).  Indeed *)
-(*  both are cascade positions, so ~~ odd (j %/ p) and ~~ odd (j' %/ p); the   *)
-(*  only possible collision j+r = j'+p would force j' = j + (r-p) with r-p an   *)
-(*  odd multiple of p, hence odd (j' %/ p) -- contradiction.                    *)
-(******************************************************************************)
+(*  They are the SAME multiset (a transpose of the position x distance grid)   *)
+(*  and equal as swap-folds: the reordering only ever transposes comparators   *)
+(*  (j+p,j+r) and (j'+p,j'+r') with j<j' and r<r', which are always WIRE-      *)
+(*  DISJOINT here (swap_swapC applies): both are cascade positions, so          *)
+(*  ~~ odd (j %/ p) and ~~ odd (j' %/ p); the only possible collision           *)
+(*  j+r = j'+p would force odd (j' %/ p) -- contradiction.  This is the only    *)
+(*  admitted step of the whole int32_sort development.                          *)
+(* -------------------------------------------------------------------------- *)
+Lemma swseq_casc_dcasc (s : seq A) p top : 0 < p ->
+  swseq s (casc_pairs (size s) top p) =
+  swseq s (dcasc_aux (size s).+1 (size s) p top).
+Proof.
+Admitted.
+
+(* -------------------------------------------------------------------------- *)
+(*  Assembly: sort.c's comparator fold equals iknuth_exchange (any A).         *)
+(* -------------------------------------------------------------------------- *)
+
+(* One outer level: base pass ++ cascade = iter3 top p (iter1 p s). *)
+Lemma per_level (s : seq A) p top : 0 < p ->
+  swseq s (level_pairs (size s) p p false ++ casc_pairs (size s) top p)
+  = iter3 top p (iter1 p s).
+Proof.
+move=> p_gt0.
+rewrite foldl_cat -iter1_swseq //.
+have si : size (iter1 p s) = size s by rewrite size_iter1.
+rewrite -{1}si swseq_casc_dcasc // si.
+by rewrite iter3_swseq // si.
+Qed.
+
+(* Outer loop: the flatten over halves matches iknuth_exchange_aux. *)
+Lemma loop_align n (s : seq A) top p hf kf :
+  size s = n -> p < `2^ hf -> p < `2^ kf ->
+  swseq s (flatten [seq level_pairs n p' p' false ++ casc_pairs n top p'
+                     | p' <- halves hf p])
+  = iknuth_exchange_aux kf top p s.
+Proof.
+elim: hf kf p s => [|hf IH] kf p s sE.
+  by rewrite e2nE expn0 ltnS leqn0 => /eqP-> _; case: kf.
+move=> pLhf pLkf.
+have [->|p_gt0] := posnP p; first by case: kf {pLkf}.
+have hf_ok : p./2 < `2^ hf.
+  have H : p < (`2^ hf).*2 by rewrite -addnn -e2Sn.
+  by move: H; move: (`2^ hf) => m; lia.
+case: kf pLkf => [|kf]; first by rewrite e2nE expn0 ltnS leqn0 (gtn_eqF p_gt0).
+move=> pLkf.
+have kf_ok : p./2 < `2^ kf.
+  have H : p < (`2^ kf).*2 by rewrite -addnn -e2Sn.
+  by move: H; move: (`2^ kf) => m; lia.
+rewrite [halves hf.+1 p]/= p_gt0 /= foldl_cat -sE per_level // sE.
+rewrite p_gt0 -IH //.
+by rewrite size_iter3 ?size_iter1 ?sE.
+Qed.
+
+(* The target identity: sort.c's comparator fold equals iknuth_exchange. *)
+Lemma foldl_swap_me_pairs_iknuth (s : seq A) :
+  swseq s (me_pairs (size s)) = iknuth_exchange s.
+Proof.
+have topE : me_top (size s) = `2^ (up_log 2 (size s)).-1.
+  by rewrite me_top_mlog mlog_up_log.
+rewrite /iknuth_exchange /me_pairs topE.
+have [s0|s_gt0] := posnP (size s).
+  by have /size0nil-> : size s = 0 by [].
+have H : up_log 2 (size s) <= size s.
+  by apply: up_log_min => //; rewrite -e2nE ltnW // ltn_ne2n.
+apply: (loop_align (n := size s)) => //; first exact: ltn_ne2n.
+by rewrite ltn_e2n; move: H s_gt0; move: (up_log 2 (size s)) => u; lia.
+Qed.
+
+End IterPairs.
