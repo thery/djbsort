@@ -9,3 +9,4 @@ nbjsort.v
 sort_batcher.v
 batcher_alt.v
 sort_commute.v
+sort_reify_check.v
