@@ -330,7 +330,6 @@ Qed.
 
 (* OBLIGATION D  (the iterative network on `2^ m wires sorts).                *)
 (* On `2^ m wires this is djbsort's iterative merge-exchange network (Knuth's *)
-(* Algorithm 5.2.2M), in sort.c's EXACT comparator order.                     *)
 (*   IMPORTANT: this is NOT nbatcher.v's recursive odd-even mergesort network *)
 (*   `batcher m`, and NOT a reordering of it.  For n = `2^ m >= 8 the two are *)
 (*   different sorting networks -- different comparator SETS, not just order: *)
@@ -366,8 +365,91 @@ Lemma sorting_pnet_prune (N n : nat) (ps : seq (nat * nat)) :
   pnet N ps \is sorting ->
   pnet n [seq ab <- ps | ab.2 < n] \is sorting.
 Proof.
-(* admitted: 0-1 principle + suffix-set-to-true padding argument *)
-Admitted.
+move=> nLN allps sortN.
+apply/forallP => r.
+pose pad (t : n.-tuple bool) : N.-tuple bool :=
+  [tuple nth true (tval t) (i : 'I_N) | i < N].
+have tnth_pad : forall (t : n.-tuple bool) (k : 'I_N),
+    tnth (pad t) k = nth true (tval t) k.
+  by move=> t k; rewrite tnth_mktuple.
+have val_pad : forall t : n.-tuple bool,
+    val (pad t) = tval t ++ nseq (N - n) true.
+  move=> t; apply: (@eq_from_nth _ true).
+    by rewrite size_tuple size_cat size_tuple size_nseq subnKC.
+  move=> i; rewrite size_tuple => iLN.
+  rewrite -(tnth_nth true (pad t) (Ordinal iLN)) tnth_pad nth_cat size_tuple.
+  case: ltnP => [iLn //|nLi].
+  by rewrite nth_default ?size_tuple // nth_nseq if_same.
+have nthpad_n : forall (u : n.-tuple bool) (k : 'I_N) (kLn : (k : nat) < n),
+    nth true (tval u) k = tnth u (Ordinal kLn).
+  by move=> u k kLn; rewrite (tnth_nth true).
+(* A kept comparator (both wires < n) acts on the low block like its n-copy. *)
+have step_lt : forall (i j : 'I_N) (i' j' : 'I_n) (t : n.-tuple bool),
+    (i : nat) = i' -> (j : nat) = j' -> (i : nat) < j -> (j : nat) < n ->
+    cfun (cswap i j) (pad t) = pad (cfun (cswap i' j') t).
+  move=> i j i' j' t iEi' jEj' iLj jLn.
+  have iLn : (i : nat) < n := ltn_trans iLj jLn.
+  apply: eq_from_tnth => k; rewrite [in RHS]tnth_pad.
+  have [kLn|nLk] := ltnP k n; last first.
+    rewrite nth_default ?size_tuple //.
+    rewrite cswapE_neq ?tnth_pad ?nth_default ?size_tuple //.
+      by rewrite neq_ltn (leq_trans iLn nLk) orbT.
+    by rewrite neq_ltn (leq_trans jLn nLk) orbT.
+  rewrite (nthpad_n _ _ kLn).
+  have [kEi|kNi] := eqVneq k i.
+    have -> : Ordinal kLn = i' by apply/val_inj => /=; rewrite -iEi' kEi.
+    by rewrite kEi cswapE_min cswapE_min !tnth_pad !(tnth_nth true) iEi' jEj'.
+  have [kEj|kNj] := eqVneq k j.
+    have -> : Ordinal kLn = j' by apply/val_inj => /=; rewrite -jEj' kEj.
+    by rewrite kEj cswapE_max cswapE_max !tnth_pad !(tnth_nth true) iEi' jEj'.
+  rewrite cswapE_neq // cswapE_neq ?tnth_pad ?(tnth_nth true) //.
+    by rewrite -val_eqE /= -iEi'; move: kNi; rewrite -val_eqE.
+  by rewrite -val_eqE /= -jEj'; move: kNj; rewrite -val_eqE.
+(* A dropped comparator (high wire >= n, holding `true`) is a no-op on pad. *)
+have step_ge : forall (i j : 'I_N) (t : n.-tuple bool),
+    n <= j -> cfun (cswap i j) (pad t) = pad t.
+  move=> i j t nLj.
+  have tj : tnth (pad t) j = true.
+    by rewrite tnth_pad; apply: nth_default; rewrite size_tuple.
+  apply: eq_from_tnth => k.
+  have [->|kNi] := eqVneq k i.
+    by rewrite cswapE_min tj minbT.
+  have [->|kNj] := eqVneq k j.
+    by rewrite cswapE_max tj maxbT.
+  by rewrite cswapE_neq.
+have pnet_cons : forall (m x y : nat) (qs : seq (nat * nat))
+    (xm : x < m) (ym : y < m),
+    pnet m ((x, y) :: qs) = cswap (Sub x xm) (Sub y ym) :: pnet m qs.
+  by move=> m x y qs xm ym; rewrite /pnet /= /oconn insubT /= insubT /=.
+have nfun_cons : forall (m x y : nat) (qs : seq (nat * nat))
+    (xm : x < m) (ym : y < m) (t : m.-tuple bool),
+    nfun (pnet m ((x, y) :: qs)) t
+      = nfun (pnet m qs) (cfun (cswap (Sub x xm) (Sub y ym)) t).
+  by move=> m x y qs xm ym t; rewrite pnet_cons nfunE.
+(* Running the padded N-network mirrors the pruned n-network, step by step. *)
+have main : forall qs, all (fun ab => ab.1 < ab.2 < N) qs ->
+    forall u : n.-tuple bool,
+    nfun (pnet N qs) (pad u) = pad (nfun (pnet n [seq ab <- qs | ab.2 < n]) u).
+  elim => [|[a b] qs IH]; first by [].
+  move=> allc u.
+  move: (allc) => /andP[/andP[aLb bLN] allqs].
+  have aLN : a < N := ltn_trans aLb bLN.
+  rewrite (nfun_cons N a b qs aLN bLN).
+  have [bLn|nLb] := ltnP b n.
+    have aLn : a < n := ltn_trans aLb bLn.
+    have fE : [seq ab <- (a, b) :: qs | ab.2 < n]
+            = (a, b) :: [seq ab <- qs | ab.2 < n] by rewrite /= bLn.
+    rewrite fE (nfun_cons n a b _ aLn bLn).
+    rewrite (step_lt (Sub a aLN) (Sub b bLN) (Sub a aLn) (Sub b bLn)) //.
+    by rewrite (IH allqs).
+  have fE : [seq ab <- (a, b) :: qs | ab.2 < n]
+          = [seq ab <- qs | ab.2 < n] by rewrite /= ltnNge nLb.
+  rewrite fE step_ge //.
+  by rewrite (IH allqs).
+have Hs := sorting_sorted (pad r) sortN.
+rewrite (main ps allps r) val_pad in Hs.
+exact: (subseq_sorted le_trans (prefix_subseq _ _) Hs).
+Qed.
 
 (* -------------------------------------------------------------------------- *)
 (*  The payoff: the network sort.c runs sorts, for EVERY length n.            *)
