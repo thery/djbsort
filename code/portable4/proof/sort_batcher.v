@@ -330,6 +330,7 @@ Qed.
 
 (* OBLIGATION D  (the iterative network on `2^ m wires sorts).                *)
 (* On `2^ m wires this is djbsort's iterative merge-exchange network (Knuth's *)
+(* Algorithm 5.2.2M), in sort.c's EXACT comparator order.                     *)
 (*   IMPORTANT: this is NOT nbatcher.v's recursive odd-even mergesort network *)
 (*   `batcher m`, and NOT a reordering of it.  For n = `2^ m >= 8 the two are *)
 (*   different sorting networks -- different comparator SETS, not just order: *)
