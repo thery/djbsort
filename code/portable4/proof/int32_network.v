@@ -6,33 +6,30 @@ Import Order POrderTheory TotalTheory.
 
 (******************************************************************************)
 (*                                                                            *)
-(*   SKETCH: bridging djbsort's C `int32_sort` to the verified Batcher        *)
-(*           odd-even merge network of nbatcher.v                             *)
+(*   int32_network.v -- a formal model of the comparator network that         *)
+(*                       djbsort's C `int32_sort` runs, for ARBITRARY n       *)
 (*                                                                            *)
-(*  nbatcher.v proves `sorting_batcher : batcher m \is sorting`, i.e. the     *)
-(*  RECURSIVE odd-even merge network sorts -- but only for sizes `2^ m, and   *)
-(*  with no connection to the C code.  djbsort's sort.c is the ITERATIVE      *)
-(*  "merge exchange" formulation (Knuth, TAOCP vol. 3, Algorithm 5.2.2M)      *)
-(*  that works for ARBITRARY n.  This file sketches the chain that closes     *)
-(*  the gap:                                                                  *)
+(*  sort.c implements Knuth's iterative "merge exchange" (TAOCP vol. 3,       *)
+(*  Algorithm 5.2.2M): p descending from `top`, and for each base position    *)
+(*  the whole distance cascade at once.  We transcribe the exact comparator   *)
+(*  sequence it emits and turn it into a `network`:                           *)
 (*                                                                            *)
-(*    sort.c  ==(1)==>  me_pairs n          (comparator sequence emitted)     *)
-(*            ==(2)==>  int32_sort_network n : network n                      *)
-(*            ==(3)==>  \is sorting          (the theorem we want)            *)
-(*                                                                            *)
-(*  The whole development is deliberately structured so that the FINAL        *)
-(*  theorem has a real, short proof, and every remaining hole is isolated     *)
-(*  in one of a handful of clearly-labelled `Admitted` obligations, each      *)
-(*  documented with its proof strategy.  Nothing below is `False`-admitting   *)
-(*  by accident: the obligations are all true statements (Knuth's analysis).  *)
-(*                                                                            *)
-(*  Defined here:                                                             *)
 (*    me_top n            == sort.c's `top`: the doubling loop of lines 11-12 *)
-(*    me_pairs n          == the list of (a,b) compare-exchanges that sort.c  *)
+(*    me_pairs n          == the list of (a,b) compare-exchanges sort.c       *)
 (*                           performs, in order, on an array of length n      *)
-(*                           (the closed form of Knuth's Algorithm M)         *)
 (*    pnet n ps           == turn a list of index pairs into a network n      *)
 (*    int32_sort_network  == pnet n (me_pairs n) : the network sort.c runs    *)
+(*                                                                            *)
+(*  Everything here is self-contained and fully proved.  The three facts we   *)
+(*  export downstream are:                                                    *)
+(*    me_pairs_bounded    -- every emitted (a,b) is an in-range pair a<b<n    *)
+(*    me_pairs_prune      -- me_pairs n is me_pairs (`2^ mlog n) filtered to  *)
+(*                           the wires < n (the arbitrary-n vs power-of-two   *)
+(*                           reduction)                                       *)
+(*    sorting_pnet_prune  -- generic: pruning a sorting pair-network to its   *)
+(*                           low n wires still sorts (the 0-1 principle)      *)
+(*  These reduce "int32_sort_network n sorts" to the power-of-two case,       *)
+(*  which int32_sort.v discharges via nbjsort's iterative Knuth exchange.     *)
 (******************************************************************************)
 
 Set Implicit Arguments.
@@ -328,29 +325,7 @@ rewrite in_nil; apply/idP.
   by move: yLn; rewrite yE /= ltnNge (leq_trans nLx) // leq_addr.
 Qed.
 
-(* OBLIGATION D  (the iterative network on `2^ m wires sorts).                *)
-(* On `2^ m wires this is djbsort's iterative merge-exchange network (Knuth's *)
-(* Algorithm 5.2.2M), in sort.c's EXACT comparator order.                     *)
-(*   IMPORTANT: this is NOT nbatcher.v's recursive odd-even mergesort network *)
-(*   `batcher m`, and NOT a reordering of it.  For n = `2^ m >= 8 the two are *)
-(*   different sorting networks -- different comparator SETS, not just order: *)
-(*   e.g. at n = 8 sort.c uses the distance-3 comparators (1,4) and (3,6),    *)
-(*   which `batcher 3` lacks, while `batcher 3` repeats (1,2) and (5,6).  So  *)
-(*   `sorting_batcher` cannot be reused here, by permutation or otherwise.    *)
-(*   It IS, however, the SAME network as nbjsort.v's Knuth-exchange           *)
-(*   `knuth_exchange m` up to COMMUTATION (same comparators, orders differ    *)
-(*   only by swaps of wire-disjoint connectors).  sort_commute.v exploits     *)
-(*   exactly that: it proves the commutation core and discharges this         *)
-(*   obligation from nbjsort's proven `sorted_nfun_knuth_exchange` (see       *)
-(*   sort_commute.sorting_int32_sort_network_e2n).  We keep the local copy    *)
-(*   admitted here to avoid an import cycle.                                  *)
-Lemma sorting_int32_sort_network_e2n m :
-  int32_sort_network (`2^ m) \is sorting.
-Proof.
-(* admitted: needs an independent 0-1 induction on Algorithm M's structure *)
-Admitted.
-
-(* OBLIGATION E  (generic "set the suffix to +infinity" pruning).             *)
+(* Generic 0-1 pruning: "set the suffix to +infinity".                        *)
 (* If a pair-network on N wires sorts, then keeping only the comparators with *)
 (* both endpoints < n yields a network on n wires that also sorts.            *)
 (*   Strategy: 0-1 principle.  Given r : n.-tuple bool, pad with (N - n) ones *)
@@ -452,46 +427,6 @@ rewrite (main ps allps r) val_pad in Hs.
 exact: (subseq_sorted le_trans (prefix_subseq _ _) Hs).
 Qed.
 
-(* -------------------------------------------------------------------------- *)
-(*  The payoff: the network sort.c runs sorts, for EVERY length n.            *)
-(*  This proof is real -- it discharges only via the obligations above.       *)
-(* -------------------------------------------------------------------------- *)
-Theorem sorting_int32_sort_network n :
-  int32_sort_network n \is sorting.
-Proof.
-rewrite /int32_sort_network me_pairs_prune.
-apply: (@sorting_pnet_prune (`2^ (mlog n))).
-- exact: n_le_e2n_mlog.
-- exact: me_pairs_bounded.
-- exact: sorting_int32_sort_network_e2n.
-Qed.
-
-(* -------------------------------------------------------------------------- *)
-(*  Part 4.  What is STILL missing: the C semantics (out of scope here)       *)
-(* -------------------------------------------------------------------------- *)
-
-(*  Everything above verifies the *algorithm* -- the comparator sequence       *)
-(*  `me_pairs n` -- which we claim is the one performed by `int32_sort`.  To    *)
-(*  truly close the loop sort.c -> me_pairs (arrow (1) at the top of the file)  *)
-(*  one must give a formal semantics to the C source and prove that running    *)
-(*  `int32_sort` on a length-n array performs precisely the compare-exchanges  *)
-(*  `me_pairs n`, in order.  That is a separate effort (e.g. a CompCert/VST     *)
-(*  shallow embedding, or a verified extraction), and is NOT discharged here.  *)
-(*                                                                             *)
-(*  We make that single remaining assumption explicit rather than hiding it:   *)
-(*  `sortc_trace n` stands for the comparator trace extracted from the C, and  *)
-(*  the axiom states the transcription is faithful.  Discharging this axiom    *)
-(*  against a real C semantics is the only thing between this file and an      *)
-(*  end-to-end proof of djbsort's `int32_sort`.                                *)
-(*                                                                             *)
-(*  The axiom is a LIST equality (same pairs, same ORDER), which is the only   *)
-(*  faithfulness strong enough to transfer sorting: a mere permutation of the  *)
-(*  comparators need not sort the same way.  `me_pairs n` has been defined to  *)
-(*  reproduce sort.c's exact emission order, and this list equality has been   *)
-(*  checked against the executable transcription example/portable4/sort.ml     *)
-(*  (which is itself byte-for-byte sort.c's control flow) for many n, powers   *)
-(*  of two and not.                                                            *)
-
-Parameter sortc_trace : nat -> seq (nat * nat).
-
-Axiom sortc_faithful : forall n, sortc_trace n = me_pairs n.
+(* The theorem `int32_sort_network n \is sorting` (arbitrary n), and the      *)
+(* end-to-end story, are assembled in int32_sort.v -- once the power-of-two   *)
+(* case is available from nbjsort's iterative Knuth exchange.                 *)
