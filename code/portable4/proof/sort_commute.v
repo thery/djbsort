@@ -27,8 +27,8 @@ Import Order POrderTheory TotalTheory.
 (*  algorithm as sort.c, so it matches `me_pairs` directly (unlike the         *)
 (*  recursive `knuth_exchange`).  Two proved bridges (swap_cswap,              *)
 (*  tval_nfun_pnet) reduce the obligation to the pure seq/nat identity          *)
-(*  `foldl_swap_me_pairs_iknuth`, proved in sort_iter_pairs (K1 + K2), now      *)
-(*  resting only on the cascade transpose `swseq_casc_dcasc`.                    *)
+(*  `foldl_swap_me_pairs_iknuth`, fully proved in sort_iter_pairs (K1 + K2,      *)
+(*  including the cascade transpose `swseq_casc_dcasc`).                          *)
 (******************************************************************************)
 
 Set Implicit Arguments.
@@ -114,9 +114,9 @@ End Commutation.
 (*      swap_cswap      : nbjsort's seq-level [swap] = nsort's [cfun (cswap)]   *)
 (*      tval_nfun_pnet  : running a pair-network = folding [swap] over the pairs *)
 (*  leaving `foldl_swap_me_pairs_iknuth` (me_pairs applied via [swap]-folds     *)
-(*  equals iknuth_exchange, proved in sort_iter_pairs) resting only on the      *)
-(*  cascade transpose.  The commutation core above (cfun_comm / nfun_nswap) is  *)
-(*  the tuple-level analogue of that transpose's engine.                        *)
+(*  equals iknuth_exchange) as the only remaining hole -- pure seq/nat, no      *)
+(*  tuples or ordinals.  The commutation core above (cfun_comm / nfun_nswap) is *)
+(*  what discharges the cascade reordering inside that identity.                *)
 
 Section Bridge.
 
@@ -171,8 +171,8 @@ Qed.
 End Bridge.
 
 (* The seq/nat identity [foldl swap s (me_pairs (size s)) = iknuth_exchange s]  *)
-(* is proved in sort_iter_pairs as [foldl_swap_me_pairs_iknuth] (K1 + K2), now  *)
-(* resting only on the cascade transpose [swseq_casc_dcasc].                    *)
+(* is fully proved in sort_iter_pairs as [foldl_swap_me_pairs_iknuth] (K1 + K2, *)
+(* including the cascade transpose [swseq_casc_dcasc]).                          *)
 
 (* OBLIGATION D, discharged via nbjsort's proven ITERATIVE Knuth exchange.     *)
 Lemma nfun_int32_eq_iknuth m (t : (`2^ m).-tuple bool) :
