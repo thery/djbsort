@@ -97,7 +97,7 @@ Example K2_fun :
 Proof. by vm_compute. Qed.
 
 (* -------------------------------------------------------------------------- *)
-(*  End-to-end: the target identity holds on all 8-bit vectors.               *)
+(*  End-to-end: the target identity holds on all 8- and 16-bit vectors.       *)
 (* -------------------------------------------------------------------------- *)
 
 Example e2e_8 :
