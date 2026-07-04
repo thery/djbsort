@@ -168,6 +168,80 @@ Proof. by move=> hT tE; rewrite (gsort_pad hT tE); exact: (permEl (perm_sort _ _
 
 End GenericBitonic.
 
+Section PeriodicBitonic.
+
+Variable d : disp_t.
+Variable A : orderType d.
+
+(* The network sort_generic *actually* runs is the iterative bitonic sorter,  *)
+(* whose comparator direction is periodic (the OCaml's `i land k`), giving the*)
+(* block-direction pattern f,t,f,t,...  This differs from the reflected bfsort*)
+(* (pattern f,t,t,f,...): here the flag b is used only at the top merge and   *)
+(* the two recursive halves are ALWAYS false/true, never globally flipped.    *)
+(* Both networks sort; they are not the same network.                         *)
+Fixpoint pbsort (b : bool) k : network (`2^ k) :=
+  if k is k1.+1 then nmerge (pbsort false k1) (pbsort true k1) ++
+                     half_cleaner_rec b k1.+1
+  else [::].
+
+(* Same connector count as bfsort: 1 + 2 + ... + k. *)
+Lemma size_pbsort b k : size (pbsort b k) = (k * k.+1)./2.
+Proof.
+elim: k b => [b|k IH b] //.
+have -> : pbsort b k.+1 =
+  nmerge (pbsort false k) (pbsort true k) ++ half_cleaner_rec b k.+1 by [].
+rewrite size_cat /nmerge size_map size_zip !IH minnn size_half_cleaner_rec.
+by rewrite -addn2 mulnDr -!divn2 divnDMl // mulnC.
+Qed.
+
+(* Correctness by the 0-1 principle: pbsort b sorts into direction b, exactly *)
+(* like sorting_bfsort but feeding IH at false/true instead of at b/~b.  The  *)
+(* final merge always sees an ascending-then-descending (hence bitonic) input.*)
+Lemma sorted_pbsort b k (t : (`2^ k).-tuple bool) :
+  sorted (if b then (>=%O : rel _) else <=%O) (nfun (pbsort b k) t).
+Proof.
+elim: k b t => [b t|k IH b t]; first by case: t => [[|x []]].
+rewrite /pbsort -/pbsort nfun_cat.
+apply: sorted_half_cleaner_rec.
+rewrite nfun_merge ?size_pbsort //.
+apply: bitonic_cat; first by apply: (IH false).
+by apply: (IH true).
+Qed.
+
+(* Hence pbsort false is a genuine sorting network. *)
+Lemma sorting_pbsort k : pbsort false k \is sorting.
+Proof. by apply/forallP => t; apply: (sorted_pbsort false). Qed.
+
+(* Running it on a tuple of wire values. *)
+Definition psort k (t : (`2^ k).-tuple A) : (`2^ k).-tuple A :=
+  nfun (pbsort false k) t.
+
+Lemma psort_perm k (t : (`2^ k).-tuple A) : perm_eq (psort t) t.
+Proof. exact: perm_nfun. Qed.
+
+Lemma psort_sorted k (t : (`2^ k).-tuple A) : sorted <=%O (psort t).
+Proof. rewrite /psort; apply: sorting_sorted; exact: sorting_pbsort. Qed.
+
+(* Padding wrapper (obligation (P)) for the periodic sorter, via Section      *)
+(* Padding: an input s padded to `2^ k with a top element T and run through   *)
+(* psort gives sort s back in its first size s positions.                     *)
+Lemma psort_pad k (t : (`2^ k).-tuple A) (s : seq A) (T : A) j :
+  (forall x, (x <= T)%O) -> t = s ++ nseq j T :> seq A ->
+  take (size s) (psort t) = sort <=%O s.
+Proof. rewrite /psort => hT tE; exact: (nfun_pad (sorting_pbsort k) hT tE). Qed.
+
+Lemma psort_pad_sorted k (t : (`2^ k).-tuple A) (s : seq A) (T : A) j :
+  (forall x, (x <= T)%O) -> t = s ++ nseq j T :> seq A ->
+  sorted <=%O (take (size s) (psort t)).
+Proof. by move=> hT tE; rewrite (psort_pad hT tE) (sort_sorted (@le_total _ _)). Qed.
+
+Lemma psort_pad_perm k (t : (`2^ k).-tuple A) (s : seq A) (T : A) j :
+  (forall x, (x <= T)%O) -> t = s ++ nseq j T :> seq A ->
+  perm_eq (take (size s) (psort t)) s.
+Proof. by move=> hT tE; rewrite (psort_pad hT tE); exact: (permEl (perm_sort _ _)). Qed.
+
+End PeriodicBitonic.
+
 (******************************************************************************)
 (*  Roadmap                                                                   *)
 (*                                                                            *)
