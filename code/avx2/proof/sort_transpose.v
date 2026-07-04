@@ -2,7 +2,7 @@ From mathcomp Require Import all_boot order perm algebra.zmodp.
 From mathcomp Require Import zify.
 Require Import more_tuple nsort nbitonic sort_generic.
 
-Import Order POrderTheory TotalTheory.
+Import Order Order.Theory.
 
 (******************************************************************************)
 (*  Scaffold for proving sort_transpose.ml (the 8x8-transpose + sign-flip      *)
@@ -42,12 +42,21 @@ Hypothesis neg_le : forall x y, (neg x <= neg y)%O = (y <= x)%O.  (* reverses or
 (* on a total order meet = min and join = max *)
 Lemma flip_min x y : neg (neg x `&` neg y)%O = (x `|` y)%O.
 Proof.
-(* sketch: by neg_le, neg x `&` neg y = neg (x `|` y) (the smaller of the        *)
-(* flipped pair is the flip of the larger); then negK cancels the outer neg.    *)
-Admitted.
+case/orP: (le_total (neg x) (neg y)) => h.
+  have hyx : (y <= x)%O by rewrite -neg_le.
+  by rewrite (meet_l h) negK (join_l hyx).
+have hxy : (x <= y)%O by rewrite -neg_le.
+by rewrite (meet_r h) negK (join_r hxy).
+Qed.
 
 Lemma flip_max x y : neg (neg x `|` neg y)%O = (x `&` y)%O.
-Proof. (* sketch: dual of flip_min. *) Admitted.
+Proof.
+case/orP: (le_total (neg x) (neg y)) => h.
+  have hyx : (y <= x)%O by rewrite -neg_le.
+  by rewrite (join_r h) negK (meet_r hyx).
+have hxy : (x <= y)%O by rewrite -neg_le.
+by rewrite (join_l h) negK (meet_l hxy).
+Qed.
 
 End SignFlip.
 
@@ -77,21 +86,26 @@ Definition ttr (t : (m * m).-tuple A) : (m * m).-tuple A :=
 
 Lemma trp_involutive : involutive trp.
 Proof.
-(* sketch: write i = a*m + b with a = i %/ m < m, b = i %% m < m; then          *)
-(* trp i encodes b*m + a, whose %/ m = b and %% m = a (since a < m), so         *)
-(* trp (trp i) encodes a*m + b = i.  val-inject and close with nia/divn.        *)
-Admitted.
+move=> i; apply/val_inj => /=.
+have hm : 0 < m by [].
+have ha : i %/ m < m by rewrite ltn_divLR //; apply: ltn_ord.
+by rewrite modnMDl divnMDl // (modn_small ha) (divn_small ha) addn0 -divn_eq.
+Qed.
 
 Lemma ttr_involutive t : ttr (ttr t) = t.
-Proof.
-(* sketch: eq_from_tnth; rewrite tnth_map tnth_ord_tuple twice; trp_involutive. *)
-Admitted.
+Proof. by apply: eq_from_tnth => i; rewrite !tnth_mktuple trp_involutive. Qed.
 
 Lemma ttr_perm t : perm_eq (ttr t) t.
 Proof.
-(* sketch: ttr reindexes by the bijection trp (trp_involutive => bijective),    *)
-(* so it permutes the entries: perm_map / perm_eq of a reindexing by a perm.    *)
-Admitted.
+have E : (ttr t : seq A) = map (tnth t \o trp) (fintype.enum 'I_(m * m)).
+  by rewrite /ttr /=.
+rewrite E map_comp -[X in perm_eq _ X](map_tnth_enum t); apply: perm_map.
+apply: uniq_perm.
+- by rewrite (map_inj_uniq (can_inj trp_involutive)) fintype.enum_uniq.
+- exact: fintype.enum_uniq.
+- by move=> i; rewrite fintype.mem_enum inE; apply/mapP; exists (trp i);
+       rewrite ?fintype.mem_enum ?trp_involutive.
+Qed.
 
 End Transpose.
 
