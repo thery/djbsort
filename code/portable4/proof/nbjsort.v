@@ -565,7 +565,7 @@ by rewrite addnCA addnA subnK 1?ltnW // addnC subnK 1?ltnW.
 Qed.
 
 (******************************************************************************)
-(* Proof for iter1                                                             *)
+(* Proof for iter1                                                            *)
 (******************************************************************************)
 
 Lemma nth_iter1_aux k n p i s s1 (a : A) :
@@ -845,7 +845,7 @@ Lemma size_iter3  p q (s : seq A) : 0 < q -> size (iter3 p q s) = size s.
 Proof. by move=> q_gt; apply/perm_size/perm_iter3. Qed.
 
 (******************************************************************************)
-(* Proof for iknuth_exchange                                                             *)
+(* Proof for iknuth_exchange                                                  *)
 (******************************************************************************)
 
 Lemma perm_iknuth_exchange_aux k p q (s : seq A) :
