@@ -7,3 +7,4 @@ more_tuple.v
 nsort.v
 nbitonic.v
 sort_generic.v
+sort_transpose.v
