@@ -5,24 +5,24 @@ Require Import more_tuple nsort nbitonic sort_generic.
 Import Order Order.Theory.
 
 (******************************************************************************)
-(*  Proving sort_transpose.ml (the 8x8-transpose + sign-flip realisation of    *)
+(*  Proving sort_transpose.ml (the 8x8-transpose + sign-flip realisation of   *)
 (*  the generic bitonic sort).                                                *)
 (*                                                                            *)
-(*  Key fact: the transpose changes NOTHING about the sorting network.  It     *)
-(*  compares the same wire pairs as the plain bitonic sort (= gnet / bfsort,   *)
-(*  already proved sorting in sort_generic.v); it only *executes* a within-lane *)
-(*  distance-d comparator as: flip the descending lanes, transpose the m x m    *)
-(*  block so the comparator becomes a cross-vector one, do a uniform min/max,   *)
-(*  transpose back, unflip.  So there is no second sorting theorem to prove --  *)
-(*  only a REIFICATION: that this transposed/​flipped execution computes         *)
-(*  nfun (gnet k).  Sorting then follows from gsort_sorted.                     *)
+(*  Key fact: the transpose changes NOTHING about the sorting network.  It    *)
+(*  compares the same wire pairs as the plain bitonic sort (= gnet / bfsort,  *)
+(*  proved sorting in sort_generic.v); it only *executes* a within-lane       *)
+(*  distance-d comparator as: flip the descending lanes, transpose the m x m  *)
+(*  block so the comparator becomes a cross-vector one, do a uniform min/max, *)
+(*  transpose back, unflip.  So there is no second sorting theorem to prove --*)
+(*  only a REIFICATION: that this transposed/​flipped execution computes      *)
+(*  nfun (gnet k).  Sorting then follows from gsort_sorted.                   *)
 (*                                                                            *)
-(*  This file proves obligation (C) of that reification -- the conjugation of  *)
-(*  one bitonic stage -- as cfun_conj, from two independent halves:            *)
+(*  This file proves obligation (C) of that reification -- the conjugation of *)
+(*  one bitonic stage -- as cfun_conj, from two independent halves:           *)
 (*    cfun_ttr    : transposing conjugates a connector (layout);              *)
-(*    cfun_tflip  : sign-flipping toggles a connector's polarity (direction);  *)
-(*  plus the transpose (trp/ttr) and sign-flip (neg) algebra they rest on.     *)
-(*  Obligations (R) reification and (P) padding remain (see the end).          *)
+(*    cfun_tflip  : sign-flipping toggles a connector's polarity (direction); *)
+(*  plus the transpose (trp/ttr) and sign-flip (neg) algebra they rest on.    *)
+(*  Obligations (R) reification and (P) padding remain (see the end).         *)
 (******************************************************************************)
 
 Set Implicit Arguments.
@@ -37,8 +37,8 @@ Variable m' : nat.
 Let m := m'.+1.                       (* block side (= 8 for AVX2); kept > 0 *)
 
 (* -------------------------------------------------------------------------- *)
-(* The 8x8 (m x m) lane transpose, as an involutive permutation of wires.      *)
-(* position i = a*m + b  (a = row/vector, b = column/lane)  <->  b*m + a        *)
+(* The 8x8 (m x m) lane transpose, as an involutive permutation of wires.     *)
+(* position i = a*m + b  (a = row/vector, b = column/lane)  <->  b*m + a      *)
 (* -------------------------------------------------------------------------- *)
 Lemma trp_subproof (i : 'I_(m * m)) : (i %% m) * m + i %/ m < m * m.
 Proof.
@@ -81,10 +81,10 @@ apply: uniq_perm.
 Qed.
 
 (* -------------------------------------------------------------------------- *)
-(* cfun componentwise, and the transpose conjugation.  cfun c routes the min   *)
-(* to the smaller index (flipped by cflip); transposing reindexes the pairs    *)
-(* and the caller-supplied c' absorbs the resulting order-test change into its  *)
-(* polarity, so ttr o cfun c o ttr = cfun c'.                                  *)
+(* cfun componentwise, and the transpose conjugation.  cfun c routes the min  *)
+(* to the smaller index (flipped by cflip); transposing reindexes the pairs   *)
+(* and the caller-supplied c' absorbs the resulting order-test change into its*)
+(* polarity, so ttr o cfun c o ttr = cfun c'.                                 *)
 (* -------------------------------------------------------------------------- *)
 Lemma tnth_cfun n (c : connector n) (u : n.-tuple A) i :
   tnth (cfun c u) i =
@@ -108,8 +108,8 @@ by case: P; case: Q; case: F.
 Qed.
 
 (* -------------------------------------------------------------------------- *)
-(* The sign flip: an order-reversing involution (bitwise complement on int32). *)
-(* It swaps min and max, which is why a descending comparator is run as         *)
+(* The sign flip: an order-reversing involution (bitwise complement on int32).*)
+(* It swaps min and max, which is why a descending comparator is run as       *)
 (* flip; ascending min/max; flip.                                             *)
 (* -------------------------------------------------------------------------- *)
 Variable neg : A -> A.
@@ -130,8 +130,8 @@ Lemma tnth_tflip msk t i :
   tnth (tflip msk t) i = if tnth msk i then neg (tnth t i) else tnth t i.
 Proof. by rewrite tnth_mktuple. Qed.
 
-(* Sign-flip conjugation: if the mask is constant on c's pairs, flipping around *)
-(* cfun c toggles the polarity on the masked wires.                            *)
+(* Sign-flip conjugation: if the mask is constant on c's pairs, flipping      *)
+(* around cfun c toggles the polarity on the masked wires.                    *)
 Lemma cfun_tflip (c c' : connector (m * m)) (msk : (m * m).-tuple bool) t :
   (forall i, clink c' i = clink c i) ->
   (forall i, cflip c' i = cflip c i (+) tnth msk i) ->
@@ -145,9 +145,9 @@ case: (tnth msk i) => /=; case: (i <= clink c i); case: (cflip c i) => /=;
 Qed.
 
 (* -------------------------------------------------------------------------- *)
-(* Obligation (C): one within-lane bitonic stage cw is realised by flip;        *)
-(* transpose; the uniform cross-vector stage cc; transpose; unflip.  ct is the  *)
-(* transpose-conjugate of cc and cw is ct with polarity toggled on the mask.    *)
+(* Obligation (C): one within-lane bitonic stage cw is realised by flip;      *)
+(* transpose; the uniform cross-vector stage cc; transpose; unflip.  ct is the*)
+(* transpose-conjugate of cc and cw is ct with polarity toggled on the mask.  *)
 (* -------------------------------------------------------------------------- *)
 Lemma cfun_conj (cc ct cw : connector (m * m)) (msk : (m * m).-tuple bool) t :
   (forall i, clink ct i = trp (clink cc (trp i))) ->
@@ -165,16 +165,16 @@ Qed.
 End Transpose.
 
 (******************************************************************************)
-(*  Remaining obligations towards "sort_transpose.ml sorts":                   *)
+(*  Remaining obligations towards "sort_transpose.ml sorts":                  *)
 (*                                                                            *)
-(*  (R) Reification.  sort_transpose.ml, read as a function tsort on a padded   *)
-(*      (`2^ k)-tuple, applies exactly the connectors of gnet k -- each         *)
-(*      sub-lane stage via cfun_conj, each cross-vector/​whole-vector stage      *)
-(*      directly.  Folding these equalities over the schedule gives             *)
+(*  (R) Reification.  sort_transpose.ml, read as a function tsort on a padded *)
+(*      (`2^ k)-tuple, applies exactly the connectors of gnet k -- each       *)
+(*      sub-lane stage via cfun_conj, each cross-vector/​whole-vector stage   *)
+(*      directly.  Folding these equalities over the schedule gives           *)
 (*        tsort t = nfun (gnet k) t.                                          *)
 (*                                                                            *)
-(*  (P) Padding (shared with sort_generic's roadmap).  Pad to `2^ k with a top  *)
-(*      element, run tsort, take the first n: a sorted permutation of the input.*)
+(*  (P) Padding (shared with sort_generic's roadmap).  Pad to `2^ k with a top*)
+(*      element, run tsort, take the first n: a sorted perm of the input.     *)
 (*                                                                            *)
-(*  Corollary (the target):  sorted <=%O (tsort t), from (R) and gsort_sorted.  *)
+(*  Corollary (the target):  sorted <=%O (tsort t), from (R) and gsort_sorted.*)
 (******************************************************************************)
