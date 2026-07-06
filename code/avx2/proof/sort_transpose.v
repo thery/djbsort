@@ -371,6 +371,54 @@ move=> H1 H2 H3 H4 H5.
 by rewrite (@cfun_ttr cc ct _ H1 H2) (@cfun_tflip ct cw msk _ H3 H4 H5).
 Qed.
 
+(* -------------------------------------------------------------------------- *)
+(* Network-level sign-flip conjugation (lifts cfun_tflip to a whole network,  *)
+(* as nttr lifts cfun_cconj).  If N' is N with each connector's polarity      *)
+(* toggled by a mask msk that is constant on that connector's pairs           *)
+(* (ctflip_rel), then running N' equals: flip the masked wires, run N, unflip.*)
+(* This reifies a whole sub-lane block of sort_transpose.ml (one `land k`     *)
+(* sign-flip around a run of uniform ascending stages) as a plain net.        *)
+(* -------------------------------------------------------------------------- *)
+Definition ctflip_rel (msk : (m * m).-tuple bool) (c c' : connector (m * m)) :
+    bool :=
+  [&& [forall i, clink c' i == clink c i],
+      [forall i, cflip c' i == cflip c i (+) tnth msk i] &
+      [forall i, tnth msk (clink c i) == tnth msk i] ].
+
+Lemma tflip_involutive (msk : (m * m).-tuple bool) t : tflip msk (tflip msk t) = t.
+Proof.
+apply: eq_from_tnth => i; rewrite !tnth_tflip.
+by case: (tnth msk i) => //=; rewrite negK.
+Qed.
+
+Lemma nfun_tflip_conj (msk : (m * m).-tuple bool) (N N' : network (m * m)) :
+  all2 (ctflip_rel msk) N N' ->
+  forall s, nfun N' (tflip msk s) = tflip msk (nfun N s).
+Proof.
+elim: N N' => [|c N IH] [|c' N'] //=.
+move=> /andP[/and3P[H1 H2 H3] Htl] s.
+have Hc : cfun c' (tflip msk s) = tflip msk (cfun c s).
+  by rewrite -(cfun_tflip _ (fun i => eqP (forallP H1 i))
+       (fun i => eqP (forallP H2 i)) (fun i => eqP (forallP H3 i))) tflip_involutive.
+by rewrite Hc (IH _ Htl).
+Qed.
+
+Lemma nfun_tflip_conjE (msk : (m * m).-tuple bool) (N N' : network (m * m)) :
+  all2 (ctflip_rel msk) N N' ->
+  forall t, nfun N' t = tflip msk (nfun N (tflip msk t)).
+Proof.
+by move=> H t; have := nfun_tflip_conj H (tflip msk t); rewrite tflip_involutive.
+Qed.
+
+(* Network-level cfun_conj: composing the transpose (nttr) and sign-flip      *)
+(* (nfun_tflip_conjE) conjugations.  A whole sub-lane block -- flip, then     *)
+(* transpose, uniform net cc_net, transpose, unflip -- is realised by a plain *)
+(* net cw_net (nttr cc_net with polarities toggled by msk).                   *)
+Lemma nfun_conj (msk : (m * m).-tuple bool) (cc_net cw_net : network (m * m)) :
+  all2 (ctflip_rel msk) (nttr cc_net) cw_net ->
+  forall t, nfun cw_net t = tflip msk (ttr (nfun cc_net (ttr (tflip msk t)))).
+Proof. by move=> H t; rewrite (nfun_tflip_conjE H) nfun_nttr. Qed.
+
 End Transpose.
 
 (******************************************************************************)
