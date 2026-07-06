@@ -612,6 +612,48 @@ Proof. exact: nfun_dup. Qed.
 End Tile.
 
 (******************************************************************************)
+(*  Array reshape: a `2^ (j + q)-tuple viewed as `2^ j blocks of `2^ q, block *)
+(*  b holding wires [b * `2^ q, (b+1) * `2^ q).  arsh is the blocks view, afla*)
+(*  its inverse (arshK); this is the layout ntile tiles over, and the frame in*)
+(*  which "each block gets net applied" will be stated.                       *)
+(******************************************************************************)
+Section ArrayReshape.
+
+Variable d : disp_t.
+Variable A : orderType d.
+Variable q : nat.
+
+Lemma asubproof j (b : 'I_(`2^ j)) (w : 'I_(`2^ q)) :
+  b * (`2^ q) + w < `2^ (j + q).
+Proof. by rewrite e2nD; have := ltn_ord b; have := ltn_ord w; nia. Qed.
+
+Lemma arowb j (i : 'I_(`2^ (j + q))) : i %/ (`2^ q) < `2^ j.
+Proof. by rewrite ltn_divLR ?e2n_gt0 // -e2nD ltn_ord. Qed.
+
+Lemma acolb j (i : 'I_(`2^ (j + q))) : i %% (`2^ q) < `2^ q.
+Proof. by apply: ltn_pmod; apply: e2n_gt0. Qed.
+
+Definition arsh j (t : (`2^ (j + q)).-tuple A) :
+    (`2^ j).-tuple ((`2^ q).-tuple A) :=
+  [tuple [tuple tnth t (Ordinal (asubproof b w)) | w < `2^ q] | b < `2^ j].
+
+Definition afla j (M : (`2^ j).-tuple ((`2^ q).-tuple A)) :
+    (`2^ (j + q)).-tuple A :=
+  [tuple tnth (tnth M (Ordinal (arowb i))) (Ordinal (acolb i)) | i < `2^ (j + q)].
+
+Lemma tnth_arsh j (t : (`2^ (j + q)).-tuple A) b w :
+  tnth (tnth (arsh t) b) w = tnth t (Ordinal (asubproof b w)).
+Proof. by rewrite !tnth_mktuple. Qed.
+
+Lemma arshK j (t : (`2^ (j + q)).-tuple A) : afla (arsh t) = t.
+Proof.
+apply: eq_from_tnth => i; rewrite tnth_mktuple tnth_arsh.
+by congr (tnth t _); apply: val_inj => /=; rewrite -divn_eq.
+Qed.
+
+End ArrayReshape.
+
+(******************************************************************************)
 (*  Remaining obligations towards "sort_transpose.ml sorts".  The direction   *)
 (*  rule throughout sort_transpose.ml is periodic (`i land k`), so its target *)
 (*  net is pbsort k (sort_generic.v), NOT gnet/bfsort -- the two sort the same*)
