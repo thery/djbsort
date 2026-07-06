@@ -475,6 +475,17 @@ Lemma nfun_ntflip_conj (msk : (m * m).-tuple bool) (cc_net : network (m * m)) :
             = tflip msk (ttr (nfun cc_net (ttr (tflip msk t)))).
 Proof. by move=> H t; apply: (nfun_conj (all2_ctflip H)). Qed.
 
+(* Sorting semantics of the square combinators: a sorting network on the m    *)
+(* rows/columns sorts every column (nrows) resp. every row (ncols) of the     *)
+(* reshaped square.                                                           *)
+Lemma nrows_sorted (net : network m) (t : (m * m).-tuple A) b :
+  net \is sorting -> sorted <=%O (col (rsh (nfun (nrows net) t)) b).
+Proof. by move=> Hs; rewrite nfun_nrows; apply: sorting_sorted. Qed.
+
+Lemma ncols_sorted (net : network m) (t : (m * m).-tuple A) a :
+  net \is sorting -> sorted <=%O (tnth (rsh (nfun (ncols net) t)) a).
+Proof. by move=> Hs; rewrite nfun_ncols_row; apply: sorting_sorted. Qed.
+
 End Transpose.
 
 (******************************************************************************)
