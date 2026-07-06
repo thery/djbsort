@@ -35,8 +35,8 @@ Section Transpose.
 
 Variable d : disp_t.
 Variable A : orderType d.
-Variable m' : nat.
-Let m := m'.+1.                       (* block side (= 8 for AVX2); kept > 0 *)
+Variable m : nat.
+Hypothesis m_gt0 : 0 < m.             (* block side (= 8 for AVX2); m > 0 *)
 
 (* -------------------------------------------------------------------------- *)
 (* The 8x8 (m x m) lane transpose, as an involutive permutation of wires.     *)
@@ -530,11 +530,11 @@ End Transpose.
 
 (******************************************************************************)
 (*  Single 8x8 (m = `2^ q) square: the concrete sub-lane block of             *)
-(*  sort_transpose.ml.  sqmerge is the within-vector bitonic merge            *)
-(*  half_cleaner_rec false q, cast to the toolkit's m'.+1 shape via e2S.  Its *)
-(*  transposed/​flipped execution (nrows sqmerge across the transpose, wrapped*)
-(*  in the sign flip) reifies to a plain net: the polarity-toggled within-lane*)
-(*  merge equals the flip-conjugated within-lane merge (sqblock_reify).       *)
+(*  sort_transpose.ml.  The transpose toolkit is parametrised by a positive m,*)
+(*  so we take m = `2^ q directly (pf : 0 < `2^ q), no cast.  sqmerge is the  *)
+(*  within-vector bitonic merge half_cleaner_rec false q.  Its transposed/​   *)
+(*  flipped execution reifies to a plain net (sqblock_reify_luni), and per    *)
+(*  vector it applies exactly that merge (nfun_ncols_sqmerge).                *)
 (******************************************************************************)
 Section SquareReify.
 
@@ -545,29 +545,36 @@ Hypothesis negK : involutive neg.
 Hypothesis neg_le : forall x y : A, (neg x <= neg y)%O = (y <= x)%O.
 Variable q : nat.
 
-Lemma e2S : (`2^ q).-1.+1 = `2^ q.
-Proof. by rewrite prednK // e2n_gt0. Qed.
+Let pf : 0 < `2^ q := e2n_gt0 q.
 
-Definition sqmerge : network ((`2^ q).-1.+1) :=
-  ecast n (network n) (esym e2S) (half_cleaner_rec false q).
+Definition sqmerge : network (`2^ q) := half_cleaner_rec false q.
 
-Lemma sqblock_reify (msk : ((`2^ q).-1.+1 * (`2^ q).-1.+1).-tuple bool) t :
+Lemma sqblock_reify (msk : (`2^ q * `2^ q).-tuple bool) t :
   all [pred c | [forall i, tnth msk (clink c i) == tnth msk i]]
-      (nttr (nrows sqmerge)) ->
-  nfun (ntflip msk (nttr (nrows sqmerge))) t
-    = tflip neg msk (nfun (ncols sqmerge) (tflip neg msk t)).
+      (nttr pf (nrows pf sqmerge)) ->
+  nfun (ntflip msk (nttr pf (nrows pf sqmerge))) t
+    = tflip neg msk (nfun (ncols pf sqmerge) (tflip neg msk t)).
 Proof.
-by move=> H; rewrite (nfun_ntflip_conj negK neg_le H) nfun_ncols.
+by move=> H; rewrite (nfun_ntflip_conj negK neg_le H) (nfun_ncols pf).
 Qed.
 
-(* Same, but with the side condition discharged for any lane-uniform mask     *)
+(* Same, with the side condition discharged for any lane-uniform mask         *)
 (* (mask_luni) -- the abstract form of the OCaml's `land k sign flip at       *)
 (* k >= w, which is constant across each vector's lanes.                      *)
-Lemma sqblock_reify_luni (msk : ((`2^ q).-1.+1 * (`2^ q).-1.+1).-tuple bool) t :
+Lemma sqblock_reify_luni (msk : (`2^ q * `2^ q).-tuple bool) t :
   mask_luni msk ->
-  nfun (ntflip msk (nttr (nrows sqmerge))) t
-    = tflip neg msk (nfun (ncols sqmerge) (tflip neg msk t)).
-Proof. by move=> Hu; apply: sqblock_reify; apply: mask_luni_ntflip. Qed.
+  nfun (ntflip msk (nttr pf (nrows pf sqmerge))) t
+    = tflip neg msk (nfun (ncols pf sqmerge) (tflip neg msk t)).
+Proof.
+by move=> Hu; rewrite (nfun_ntflip_conj negK neg_le
+     (@mask_luni_ntflip _ pf msk sqmerge Hu)) (nfun_ncols pf).
+Qed.
+
+(* Per vector, the within-lane block computes the bitonic merge itself.       *)
+Lemma nfun_ncols_sqmerge (t : (`2^ q * `2^ q).-tuple A) a :
+  tnth (rsh pf (nfun (ncols pf sqmerge) t)) a
+    = nfun (half_cleaner_rec false q) (tnth (rsh pf t) a).
+Proof. exact: (nfun_ncols_row pf). Qed.
 
 End SquareReify.
 
@@ -589,9 +596,8 @@ End SquareReify.
 (*           tflip; transpose; uniform net cc_net; transpose; unflip          *)
 (*           = nfun (ntflip msk (nttr cc_net)), a plain net.                  *)
 (*       Whole/cross-vector stages are nrows-shaped; the sub-lane block takes *)
-(*       cc_net = nrows (half_cleaner_rec false q) at lane side m = `2^ q.    *)
-(*       Instantiating at `2^ q needs a cast e2S : (`2^ q).-1.+1 = `2^ q      *)
-(*       (via e2n_gt0) + ecast, since the toolkit is stated over m = m'.+1.   *)
+(*       cc_net = nrows (half_cleaner_rec false q) at lane side m = `2^ q     *)
+(*       (Section SquareReify), instantiating the positive-m toolkit directly.*)
 (*  (R2) Plain iterative = recursive pbsort.  Largely DONE: pbsort unfolded IS*)
 (*       the bottom-up periodic net (half_cleaner_rec b m = one k-phase;      *)
 (*       nmerge/ndup place mergers in blocks).  Match the reified (R1) blocks *)
