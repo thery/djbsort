@@ -569,6 +569,22 @@ Lemma sqblock_reify_luni (msk : ((`2^ q).-1.+1 * (`2^ q).-1.+1).-tuple bool) t :
     = tflip neg msk (nfun (ncols sqmerge) (tflip neg msk t)).
 Proof. by move=> Hu; apply: sqblock_reify; apply: mask_luni_ntflip. Qed.
 
+(* nfun commutes with the network-size cast (nfun_ecast), so ncols sqmerge    *)
+(* really does apply the bitonic merge half_cleaner_rec false q to each       *)
+(* vector's m = `2^ q lanes -- the within-lane merge the transpose block      *)
+(* realises (nfun_ncols_sqmerge).  The casts are `2^ q vs m'.+1 bookkeeping.  *)
+Lemma nfun_ecast n1 n2 (e : n1 = n2) (net : network n1) (t : n2.-tuple A) :
+  nfun (ecast k (network k) e net) t
+    = ecast k (k.-tuple A) e (nfun net (ecast k (k.-tuple A) (esym e) t)).
+Proof. by move: t; case: n2 / e => t. Qed.
+
+Lemma nfun_ncols_sqmerge (t : ((`2^ q).-1.+1 * (`2^ q).-1.+1).-tuple A) a :
+  tnth (rsh (nfun (ncols sqmerge) t)) a
+    = ecast k (k.-tuple A) (esym e2S)
+        (nfun (half_cleaner_rec false q)
+              (ecast k (k.-tuple A) e2S (tnth (rsh t) a))).
+Proof. by rewrite nfun_ncols_row /sqmerge nfun_ecast esymK. Qed.
+
 End SquareReify.
 
 (******************************************************************************)
