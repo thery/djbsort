@@ -419,6 +419,62 @@ Lemma nfun_conj (msk : (m * m).-tuple bool) (cc_net cw_net : network (m * m)) :
   forall t, nfun cw_net t = tflip msk (ttr (nfun cc_net (ttr (tflip msk t)))).
 Proof. by move=> H t; rewrite (nfun_tflip_conjE H) nfun_nttr. Qed.
 
+(* -------------------------------------------------------------------------- *)
+(* ntflip: the concrete witness for the conjugations above.  ctflip msk c     *)
+(* toggles c's polarity by msk via the symmetric term msk i && msk (clink i), *)
+(* which keeps it a valid connector for ANY msk and equals the plain toggle   *)
+(* cflip c (+) msk when msk is constant on c's pairs.  ntflip = map ctflip; on*)
+(* a network whose links all respect msk, it satisfies ctflip_rel pointwise   *)
+(* (all2_ctflip), so it is the cw_net of nfun_tflip_conjE / nfun_conj.        *)
+(* -------------------------------------------------------------------------- *)
+Definition cflip_tog (msk : (m * m).-tuple bool) (c : connector (m * m)) :
+    {ffun 'I_(m * m) -> bool} :=
+  [ffun i => cflip c i (+) (tnth msk i && tnth msk (clink c i))].
+
+Lemma cflip_tog_proof (msk : (m * m).-tuple bool) (c : connector (m * m)) :
+  [forall i, cflip_tog msk c (clink c i) == cflip_tog msk c i].
+Proof.
+apply/forallP => i; apply/eqP; rewrite !ffunE.
+rewrite (eqP (forallP (cfinv c) i)) (eqP (forallP (cflipinv c) i)).
+by rewrite andbC.
+Qed.
+
+Definition ctflip (msk : (m * m).-tuple bool) (c : connector (m * m)) :
+    connector (m * m) :=
+  connector_of (cfinv c) (cflip_tog_proof msk c).
+
+Lemma ctflip_relP (msk : (m * m).-tuple bool) (c : connector (m * m)) :
+  [forall i, tnth msk (clink c i) == tnth msk i] ->
+  ctflip_rel msk c (ctflip msk c).
+Proof.
+move=> Hm; apply/and3P; split; last exact: Hm.
+- by apply/forallP => i; rewrite eqxx.
+- apply/forallP => i; rewrite ffunE (eqP (forallP Hm i)) andbb.
+  by rewrite eqxx.
+Qed.
+
+Definition ntflip (msk : (m * m).-tuple bool) (N : network (m * m)) :
+    network (m * m) := map (ctflip msk) N.
+
+Lemma all2_ctflip (msk : (m * m).-tuple bool) (N : network (m * m)) :
+  all [pred c | [forall i, tnth msk (clink c i) == tnth msk i]] N ->
+  all2 (ctflip_rel msk) N (ntflip msk N).
+Proof.
+elim: N => [|c N IH] //= /andP[Hc HN].
+by rewrite (ctflip_relP Hc) (IH HN).
+Qed.
+
+Lemma nfun_ntflip (msk : (m * m).-tuple bool) (N : network (m * m)) :
+  all [pred c | [forall i, tnth msk (clink c i) == tnth msk i]] N ->
+  forall t, nfun (ntflip msk N) t = tflip msk (nfun N (tflip msk t)).
+Proof. by move=> H t; apply: (nfun_tflip_conjE (all2_ctflip H)). Qed.
+
+Lemma nfun_ntflip_conj (msk : (m * m).-tuple bool) (cc_net : network (m * m)) :
+  all [pred c | [forall i, tnth msk (clink c i) == tnth msk i]] (nttr cc_net) ->
+  forall t, nfun (ntflip msk (nttr cc_net)) t
+            = tflip msk (ttr (nfun cc_net (ttr (tflip msk t)))).
+Proof. by move=> H t; apply: (nfun_conj (all2_ctflip H)). Qed.
+
 End Transpose.
 
 (******************************************************************************)
