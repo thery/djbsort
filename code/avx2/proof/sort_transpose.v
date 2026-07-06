@@ -108,6 +108,71 @@ by case: P; case: Q; case: F.
 Qed.
 
 (* -------------------------------------------------------------------------- *)
+(* Packaging cfun_ttr as a network combinator.  cconj c is the connector      *)
+(* whose clink/cflip are the ones cfun_ttr's side conditions demand, built    *)
+(* explicitly from c via trp; then nttr maps it over a whole network, giving  *)
+(* the "column"/square view: nfun (nttr net) t = ttr (nfun net (ttr t)).      *)
+(* -------------------------------------------------------------------------- *)
+Lemma xor_le_inj n (sigma : 'I_n -> 'I_n) (a b : 'I_n) : injective sigma ->
+  (b <= a) (+) (sigma b <= sigma a) = (a <= b) (+) (sigma a <= sigma b).
+Proof.
+move=> Hinj.
+have key : forall x y : 'I_n, (y <= x) (+) (x <= y) = (x != y).
+  move=> x y; case: (ltngtP x y) => [xy|xy|/val_inj->]; last by rewrite eqxx.
+    by rewrite lt_eqF.
+  by rewrite gt_eqF.
+apply: (canRL (addbK _)).
+by rewrite -addbA key (inj_eq Hinj) -(key a b) addbA addbb addFb.
+Qed.
+
+Definition clink_conj (c : connector (m * m)) : {ffun 'I_(m * m) -> 'I_(m * m)} :=
+  [ffun i => trp (clink c (trp i))].
+
+Definition cflip_conj (c : connector (m * m)) : {ffun 'I_(m * m) -> bool} :=
+  [ffun i => cflip c (trp i) (+) (trp i <= clink c (trp i))
+                            (+) (i <= trp (clink c (trp i)))].
+
+Lemma clink_conj_proof (c : connector (m * m)) :
+  [forall i, clink_conj c (clink_conj c i) == i].
+Proof.
+apply/forallP => i; rewrite !ffunE trp_involutive.
+by rewrite (eqP (forallP (cfinv c) (trp i))) trp_involutive.
+Qed.
+
+Lemma cflip_conj_proof (c : connector (m * m)) :
+  [forall i, cflip_conj c (clink_conj c i) == cflip_conj c i].
+Proof.
+have Hinj : injective trp by apply: can_inj; exact: trp_involutive.
+apply/forallP => i; apply/eqP; rewrite !ffunE !trp_involutive.
+rewrite (eqP (forallP (cfinv c) (trp i))) trp_involutive.
+rewrite (eqP (forallP (cflipinv c) (trp i))).
+rewrite -!addbA; congr (_ (+) _).
+have H := @xor_le_inj _ trp (trp i) (clink c (trp i)) Hinj.
+rewrite trp_involutive in H.
+exact: H.
+Qed.
+
+Definition cconj (c : connector (m * m)) : connector (m * m) :=
+  connector_of (clink_conj_proof c) (cflip_conj_proof c).
+
+Lemma cfun_cconj (c : connector (m * m)) t :
+  cfun (cconj c) t = ttr (cfun c (ttr t)).
+Proof.
+rewrite -(@cfun_ttr c (cconj c)) //.
+- by move=> i; rewrite ffunE.
+- by move=> i; rewrite !ffunE.
+Qed.
+
+Definition nttr (net : network (m * m)) : network (m * m) := map cconj net.
+
+Lemma nfun_nttr (net : network (m * m)) t :
+  nfun (nttr net) t = ttr (nfun net (ttr t)).
+Proof.
+elim: net t => [t|c net IH t] /=; first by rewrite ttr_involutive.
+by rewrite cfun_cconj IH ttr_involutive.
+Qed.
+
+(* -------------------------------------------------------------------------- *)
 (* The sign flip: an order-reversing involution (bitwise complement on int32).*)
 (* It swaps min and max, which is why a descending comparator is run as       *)
 (* flip; ascending min/max; flip.                                             *)
