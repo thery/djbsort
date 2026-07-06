@@ -489,6 +489,40 @@ Proof. by move=> Hs; rewrite nfun_ncols_row; apply: sorting_sorted. Qed.
 End Transpose.
 
 (******************************************************************************)
+(*  Single 8x8 (m = `2^ q) square: the concrete sub-lane block of             *)
+(*  sort_transpose.ml.  sqmerge is the within-vector bitonic merge            *)
+(*  half_cleaner_rec false q, cast to the toolkit's m'.+1 shape via e2S.  Its *)
+(*  transposed/​flipped execution (nrows sqmerge across the transpose, wrapped*)
+(*  in the sign flip) reifies to a plain net: the polarity-toggled within-lane*)
+(*  merge equals the flip-conjugated within-lane merge (sqblock_reify).       *)
+(******************************************************************************)
+Section SquareReify.
+
+Variable d : disp_t.
+Variable A : orderType d.
+Variable neg : A -> A.
+Hypothesis negK : involutive neg.
+Hypothesis neg_le : forall x y : A, (neg x <= neg y)%O = (y <= x)%O.
+Variable q : nat.
+
+Lemma e2S : (`2^ q).-1.+1 = `2^ q.
+Proof. by rewrite prednK // e2n_gt0. Qed.
+
+Definition sqmerge : network ((`2^ q).-1.+1) :=
+  ecast n (network n) (esym e2S) (half_cleaner_rec false q).
+
+Lemma sqblock_reify (msk : ((`2^ q).-1.+1 * (`2^ q).-1.+1).-tuple bool) t :
+  all [pred c | [forall i, tnth msk (clink c i) == tnth msk i]]
+      (nttr (nrows sqmerge)) ->
+  nfun (ntflip msk (nttr (nrows sqmerge))) t
+    = tflip neg msk (nfun (ncols sqmerge) (tflip neg msk t)).
+Proof.
+by move=> H; rewrite (nfun_ntflip_conj negK neg_le H) nfun_ncols.
+Qed.
+
+End SquareReify.
+
+(******************************************************************************)
 (*  Remaining obligations towards "sort_transpose.ml sorts".  The direction   *)
 (*  rule throughout sort_transpose.ml is periodic (`i land k`), so its target *)
 (*  net is pbsort k (sort_generic.v), NOT gnet/bfsort -- the two sort the same*)
