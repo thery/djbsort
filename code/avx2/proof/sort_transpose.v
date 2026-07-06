@@ -81,6 +81,49 @@ apply: uniq_perm.
 Qed.
 
 (* -------------------------------------------------------------------------- *)
+(* The product / "square" view: an (m * m)-tuple reshaped as an m x m matrix  *)
+(* rsh t, row a = the m lanes of vector a (wire a*m + b at row a, column b).  *)
+(* fla is its inverse (rshK).  In this view the wire transpose ttr is exactly *)
+(* the matrix transpose (rsh_ttr) -- the "squaring" that turns a within-lane  *)
+(* comparator into a cross-vector one.                                        *)
+(* -------------------------------------------------------------------------- *)
+Lemma rsh_subproof (a b : 'I_m) : a * m + b < m * m.
+Proof. by have := ltn_ord a; have := ltn_ord b; nia. Qed.
+
+Lemma rsh_rowb (i : 'I_(m * m)) : i %/ m < m.
+Proof. by rewrite ltn_divLR // ltn_ord. Qed.
+
+Lemma rsh_colb (i : 'I_(m * m)) : i %% m < m.
+Proof. by rewrite ltn_pmod. Qed.
+
+Definition rsh (t : (m * m).-tuple A) : m.-tuple (m.-tuple A) :=
+  [tuple [tuple tnth t (Ordinal (rsh_subproof a b)) | b < m] | a < m].
+
+Definition fla (M : m.-tuple (m.-tuple A)) : (m * m).-tuple A :=
+  [tuple tnth (tnth M (Ordinal (rsh_rowb i))) (Ordinal (rsh_colb i)) | i < m * m].
+
+Lemma tnth_rsh t a b :
+  tnth (tnth (rsh t) a) b = tnth t (Ordinal (rsh_subproof a b)).
+Proof. by rewrite !tnth_mktuple. Qed.
+
+Lemma tnth_fla M i :
+  tnth (fla M) i = tnth (tnth M (Ordinal (rsh_rowb i))) (Ordinal (rsh_colb i)).
+Proof. by rewrite tnth_mktuple. Qed.
+
+Lemma rshK t : fla (rsh t) = t.
+Proof.
+apply: eq_from_tnth => i; rewrite tnth_fla tnth_rsh.
+by congr (tnth t _); apply: val_inj => /=; rewrite -divn_eq.
+Qed.
+
+Lemma rsh_ttr t a b :
+  tnth (tnth (rsh (ttr t)) a) b = tnth (tnth (rsh t) b) a.
+Proof.
+rewrite !tnth_rsh tnth_ttr; congr (tnth t _); apply: val_inj => /=.
+by rewrite modnMDl divnMDl // (modn_small (ltn_ord b)) (divn_small (ltn_ord b)) addn0.
+Qed.
+
+(* -------------------------------------------------------------------------- *)
 (* cfun componentwise, and the transpose conjugation.  cfun c routes the min  *)
 (* to the smaller index (flipped by cflip); transposing reindexes the pairs   *)
 (* and the caller-supplied c' absorbs the resulting order-test change into its*)
