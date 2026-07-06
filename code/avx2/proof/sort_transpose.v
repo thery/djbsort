@@ -579,6 +579,39 @@ Proof. exact: (nfun_ncols_row pf). Qed.
 End SquareReify.
 
 (******************************************************************************)
+(*  Tiling: applying a network on `2^ q wires to each of the `2^ j consecutive*)
+(*  blocks of a `2^ (j + q)-wire array (block-diagonal lift, iterated ndup).  *)
+(*  Indexing by the total exponent j + q keeps every step definitional        *)
+(*  (`2^ j.+1 = `2^ j + `2^ j, which is ndup's shape), so ntile needs no cast.*)
+(*  It is the OCaml's per-8-vector-block processing at array scale, and adds  *)
+(*  no connectors (size_ntile) since all blocks run in parallel.              *)
+(******************************************************************************)
+Section Tile.
+
+Variable d : disp_t.
+Variable A : orderType d.
+Variable q : nat.                    (* block size = `2^ q (= 8 for AVX2) *)
+
+Fixpoint ntile (net : network (`2^ q)) j : network (`2^ (j + q)) :=
+  if j is j1.+1 then ndup (ntile net j1) else net.
+
+Lemma size_ntile (net : network (`2^ q)) j : size (ntile net j) = size net.
+Proof.
+by elim: j => [//|j IH] /=; rewrite /ndup /nmerge size_map size_zip IH minnn.
+Qed.
+
+Lemma nfun_ntile0 (net : network (`2^ q)) (t : (`2^ q).-tuple A) :
+  nfun (ntile net 0) t = nfun net t.
+Proof. by []. Qed.
+
+Lemma nfun_ntileS (net : network (`2^ q)) j (t : (`2^ (j.+1 + q)).-tuple A) :
+  nfun (ntile net j.+1) t
+    = [tuple of nfun (ntile net j) (ttake t) ++ nfun (ntile net j) (tdrop t)].
+Proof. exact: nfun_dup. Qed.
+
+End Tile.
+
+(******************************************************************************)
 (*  Remaining obligations towards "sort_transpose.ml sorts".  The direction   *)
 (*  rule throughout sort_transpose.ml is periodic (`i land k`), so its target *)
 (*  net is pbsort k (sort_generic.v), NOT gnet/bfsort -- the two sort the same*)
