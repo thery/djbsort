@@ -654,6 +654,66 @@ Qed.
 End ArrayReshape.
 
 (******************************************************************************)
+(*  Tiling meets reshape: running ntile net j on a `2^ (j + q)-wire array     *)
+(*  applies net independently to each of its `2^ j blocks (the arsh view).    *)
+(*  nfun_ntile_arsh is the blockwise semantics of ntile; its structural core  *)
+(*  is tnth_arsh_cat, which says arsh of a concatenation dispatches each      *)
+(*  block to the half it lands in (split on the block index).  This is the    *)
+(*  frame in which the reified sub-lane block (Section SquareReify) is lifted *)
+(*  to the whole array: tile the 64-wire square net across every block.       *)
+(******************************************************************************)
+Section TileReshape.
+
+Variable d : disp_t.
+Variable A : orderType d.
+Variable q : nat.
+
+(* arsh of a concatenation: block b comes from the half its index selects.    *)
+Lemma tnth_arsh_cat j (s1 s2 : (`2^ (j + q)).-tuple A)
+    (b : 'I_(`2^ j + `2^ j)) :
+  tnth (arsh ([tuple of s1 ++ s2] : (`2^ (j.+1 + q)).-tuple A)) b =
+    match split b with
+    | inl b1 => tnth (arsh s1) b1
+    | inr b2 => tnth (arsh s2) b2
+    end.
+Proof.
+apply: eq_from_tnth => w; rewrite tnth_arsh.
+case: (splitP b) => [b1 Hb1 | b2 Hb2].
+- rewrite tnth_arsh.
+  have -> : Ordinal (asubproof (j := j.+1) b w) =
+            lshift (`2^ (j + q)) (Ordinal (asubproof b1 w)).
+    by apply: val_inj => /=; rewrite Hb1.
+  by rewrite tnth_lshift.
+- rewrite tnth_arsh.
+  have -> : Ordinal (asubproof (j := j.+1) b w) =
+            rshift (`2^ (j + q)) (Ordinal (asubproof b2 w)).
+    by apply: val_inj => /=; rewrite Hb2 mulnDl -e2nD addnA.
+  by rewrite tnth_rshift.
+Qed.
+
+(* At j = 0 the array is a single block, so arsh reads back the whole tuple.   *)
+Lemma arsh0 (s : (`2^ (0 + q)).-tuple A) (b : 'I_(`2^ 0)) :
+  tnth (arsh s) b = s.
+Proof.
+apply: eq_from_tnth => w; rewrite tnth_arsh; congr (tnth s _).
+by apply: val_inj => /=; case: b => -[|m] //= mLt; rewrite mul0n.
+Qed.
+
+(* Blockwise semantics of ntile: each block gets net applied to it.           *)
+Lemma nfun_ntile_arsh (net : network (`2^ q)) j
+    (t : (`2^ (j + q)).-tuple A) (b : 'I_(`2^ j)) :
+  tnth (arsh (nfun (ntile net j) t)) b = nfun net (tnth (arsh t) b).
+Proof.
+elim: j t b => [t b|j IH t b].
+  by rewrite nfun_ntile0 !arsh0.
+rewrite nfun_ntileS tnth_arsh_cat.
+rewrite [X in nfun net (tnth (arsh X) b)](cat_ttake_tdrop t) tnth_arsh_cat.
+by case: (split b) => b'; rewrite IH.
+Qed.
+
+End TileReshape.
+
+(******************************************************************************)
 (*  Remaining obligations towards "sort_transpose.ml sorts".  The direction   *)
 (*  rule throughout sort_transpose.ml is periodic (`i land k`), so its target *)
 (*  net is pbsort k (sort_generic.v), NOT gnet/bfsort -- the two sort the same*)
