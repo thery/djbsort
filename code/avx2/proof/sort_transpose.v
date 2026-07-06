@@ -486,6 +486,46 @@ Lemma ncols_sorted (net : network m) (t : (m * m).-tuple A) a :
   net \is sorting -> sorted <=%O (tnth (rsh (nfun (ncols net) t)) a).
 Proof. by move=> Hs; rewrite nfun_ncols_row; apply: sorting_sorted. Qed.
 
+(* -------------------------------------------------------------------------- *)
+(* Discharging ntflip's mask side condition.  cconj (crow c) links WITHIN a   *)
+(* vector (same row a, lanes b <-> clink c b: clink_cconj_crow), so it keeps  *)
+(* the vector index i %/ m fixed (clink_cconj_crow_div).  Hence a lane-uniform*)
+(* mask (mask_luni: constant on wires sharing a vector index -- the abstract  *)
+(* form of the OCaml's `land k with k >= w) is constant on every pair of      *)
+(* nttr (nrows net0), discharging ntflip's hypothesis (mask_luni_ntflip).     *)
+(* -------------------------------------------------------------------------- *)
+Lemma trp_rsh a b : trp (Ordinal (rsh_subproof a b)) = Ordinal (rsh_subproof b a).
+Proof. by apply: val_inj => /=; rewrite modnMDs divnMDs. Qed.
+
+Lemma clink_cconj_crow (c : connector m) a b :
+  clink (cconj (crow c)) (Ordinal (rsh_subproof a b))
+    = Ordinal (rsh_subproof a (clink c b)).
+Proof. by rewrite ffunE trp_rsh clink_crowE trp_rsh. Qed.
+
+Lemma i_rsh (i : 'I_(m * m)) :
+  i = Ordinal (rsh_subproof (Ordinal (rsh_rowb i)) (Ordinal (rsh_colb i))).
+Proof. by apply: val_inj => /=; rewrite -divn_eq. Qed.
+
+Lemma clink_cconj_crow_div (c : connector m) i :
+  (clink (cconj (crow c)) i) %/ m = i %/ m.
+Proof.
+have := clink_cconj_crow c (Ordinal (rsh_rowb i)) (Ordinal (rsh_colb i)).
+by rewrite -i_rsh => ->; exact: divnMDs.
+Qed.
+
+Definition mask_luni (msk : (m * m).-tuple bool) : Prop :=
+  forall i j : 'I_(m * m), i %/ m = j %/ m -> tnth msk i = tnth msk j.
+
+Lemma mask_luni_ntflip (msk : (m * m).-tuple bool) (net0 : network m) :
+  mask_luni msk ->
+  all [pred c | [forall i, tnth msk (clink c i) == tnth msk i]] (nttr (nrows net0)).
+Proof.
+move=> Hu; rewrite /nttr /nrows.
+elim: net0 => [//|c net0 IH] /=.
+rewrite IH andbT; apply/forallP => i; apply/eqP.
+by apply: Hu; rewrite clink_cconj_crow_div.
+Qed.
+
 End Transpose.
 
 (******************************************************************************)
@@ -519,6 +559,15 @@ Lemma sqblock_reify (msk : ((`2^ q).-1.+1 * (`2^ q).-1.+1).-tuple bool) t :
 Proof.
 by move=> H; rewrite (nfun_ntflip_conj negK neg_le H) nfun_ncols.
 Qed.
+
+(* Same, but with the side condition discharged for any lane-uniform mask     *)
+(* (mask_luni) -- the abstract form of the OCaml's `land k sign flip at       *)
+(* k >= w, which is constant across each vector's lanes.                      *)
+Lemma sqblock_reify_luni (msk : ((`2^ q).-1.+1 * (`2^ q).-1.+1).-tuple bool) t :
+  mask_luni msk ->
+  nfun (ntflip msk (nttr (nrows sqmerge))) t
+    = tflip neg msk (nfun (ncols sqmerge) (tflip neg msk t)).
+Proof. by move=> Hu; apply: sqblock_reify; apply: mask_luni_ntflip. Qed.
 
 End SquareReify.
 
