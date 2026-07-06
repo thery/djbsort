@@ -410,6 +410,15 @@ Proof.
 by move=> H t; have := nfun_tflip_conj H (tflip msk t); rewrite tflip_involutive.
 Qed.
 
+(* Network-level cfun_conj: composing the transpose (nttr) and sign-flip      *)
+(* (nfun_tflip_conjE) conjugations.  A whole sub-lane block -- flip, then     *)
+(* transpose, uniform net cc_net, transpose, unflip -- is realised by a plain *)
+(* net cw_net (nttr cc_net with polarities toggled by msk).                   *)
+Lemma nfun_conj (msk : (m * m).-tuple bool) (cc_net cw_net : network (m * m)) :
+  all2 (ctflip_rel msk) (nttr cc_net) cw_net ->
+  forall t, nfun cw_net t = tflip msk (ttr (nfun cc_net (ttr (tflip msk t)))).
+Proof. by move=> H t; rewrite (nfun_tflip_conjE H) nfun_nttr. Qed.
+
 End Transpose.
 
 (******************************************************************************)
