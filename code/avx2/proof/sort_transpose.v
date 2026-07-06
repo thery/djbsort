@@ -216,6 +216,105 @@ by rewrite cfun_cconj IH ttr_involutive.
 Qed.
 
 (* -------------------------------------------------------------------------- *)
+(* Applying a network m to the rows / columns of the square.  crow c is the   *)
+(* connector m lifted to act on the vector index (row a), uniformly across the*)
+(* m lanes (column b): wire a*m+b <-> (clink c a)*m+b, same direction for all *)
+(* b.  This models the OCaml's whole-vector min/max.  nrows = map crow runs c *)
+(* on each column of the square (nfun_nrows); ncols = nttr o nrows runs it on *)
+(* each row (nfun_ncols_row), the transpose-conjugate.                        *)
+(* -------------------------------------------------------------------------- *)
+Lemma divnMDs (x b : 'I_m) : (x * m + b) %/ m = x.
+Proof. by rewrite divnMDl // divn_small ?ltn_ord // addn0. Qed.
+
+Lemma modnMDs (x b : 'I_m) : (x * m + b) %% m = b.
+Proof. by rewrite modnMDl modn_small ?ltn_ord. Qed.
+
+Definition clink_crow (c : connector m) : {ffun 'I_(m * m) -> 'I_(m * m)} :=
+  [ffun i => Ordinal (rsh_subproof (clink c (Ordinal (rsh_rowb i)))
+                                   (Ordinal (rsh_colb i)))].
+
+Definition cflip_crow (c : connector m) : {ffun 'I_(m * m) -> bool} :=
+  [ffun i => cflip c (Ordinal (rsh_rowb i))].
+
+Lemma orow (x b : 'I_m) : Ordinal (rsh_rowb (Ordinal (rsh_subproof x b))) = x.
+Proof. by apply: val_inj; rewrite /= divnMDs. Qed.
+
+Lemma ocol (x b : 'I_m) : Ordinal (rsh_colb (Ordinal (rsh_subproof x b))) = b.
+Proof. by apply: val_inj; rewrite /= modnMDs. Qed.
+
+Lemma clink_crow_proof (c : connector m) :
+  [forall i, clink_crow c (clink_crow c i) == i].
+Proof.
+apply/forallP => i; apply/eqP; rewrite !ffunE orow ocol.
+rewrite (eqP (forallP (cfinv c) (Ordinal (rsh_rowb i)))).
+by apply: val_inj => /=; rewrite -divn_eq.
+Qed.
+
+Lemma cflip_crow_proof (c : connector m) :
+  [forall i, cflip_crow c (clink_crow c i) == cflip_crow c i].
+Proof.
+apply/forallP => i; apply/eqP; rewrite !ffunE orow.
+by rewrite (eqP (forallP (cflipinv c) (Ordinal (rsh_rowb i)))).
+Qed.
+
+Definition crow (c : connector m) : connector (m * m) :=
+  connector_of (clink_crow_proof c) (cflip_crow_proof c).
+
+Definition col (M : m.-tuple (m.-tuple A)) (b : 'I_m) : m.-tuple A :=
+  [tuple tnth (tnth M a) b | a < m].
+
+Lemma tnth_col M b a : tnth (col M b) a = tnth (tnth M a) b.
+Proof. by rewrite tnth_mktuple. Qed.
+
+Lemma leq_rsh (a x b : 'I_m) :
+  (Ordinal (rsh_subproof a b) <= Ordinal (rsh_subproof x b)) = (a <= x).
+Proof. by rewrite /= leq_add2r leq_pmul2r. Qed.
+
+Lemma clink_crowE (c : connector m) a b :
+  clink (crow c) (Ordinal (rsh_subproof a b)) = Ordinal (rsh_subproof (clink c a) b).
+Proof. by rewrite ffunE orow ocol. Qed.
+
+Lemma cflip_crowE (c : connector m) a b :
+  cflip (crow c) (Ordinal (rsh_subproof a b)) = cflip c a.
+Proof. by rewrite ffunE orow. Qed.
+
+Lemma cfun_crow (c : connector m) t a b :
+  tnth (cfun (crow c) t) (Ordinal (rsh_subproof a b))
+    = tnth (cfun c (col (rsh t) b)) a.
+Proof.
+by rewrite !tnth_cfun clink_crowE cflip_crowE leq_rsh !tnth_col !tnth_rsh.
+Qed.
+
+Definition nrows (net : network m) : network (m * m) := map crow net.
+
+Definition ncols (net : network m) : network (m * m) := nttr (nrows net).
+
+Lemma col_rsh_crow (c : connector m) t b :
+  col (rsh (cfun (crow c) t)) b = cfun c (col (rsh t) b).
+Proof. by apply: eq_from_tnth => a; rewrite tnth_col tnth_rsh cfun_crow. Qed.
+
+Lemma nfun_nrows (net : network m) t b :
+  col (rsh (nfun (nrows net) t)) b = nfun net (col (rsh t) b).
+Proof.
+elim: net t => [t|c net IH t] //=.
+by rewrite IH col_rsh_crow.
+Qed.
+
+Lemma nfun_ncols (net : network m) t :
+  nfun (ncols net) t = ttr (nfun (nrows net) (ttr t)).
+Proof. exact: nfun_nttr. Qed.
+
+Lemma rsh_ttr_row t a : tnth (rsh (ttr t)) a = col (rsh t) a.
+Proof. by apply: eq_from_tnth => b; rewrite rsh_ttr tnth_col. Qed.
+
+Lemma nfun_ncols_row (net : network m) t a :
+  tnth (rsh (nfun (ncols net) t)) a = nfun net (tnth (rsh t) a).
+Proof.
+rewrite nfun_ncols rsh_ttr_row nfun_nrows.
+by congr (nfun net _); rewrite -(rsh_ttr_row (ttr t)) ttr_involutive.
+Qed.
+
+(* -------------------------------------------------------------------------- *)
 (* The sign flip: an order-reversing involution (bitwise complement on int32).*)
 (* It swaps min and max, which is why a descending comparator is run as       *)
 (* flip; ascending min/max; flip.                                             *)
