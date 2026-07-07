@@ -1100,6 +1100,42 @@ Proof. by rewrite tsortE; apply: psort_sorted. Qed.
 End Stacking.
 
 (******************************************************************************)
+(*  Padding (obligation P) for the recursive sort.  An input s padded to      *)
+(*  `2^ k with a top element T and run through tsort gives sort s back in its *)
+(*  first size s positions -- so tsort sorts arbitrary-length inputs, not just*)
+(*  powers of two.  Immediate from tsortE + the psort_pad_* lemmas of         *)
+(*  sort_generic (tsort = psort).                                             *)
+(******************************************************************************)
+Section StackingPad.
+
+Variable d : disp_t.
+Variable A : orderType d.
+Variable tmerge : bool -> forall m, (`2^ m).-tuple A -> (`2^ m).-tuple A.
+Hypothesis tmergeP :
+  forall b m (t : (`2^ m).-tuple A), tmerge b t = nfun (half_cleaner_rec b m) t.
+
+Lemma tsort_pad k (t : (`2^ k).-tuple A) (s : seq A) (T : A) j :
+  (forall x, (x <= T)%O) -> t = s ++ nseq j T :> seq A ->
+  take (size s) (tsort tmerge false t) = sort <=%O s.
+Proof. by move=> hT tE; rewrite (tsortE tmergeP); apply: (psort_pad hT tE). Qed.
+
+Lemma tsort_pad_sorted k (t : (`2^ k).-tuple A) (s : seq A) (T : A) j :
+  (forall x, (x <= T)%O) -> t = s ++ nseq j T :> seq A ->
+  sorted <=%O (take (size s) (tsort tmerge false t)).
+Proof.
+by move=> hT tE; rewrite (tsortE tmergeP); apply: (psort_pad_sorted hT tE).
+Qed.
+
+Lemma tsort_pad_perm k (t : (`2^ k).-tuple A) (s : seq A) (T : A) j :
+  (forall x, (x <= T)%O) -> t = s ++ nseq j T :> seq A ->
+  perm_eq (take (size s) (tsort tmerge false t)) s.
+Proof.
+by move=> hT tE; rewrite (tsortE tmergeP); apply: (psort_pad_perm hT tE).
+Qed.
+
+End StackingPad.
+
+(******************************************************************************)
 (*  Remaining obligations towards "sort_transpose.ml sorts".  The direction   *)
 (*  rule throughout sort_transpose.ml is periodic (`i land k`), so its target *)
 (*  net is pbsort k (sort_generic.v), NOT gnet/bfsort -- the two sort the same*)
