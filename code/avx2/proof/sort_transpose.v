@@ -857,6 +857,39 @@ Qed.
 End AscReshape.
 
 (******************************************************************************)
+(*  Lifting the ascending sub-lane reification to the whole array.  ntile     *)
+(*  respects nfun-equality of the tiled block (nfun_ntile_eq), so tiling the  *)
+(*  transpose square block over the `2^ (j + (q + q))-wire array equals tiling*)
+(*  the plain sub-lane block -- cast-free, in nested-tile form.  (Collapsing  *)
+(*  ntile (ntile _ q) j to the flat ntile _ (j + q) needs an associativity    *)
+(*  cast and is deferred to the phase assembly.)                              *)
+(******************************************************************************)
+Section AscArray.
+
+Variable d : disp_t.
+Variable A : orderType d.
+
+(* ntile respects nfun-equality of the tiled block.                           *)
+Lemma nfun_ntile_eq q (net1 net2 : network (`2^ q)) :
+  (forall s : (`2^ q).-tuple A, nfun net1 s = nfun net2 s) ->
+  forall j (t : (`2^ (j + q)).-tuple A),
+    nfun (ntile net1 j) t = nfun (ntile net2 j) t.
+Proof.
+move=> E; elim=> [t|j IH t]; first by rewrite !nfun_ntile0.
+by rewrite !nfun_ntileS !IH.
+Qed.
+
+Variable q : nat.
+
+(* Full-array ascending sub-lane match, cast-free (nested-tile form).          *)
+Lemma nfun_tile_sqpow_asc j (t : (`2^ (j + (q + q))).-tuple A) :
+  nfun (ntile (sqpow q) j) t =
+  nfun (ntile (ntile (half_cleaner_rec false q) q) j) t.
+Proof. by apply: nfun_ntile_eq => s; apply: nfun_sqpow_tile. Qed.
+
+End AscArray.
+
+(******************************************************************************)
 (*  Remaining obligations towards "sort_transpose.ml sorts".  The direction   *)
 (*  rule throughout sort_transpose.ml is periodic (`i land k`), so its target *)
 (*  net is pbsort k (sort_generic.v), NOT gnet/bfsort -- the two sort the same*)
