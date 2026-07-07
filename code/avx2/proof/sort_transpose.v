@@ -760,6 +760,30 @@ Proof. by rewrite nfun_sqpow_ncols nfun_ncols_sqmerge. Qed.
 End SquareTile.
 
 (******************************************************************************)
+(*  The whole array's sub-lane stage.  Tiling the square block sqpow across a *)
+(*  `2^ (j + (q + q))-wire array (ntile at block exponent q + q) applies      *)
+(*  half_cleaner_rec false q to each of its vectors, indexed as (square-block *)
+(*  B, vector a within it) -- the composition of nfun_ntile_arsh (each square *)
+(*  block gets sqpow) with nfun_sqpow (sqpow reifies to per-vector            *)
+(*  half_cleaner_rec).  This is the sub-lane half of every bitonic phase, at  *)
+(*  array scale.                                                              *)
+(******************************************************************************)
+Section ArraySubLane.
+
+Variable d : disp_t.
+Variable A : orderType d.
+Variable q : nat.
+
+Lemma nfun_tile_sqpow j (t : (`2^ (j + (q + q))).-tuple A) (B : 'I_(`2^ j)) a :
+  tnth (rsh (e2n_gt0 q) (sqcast (tnth (arsh (nfun (ntile (sqpow q) j) t)) B)))
+       a =
+  nfun (half_cleaner_rec false q)
+       (tnth (rsh (e2n_gt0 q) (sqcast (tnth (arsh t) B))) a).
+Proof. by rewrite nfun_ntile_arsh nfun_sqpow. Qed.
+
+End ArraySubLane.
+
+(******************************************************************************)
 (*  Remaining obligations towards "sort_transpose.ml sorts".  The direction   *)
 (*  rule throughout sort_transpose.ml is periodic (`i land k`), so its target *)
 (*  net is pbsort k (sort_generic.v), NOT gnet/bfsort -- the two sort the same*)
