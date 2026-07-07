@@ -890,6 +890,52 @@ Proof. by apply: nfun_ntile_eq => s; apply: nfun_sqpow_tile. Qed.
 End AscArray.
 
 (******************************************************************************)
+(*  Collapsing the nested tiling to the flat one.  ntile (ntile net q) j and  *)
+(*  ntile net (j + q) are the same j + q-fold ndup iteration, differing only  *)
+(*  by how the exponent brackets (addnA) -- so they agree up to one index cast*)
+(*  (ntile_ntile, via ndup_ecast; nat proof-irrelevance discharges the cast   *)
+(*  bookkeeping).  nfun_tile_sqpow_flat then states the ascending array match *)
+(*  against pbsort's FLAT sub-lane tail ntile (half_cleaner_rec false q) (j+q)*)
+(*  (as produced by drop_half_cleaner_rec), modulo that reshape.              *)
+(******************************************************************************)
+Section Collapse.
+
+Variable d : disp_t.
+Variable A : orderType d.
+
+Lemma ndup_ecast m1 m2 (e : m1 = m2) (X : network m1) :
+  ndup (ecast n (network n) e X) =
+  ecast n (network n) (congr1 (fun k => k + k) e) (ndup X).
+Proof. by case: m2 / e. Qed.
+
+Lemma ntile_ntile p (net : network (`2^ p)) q j :
+  ntile (ntile net q) j =
+  ecast n (network n) (congr1 e2n (esym (addnA j q p))) (ntile net (j + q)).
+Proof.
+elim: j => [|j IH].
+  by rewrite (eq_irrelevance (congr1 e2n (esym (addnA 0 q p))) (erefl _)).
+rewrite /= IH ndup_ecast.
+by congr (ecast _ _ _ _); exact: eq_irrelevance.
+Qed.
+
+Variable q : nat.
+
+(* Flat form of the ascending array match: the AVX2 sub-lane over the whole   *)
+(* array equals pbsort's flat-tiled sub-lane block, modulo the associativity  *)
+(* reshape (any proof E works, nat equality being irrelevant).                *)
+Lemma nfun_tile_sqpow_flat j (t : (`2^ (j + (q + q))).-tuple A)
+    (E : `2^ (j + (q + q)) = `2^ (j + q + q)) :
+  nfun (ntile (sqpow q) j) t =
+  tcast (esym E) (nfun (ntile (half_cleaner_rec false q) (j + q)) (tcast E t)).
+Proof.
+rewrite nfun_tile_sqpow_asc ntile_ntile nfun_ecast.
+rewrite (eq_irrelevance (congr1 e2n (esym (addnA j q q))) (esym E)).
+by rewrite (eq_irrelevance (esym (esym E)) E).
+Qed.
+
+End Collapse.
+
+(******************************************************************************)
 (*  Remaining obligations towards "sort_transpose.ml sorts".  The direction   *)
 (*  rule throughout sort_transpose.ml is periodic (`i land k`), so its target *)
 (*  net is pbsort k (sort_generic.v), NOT gnet/bfsort -- the two sort the same*)
