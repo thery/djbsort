@@ -1136,6 +1136,91 @@ Qed.
 End StackingPad.
 
 (******************************************************************************)
+(*  The concrete AVX2 merge, and the end-to-end result.  tmerge_avx2 realises *)
+(*  one bitonic merge the AVX2 way: for width >= 2q via the transpose square  *)
+(*  phase (ph_asc, sign-flipped for the descending direction), and by plain   *)
+(*  comparators for the sub-64 base.  tmerge_avx2P discharges the tmergeP     *)
+(*  hypothesis, so instantiating the Section Stacking / StackingPad results at*)
+(*  tmerge := tmerge_avx2 gives the end-to-end theorem: the recursive AVX2    *)
+(*  transpose sort sorts (and permutes) any input -- powers of two directly,  *)
+(*  arbitrary lengths via padding.  This closes obligations (R) and (P).      *)
+(******************************************************************************)
+Section ConcreteMerge.
+
+Variable d : disp_t.
+Variable A : orderType d.
+Variable q : nat.
+Variable neg : A -> A.
+Hypothesis negK : involutive neg.
+Hypothesis neg_le : forall x y, (neg x <= neg y)%O = (y <= x)%O.
+
+(* The ascending AVX2 merge phase, as a function (j-indexed, cast-free).       *)
+Definition ph_asc j (t : (`2^ (j + q + q)).-tuple A) :=
+  nfun (take (j + q) (half_cleaner_rec false (j + q + q))
+        ++ ecast n (network n) (congr1 e2n (addnA j q q)) (ntile (sqpow q) j)) t.
+
+Lemma ph_ascE j (t : (`2^ (j + q + q)).-tuple A) :
+  @ph_asc j t = nfun (half_cleaner_rec false (j + q + q)) t.
+Proof. exact: nfun_avx2_phase_asc. Qed.
+
+(* Either direction, via the sign flip for descending.                         *)
+Definition tmerge_phase (b : bool) j (t : (`2^ (j + q + q)).-tuple A) :=
+  if b then nflip neg (@ph_asc j (nflip neg t)) else @ph_asc j t.
+
+Lemma tmerge_phaseE b j (t : (`2^ (j + q + q)).-tuple A) :
+  @tmerge_phase b j t = nfun (half_cleaner_rec b (j + q + q)) t.
+Proof.
+case: b; rewrite /tmerge_phase /ph_asc; last exact: nfun_avx2_phase_asc.
+exact: nfun_avx2_phase_desc.
+Qed.
+
+Lemma tmerge_sub m : q + q <= m -> m - (q + q) + q + q = m.
+Proof. by move=> h; rewrite -addnA subnK. Qed.
+
+Lemma nfun_hcr_ecast b n1 n2 (e : n1 = n2) (t : (`2^ n2).-tuple A) :
+  ecast n (n.-tuple A) (congr1 e2n e)
+    (nfun (half_cleaner_rec b n1) (ecast n (n.-tuple A) (esym (congr1 e2n e)) t))
+  = nfun (half_cleaner_rec b n2) t.
+Proof. by move: t; case: n2 / e => t. Qed.
+
+(* The concrete AVX2 merge: transpose phase for width >= 2q, plain below.       *)
+Definition tmerge_avx2 (b : bool) m (t : (`2^ m).-tuple A) : (`2^ m).-tuple A :=
+  match leqP (q + q) m with
+  | LeqNotGtn h =>
+      ecast n (n.-tuple A) (congr1 e2n (tmerge_sub h))
+        (tmerge_phase b (ecast n (n.-tuple A) (esym (congr1 e2n (tmerge_sub h))) t))
+  | GtnNotLeq _ => nfun (half_cleaner_rec b m) t
+  end.
+
+Lemma tmerge_avx2P b m (t : (`2^ m).-tuple A) :
+  @tmerge_avx2 b m t = nfun (half_cleaner_rec b m) t.
+Proof.
+rewrite /tmerge_avx2; case: leqP => [h|_] //.
+by rewrite tmerge_phaseE; apply: nfun_hcr_ecast.
+Qed.
+
+(* End-to-end: the concrete AVX2 transpose sort sorts and permutes any input.  *)
+Corollary avx2_sort_sorted k (t : (`2^ k).-tuple A) :
+  sorted <=%O (tsort tmerge_avx2 false t).
+Proof. exact: (tsort_sorted tmerge_avx2P). Qed.
+
+Corollary avx2_sort_perm k (t : (`2^ k).-tuple A) :
+  perm_eq (tsort tmerge_avx2 false t) t.
+Proof. exact: (tsort_perm tmerge_avx2P). Qed.
+
+Corollary avx2_sort_pad_sorted k (t : (`2^ k).-tuple A) (s : seq A) (T : A) j :
+  (forall x, (x <= T)%O) -> t = s ++ nseq j T :> seq A ->
+  sorted <=%O (take (size s) (tsort tmerge_avx2 false t)).
+Proof. exact: (tsort_pad_sorted tmerge_avx2P). Qed.
+
+Corollary avx2_sort_pad_perm k (t : (`2^ k).-tuple A) (s : seq A) (T : A) j :
+  (forall x, (x <= T)%O) -> t = s ++ nseq j T :> seq A ->
+  perm_eq (take (size s) (tsort tmerge_avx2 false t)) s.
+Proof. exact: (tsort_pad_perm tmerge_avx2P). Qed.
+
+End ConcreteMerge.
+
+(******************************************************************************)
 (*  Remaining obligations towards "sort_transpose.ml sorts".  The direction   *)
 (*  rule throughout sort_transpose.ml is periodic (`i land k`), so its target *)
 (*  net is pbsort k (sort_generic.v), NOT gnet/bfsort -- the two sort the same*)
