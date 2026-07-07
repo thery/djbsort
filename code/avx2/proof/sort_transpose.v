@@ -1227,6 +1227,58 @@ Proof. exact: (tsort_pad_perm tmerge_avx2P). Qed.
 End ConcreteMerge.
 
 (******************************************************************************)
+(*  The descending sub-lane as a PURE comparator network.  The merged model   *)
+(*  runs descending lanes as flip; ascending; flip (nflip = the code's actual *)
+(*  xor sign flip on the DATA).  The same effect is a comparator-only network *)
+(*  by fusing the flips into connector polarities: ntflip on the all-true mask*)
+(*  mtrue.  nfun_sqblockD shows this fused network computes half_cleaner_rec  *)
+(*  true q per vector -- no data negation -- the descending companion of      *)
+(*  nfun_ncols_sqmerge.  (This is a semantically-equivalent reformulation of  *)
+(*  the sign-flip realisation, not a stronger correctness claim.)             *)
+(******************************************************************************)
+Section SquareBlockDesc.
+
+Variable d : disp_t.
+Variable A : orderType d.
+Variable neg : A -> A.
+Hypothesis negK : involutive neg.
+Hypothesis neg_le : forall x y, (neg x <= neg y)%O = (y <= x)%O.
+Variable q : nat.
+
+Let pf : 0 < `2^ q := e2n_gt0 q.
+
+(* The all-true mask: descend every lane -- a lane-uniform mask.               *)
+Definition mtrue : (`2^ q * (`2^ q)).-tuple bool :=
+  [tuple true | _ < `2^ q * (`2^ q)].
+
+Lemma tnth_mtrue i : tnth mtrue i = true.
+Proof. by rewrite tnth_mktuple. Qed.
+
+Lemma mask_luni_mtrue : mask_luni mtrue.
+Proof. by move=> i j _; rewrite !tnth_mtrue. Qed.
+
+(* Flipping under the all-true mask negates every wire, and commutes with rsh. *)
+Lemma rsh_tflip_mtrue (u : (`2^ q * (`2^ q)).-tuple A) a :
+  tnth (rsh pf (tflip neg mtrue u)) a = nflip neg (tnth (rsh pf u) a).
+Proof.
+apply: eq_from_tnth => b.
+by rewrite tnth_nflip !tnth_rsh tnth_tflip tnth_mtrue.
+Qed.
+
+(* The descending square block, as a pure comparator network (sign flips fused*)
+(* into polarities via ntflip), computes half_cleaner_rec true q per vector.  *)
+Lemma nfun_sqblockD (t : (`2^ q * (`2^ q)).-tuple A) (a : 'I_(`2^ q)) :
+  tnth (rsh pf (nfun (ntflip mtrue (nttr pf (nrows pf (sqmerge q)))) t)) a
+  = nfun (half_cleaner_rec true q) (tnth (rsh pf t) a).
+Proof.
+rewrite (sqblock_reify_luni negK neg_le t mask_luni_mtrue).
+rewrite rsh_tflip_mtrue nfun_ncols_sqmerge rsh_tflip_mtrue.
+by rewrite -(nfun_half_cleaner_rec_neg negK neg_le).
+Qed.
+
+End SquareBlockDesc.
+
+(******************************************************************************)
 (*  DONE.  "sort_transpose.ml sorts" is established end-to-end, axiom-free.   *)
 (*  The transpose+sign-flip realisation targets the PERIODIC net pbsort       *)
 (*  (sort_generic.v; direction rule `i land k`), reified in stages:           *)
