@@ -1243,3 +1243,43 @@ End ConcreteMerge.
 (*    avx2_sort_perm       : perm_eq (tsort tmerge_avx2 false t) t            *)
 (*    avx2_sort_pad_sorted / avx2_sort_pad_perm : arbitrary-length inputs.    *)
 (******************************************************************************)
+
+(******************************************************************************)
+(*  A concrete instance.  The abstract result holds for any orderType with an *)
+(*  order-reversing involution neg.  The int32 value space is the bounded     *)
+(*  ordinal type 'I_ n.+1 (n.+1 = 2 ^ 32), whose complement -- the analogue of*)
+(*  bitwise NOT, the sign flip sort_transpose.ml actually uses -- is rev_ord  *)
+(*  (order-reversing by rev_ord_le, involutive by rev_ordK), with top ord_max *)
+(*  for the padding.  Instantiating gives the AVX2 sort sorting ordinal       *)
+(*  tuples, powers of two directly and arbitrary lengths via top-padding.     *)
+(******************************************************************************)
+Section OrdInstance.
+
+Variable n : nat.
+
+Lemma rev_ord_le (x y : 'I_ n.+1) :
+  (rev_ord x <= rev_ord y)%O = (y <= x)%O.
+Proof.
+by rewrite !leEord /= !subSS; have := ltn_ord x; have := ltn_ord y; lia.
+Qed.
+
+Lemma ord_max_top (x : 'I_ n.+1) : (x <= ord_max)%O.
+Proof. by rewrite leEord /= -ltnS ltn_ord. Qed.
+
+Corollary avx2_sort_sorted_ord q k (t : (`2^ k).-tuple 'I_ n.+1) :
+  sorted <=%O (tsort (@tmerge_avx2 _ _ q (@rev_ord n.+1)) false t).
+Proof. by apply: avx2_sort_sorted; [exact: rev_ordK | exact: rev_ord_le]. Qed.
+
+Corollary avx2_sort_pad_sorted_ord q k (t : (`2^ k).-tuple 'I_ n.+1)
+    (s : seq 'I_ n.+1) j :
+  t = s ++ nseq j ord_max :> seq _ ->
+  sorted <=%O
+    (take (size s) (tsort (@tmerge_avx2 _ _ q (@rev_ord n.+1)) false t)).
+Proof.
+move=> tE; apply: avx2_sort_pad_sorted; [| | | exact: tE].
+- exact: rev_ordK.
+- exact: rev_ord_le.
+- exact: ord_max_top.
+Qed.
+
+End OrdInstance.
