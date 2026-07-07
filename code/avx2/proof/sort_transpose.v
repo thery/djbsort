@@ -1059,6 +1059,47 @@ Qed.
 End PhaseDesc.
 
 (******************************************************************************)
+(*  Stacking the phases into the recursive sort.  Abstracting over the merge  *)
+(*  realisation tmerge (any per-phase op computing the bitonic merge -- the   *)
+(*  AVX2 transpose realisation of nfun_avx2_phase_asc/desc is one instance),  *)
+(*  the recursive sort tsort mirrors pbsort and computes it (tsortE), hence   *)
+(*  sorts (tsort_sorted) and permutes (tsort_perm).  This is the whole R      *)
+(*  obligation modulo instantiating tmerge with the concrete AVX2 phase and   *)
+(*  padding (P) for non-powers of two.                                        *)
+(******************************************************************************)
+Section Stacking.
+
+Variable d : disp_t.
+Variable A : orderType d.
+
+(* Abstract merge realisation: any per-phase operation computing the bitonic  *)
+(* merge (the AVX2 transpose phase is one instance).                          *)
+Variable tmerge : bool -> forall m, (`2^ m).-tuple A -> (`2^ m).-tuple A.
+Hypothesis tmergeP :
+  forall b m (t : (`2^ m).-tuple A), tmerge b t = nfun (half_cleaner_rec b m) t.
+
+(* The recursive periodic bitonic sort built from tmerge, mirroring pbsort.    *)
+Fixpoint tsort (b : bool) k : (`2^ k).-tuple A -> (`2^ k).-tuple A :=
+  if k is k1.+1 then fun t =>
+    tmerge b ([tuple of @tsort false k1 (ttake t) ++ @tsort true k1 (tdrop t)]
+              : (`2^ k1.+1).-tuple A)
+  else fun t => t.
+
+Lemma tsortE b k (t : (`2^ k).-tuple A) : @tsort b k t = nfun (pbsort b k) t.
+Proof.
+elim: k b t => [b t|k1 IH b t] //=.
+by rewrite tmergeP /pbsort -/pbsort nfun_cat nfun_merge ?size_pbsort // !IH.
+Qed.
+
+Lemma tsort_perm k (t : (`2^ k).-tuple A) : perm_eq (@tsort false k t) t.
+Proof. by rewrite tsortE; apply: psort_perm. Qed.
+
+Lemma tsort_sorted k (t : (`2^ k).-tuple A) : sorted <=%O (@tsort false k t).
+Proof. by rewrite tsortE; apply: psort_sorted. Qed.
+
+End Stacking.
+
+(******************************************************************************)
 (*  Remaining obligations towards "sort_transpose.ml sorts".  The direction   *)
 (*  rule throughout sort_transpose.ml is periodic (`i land k`), so its target *)
 (*  net is pbsort k (sort_generic.v), NOT gnet/bfsort -- the two sort the same*)
