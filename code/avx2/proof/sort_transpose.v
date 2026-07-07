@@ -714,6 +714,52 @@ Qed.
 End TileReshape.
 
 (******************************************************************************)
+(*  Preparing the sub-lane block for tiling.  The transpose square block is   *)
+(*  ncols (sqmerge q) : network (`2^ q * `2^ q) -- a PRODUCT type, which ntile*)
+(*  cannot tile cast-free (doubling `2^ q * `2^ q is mulnDl, not a            *)
+(*  definitional power-double).  sqpow retypes it to the power `2^ (q + q) via*)
+(*  one ecast, so ntile stays cast-free (`2^ (j + (q + q)) is a clean power). *)
+(*  nfun_sqpow lifts                                                          *)
+(*  the block's reification (nfun_ncols_sqmerge: each vector gets             *)
+(*  half_cleaner_rec false q) across that cast, viewed through sqcast + rsh.  *)
+(******************************************************************************)
+Section SquareTile.
+
+Variable d : disp_t.
+Variable A : orderType d.
+Variable q : nat.
+
+(* Cast-commutation for nfun under a network index cast.                      *)
+Lemma nfun_ecast n1 n2 (e : n1 = n2) (net : network n1) (t : n2.-tuple A) :
+  nfun (ecast k (network k) e net) t =
+  ecast k (k.-tuple A) e (nfun net (ecast k (k.-tuple A) (esym e) t)).
+Proof. by move: t; case: n2 / e => t /=. Qed.
+
+(* The transpose square block, retyped from the product `2^ q * `2^ q to the  *)
+(* power `2^ (q + q) so that ntile can tile it cast-free.                     *)
+Definition sqpow : network (`2^ (q + q)) :=
+  ecast n (network n) (esym (e2nD q q)) (ncols (e2n_gt0 q) (sqmerge q)).
+
+(* View a `2^ (q + q)-block as a `2^ q * `2^ q square.                        *)
+Definition sqcast (u : (`2^ (q + q)).-tuple A) : (`2^ q * (`2^ q)).-tuple A :=
+  ecast k (k.-tuple A) (e2nD q q) u.
+
+Lemma nfun_sqpow_ncols (t : (`2^ (q + q)).-tuple A) :
+  sqcast (nfun sqpow t) = nfun (ncols (e2n_gt0 q) (sqmerge q)) (sqcast t).
+Proof.
+rewrite /sqpow /sqcast nfun_ecast esymK.
+by move: (nfun _ _) => X; case: _ / (e2nD q q) X.
+Qed.
+
+(* Each vector of the square gets half_cleaner_rec false q (through sqcast).   *)
+Lemma nfun_sqpow (t : (`2^ (q + q)).-tuple A) a :
+  tnth (rsh (e2n_gt0 q) (sqcast (nfun sqpow t))) a =
+  nfun (half_cleaner_rec false q) (tnth (rsh (e2n_gt0 q) (sqcast t)) a).
+Proof. by rewrite nfun_sqpow_ncols nfun_ncols_sqmerge. Qed.
+
+End SquareTile.
+
+(******************************************************************************)
 (*  Remaining obligations towards "sort_transpose.ml sorts".  The direction   *)
 (*  rule throughout sort_transpose.ml is periodic (`i land k`), so its target *)
 (*  net is pbsort k (sort_generic.v), NOT gnet/bfsort -- the two sort the same*)
