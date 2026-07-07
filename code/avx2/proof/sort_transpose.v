@@ -936,6 +936,35 @@ Qed.
 End Collapse.
 
 (******************************************************************************)
+(*  Assembling one ascending phase.  A bitonic merge half_cleaner_rec false   *)
+(*  (j + q + q) splits (cat_take_drop) into its cross-vector top levels       *)
+(*  take (j + q) ... and its sub-lane tail drop (j + q) ...  The AVX2 net runs*)
+(*  the SAME cross-vector connectors (no transpose for distance >= `2^ q) then*)
+(*  the tiled square block for the sub-lane tail; nfun_avx2_phase_asc shows   *)
+(*  this computes the whole ascending phase.  The cross part matches on the   *)
+(*  nose; only the sub-lane tail is reified (nfun_tile_sqpow_flat +           *)
+(*  drop_half_cleaner_rec), with one explicit ecast for the bracketing.       *)
+(******************************************************************************)
+Section Phase.
+
+Variable d : disp_t.
+Variable A : orderType d.
+Variable q : nat.
+
+Lemma nfun_avx2_phase_asc j (t : (`2^ (j + q + q)).-tuple A)
+    (E : `2^ (j + (q + q)) = `2^ (j + q + q)) :
+  nfun (take (j + q) (half_cleaner_rec false (j + q + q))
+        ++ ecast n (network n) E (ntile (sqpow q) j)) t
+    = nfun (half_cleaner_rec false (j + q + q)) t.
+Proof.
+rewrite -{2}(cat_take_drop (j + q) (half_cleaner_rec false (j + q + q))).
+rewrite !nfun_cat drop_half_cleaner_rec nfun_ecast (nfun_tile_sqpow_flat _ E).
+by rewrite -!/(tcast _ _) !tcastKV.
+Qed.
+
+End Phase.
+
+(******************************************************************************)
 (*  Remaining obligations towards "sort_transpose.ml sorts".  The direction   *)
 (*  rule throughout sort_transpose.ml is periodic (`i land k`), so its target *)
 (*  net is pbsort k (sort_generic.v), NOT gnet/bfsort -- the two sort the same*)
