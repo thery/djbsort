@@ -1199,7 +1199,13 @@ rewrite /tmerge_avx2; case: leqP => [h|_] //.
 by rewrite tmerge_phaseE; apply: nfun_hcr_ecast.
 Qed.
 
-(* End-to-end: the concrete AVX2 transpose sort sorts and permutes any input.  *)
+(* End-to-end: the concrete AVX2 transpose sort sorts and permutes any input. *)
+(* Capstone -- the AVX2 transpose+sign-flip sort computes exactly the periodic*)
+(* bitonic sorting network pbsort false k (which sorts, sorting_pbsort).      *)
+Theorem tsort_avx2_pbsort k (t : (`2^ k).-tuple A) :
+  tsort tmerge_avx2 false t = nfun (pbsort false k) t.
+Proof. exact: (tsortE tmerge_avx2P). Qed.
+
 Corollary avx2_sort_sorted k (t : (`2^ k).-tuple A) :
   sorted <=%O (tsort tmerge_avx2 false t).
 Proof. exact: (tsort_sorted tmerge_avx2P). Qed.
