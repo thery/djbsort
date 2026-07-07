@@ -6,14 +6,17 @@
 #   make run     N=100 SEED=1   run the faithful version and print the sorted list
 #   make run-gen N=100 SEED=1   run the generic version
 #   make run-tr  N=100 SEED=1   run the transpose+sign-flip version
+#   make trace   K=12           check the generic sort's comparator trace equals
+#                               the transcribed Rocq pbsort network (per step)
 #   make build                  compile the native binaries
 # The input generator matches the C test driver, so outputs can be diffed.
 OCAML    ?= ocaml
 OCAMLOPT ?= ocamlopt
 N        ?= 8
 SEED     ?= 1
+K        ?= 12
 
-.PHONY: run run-gen run-tr build clean
+.PHONY: run run-gen run-tr trace build clean
 run:
 	$(OCAML) sort.ml $(N) $(SEED)
 
@@ -22,6 +25,9 @@ run-gen:
 
 run-tr:
 	$(OCAML) sort_transpose.ml $(N) $(SEED)
+
+trace:
+	$(OCAML) trace_check.ml $(K)
 
 build: sort sort_generic sort_transpose
 
