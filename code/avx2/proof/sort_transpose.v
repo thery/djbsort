@@ -784,6 +784,40 @@ Proof. by rewrite nfun_ntile_arsh nfun_sqpow. Qed.
 End ArraySubLane.
 
 (******************************************************************************)
+(*  The pbsort side of the sub-lane match.  A bitonic merge half_cleaner_rec  *)
+(*  b (j + q) is a flat list of j + q levels, biggest distance first; its last*)
+(*  q levels (distances < `2^ q, the sub-lane ones) are exactly the square    *)
+(*  block half_cleaner_rec b q tiled across the `2^ j sub-blocks.  Since ndup *)
+(*  is a map2 over zipped copies, drop commutes through it (drop_ndup), giving*)
+(*  the clean SYNTACTIC identity drop_half_cleaner_rec -- the sub-lane tail is*)
+(*  ntile (half_cleaner_rec b q) j, matching nfun_tile_sqpow's target.        *)
+(******************************************************************************)
+Section PbsortSubLane.
+
+Lemma drop_zip (T1 T2 : Type) j (s1 : seq T1) (s2 : seq T2) :
+  drop j (zip s1 s2) = zip (drop j s1) (drop j s2).
+Proof.
+elim: j s1 s2 => [|j IH] s1 s2; first by rewrite !drop0.
+case: s1 => [|x s1]; case: s2 => [|y s2] //=; first by case: (drop j s2).
+by case: (drop j s1).
+Qed.
+
+Lemma drop_ndup j m (net : network m) :
+  drop j (ndup net) = ndup (drop j net).
+Proof. by rewrite /ndup /nmerge -map_drop drop_zip. Qed.
+
+Lemma drop_half_cleaner_rec (b : bool) q j :
+  drop j (half_cleaner_rec b (j + q)) = ntile (half_cleaner_rec b q) j.
+Proof.
+elim: j => [|j IH]; first by rewrite drop0.
+change (drop j (ndup (half_cleaner_rec b (j + q))) =
+        ndup (ntile (half_cleaner_rec b q) j)).
+by rewrite drop_ndup IH.
+Qed.
+
+End PbsortSubLane.
+
+(******************************************************************************)
 (*  Remaining obligations towards "sort_transpose.ml sorts".  The direction   *)
 (*  rule throughout sort_transpose.ml is periodic (`i land k`), so its target *)
 (*  net is pbsort k (sort_generic.v), NOT gnet/bfsort -- the two sort the same*)
