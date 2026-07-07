@@ -965,6 +965,70 @@ Qed.
 End Phase.
 
 (******************************************************************************)
+(*  Direction flip.  A descending bitonic merge is the ascending one          *)
+(*  conjugated by the sign flip neg (an order-reversing involution -- bitwise *)
+(*  complement on int32): min and max swap under neg, so                      *)
+(*  half_cleaner_rec true = nflip o half_cleaner_rec false o nflip.  This is  *)
+(*  the pbsort-side fact behind the AVX2 sign-flip mask: a lane run descending*)
+(*  is realised by flip; ascending merge; flip.  It is what will turn the     *)
+(*  b = true (descending) sub-lane blocks into ascending ones for reification.*)
+(******************************************************************************)
+Section DirFlip.
+
+Variable d : disp_t.
+Variable A : orderType d.
+Variable neg : A -> A.
+Hypothesis negK : involutive neg.
+Hypothesis neg_le : forall x y, (neg x <= neg y)%O = (y <= x)%O.
+
+(* Negate every wire of a tuple.                                               *)
+Definition nflip n (t : n.-tuple A) : n.-tuple A :=
+  [tuple neg (tnth t i) | i < n].
+
+Lemma tnth_nflip n (t : n.-tuple A) i : tnth (nflip t) i = neg (tnth t i).
+Proof. by rewrite tnth_mktuple. Qed.
+
+Lemma nflipK n : involutive (@nflip n).
+Proof. by move=> t; apply: eq_from_tnth => i; rewrite !tnth_nflip negK. Qed.
+
+Lemma nflipE n (t : n.-tuple A) : nflip t = map neg t :> seq A.
+Proof. by rewrite /nflip /= -[in RHS](map_tnth_enum t) -map_comp. Qed.
+
+Lemma nflip_cat n1 n2 (t1 : n1.-tuple A) (t2 : n2.-tuple A) :
+  nflip [tuple of t1 ++ t2] = [tuple of nflip t1 ++ nflip t2].
+Proof. by apply: val_inj => /=; rewrite !nflipE map_cat. Qed.
+
+Lemma nflip_ttake k (t : (k + k).-tuple A) : ttake (nflip t) = nflip (ttake t).
+Proof. by rewrite {1}(cat_ttake_tdrop t) nflip_cat ttakeK. Qed.
+
+Lemma nflip_tdrop k (t : (k + k).-tuple A) : tdrop (nflip t) = nflip (tdrop t).
+Proof. by rewrite {1}(cat_ttake_tdrop t) nflip_cat tdropK. Qed.
+
+(* One half_cleaner in the descending direction = the ascending one           *)
+(* conjugated by the sign flip (min and max swap under neg).                  *)
+Lemma cfun_half_cleaner_neg k (t : (k + k).-tuple A) :
+  cfun (half_cleaner true k) t = nflip (cfun (half_cleaner false k) (nflip t)).
+Proof.
+apply: eq_from_tnth => i; rewrite tnth_nflip !cfun_half_cleaner !tnth_mktuple.
+case: (split i) => x; rewrite !tnth_nflip.
+  by rewrite (neg_min negK neg_le).
+by rewrite (neg_max negK neg_le).
+Qed.
+
+(* The descending bitonic merge = the ascending one, sign-flip conjugated.     *)
+Lemma nfun_half_cleaner_rec_neg m (t : (`2^ m).-tuple A) :
+  nfun (half_cleaner_rec true m) t
+    = nflip (nfun (half_cleaner_rec false m) (nflip t)).
+Proof.
+elim: m t => [t|m IH t]; first by rewrite /= nflipK.
+rewrite /half_cleaner_rec -/half_cleaner_rec !nfunE !nfun_dup.
+rewrite cfun_half_cleaner_neg nflip_ttake nflip_tdrop !IH.
+by rewrite nflip_cat !nflipK.
+Qed.
+
+End DirFlip.
+
+(******************************************************************************)
 (*  Remaining obligations towards "sort_transpose.ml sorts".  The direction   *)
 (*  rule throughout sort_transpose.ml is periodic (`i land k`), so its target *)
 (*  net is pbsort k (sort_generic.v), NOT gnet/bfsort -- the two sort the same*)
