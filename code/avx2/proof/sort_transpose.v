@@ -818,6 +818,45 @@ Qed.
 End PbsortSubLane.
 
 (******************************************************************************)
+(*  Ascending sub-lane reification.  On a single `2^ (q + q) square block the *)
+(*  transpose realisation sqpow computes exactly the plain sub-lane block     *)
+(*  half_cleaner_rec false q tiled over the square's vectors -- with NO cast  *)
+(*  (both are networks on `2^ (q + q) wires).  The bridge is the reshape      *)
+(*  identity arsh_rsh_sqcast: the `2^ q-block vector view (arsh) of a square  *)
+(*  coincides with the row view of its matrix (rsh of sqcast).  This is the   *)
+(*  b = false half of the sub-lane match; the b = true (descending) blocks    *)
+(*  need the sign-flip realisation (sqblock_reify_luni).                      *)
+(******************************************************************************)
+Section AscReshape.
+
+Variable d : disp_t.
+Variable A : orderType d.
+Variable q : nat.
+
+(* The `2^ q-block vector view of a `2^ (q + q)-tuple coincides with the row  *)
+(* view of its square (arsh at block exponent q = rsh of sqcast).             *)
+Lemma arsh_rsh_sqcast (t : (`2^ (q + q)).-tuple A) (V : 'I_(`2^ q)) :
+  tnth (arsh t) V = tnth (rsh (e2n_gt0 q) (sqcast t)) V.
+Proof.
+apply: eq_from_tnth => w.
+rewrite tnth_arsh tnth_rsh /sqcast -/(tcast (e2nD q q) t) tcastE.
+by congr (tnth t _); apply: val_inj.
+Qed.
+
+(* The transpose square block computes exactly the plain sub-lane block       *)
+(* (half_cleaner_rec false q tiled over the square), cast-free.               *)
+Lemma nfun_sqpow_tile (t : (`2^ (q + q)).-tuple A) :
+  nfun (sqpow q) t = nfun (ntile (half_cleaner_rec false q) q) t.
+Proof.
+rewrite -(arshK (nfun (sqpow q) t)).
+rewrite -(arshK (nfun (ntile (half_cleaner_rec false q) q) t)).
+congr afla; apply: eq_from_tnth => V.
+by rewrite nfun_ntile_arsh arsh_rsh_sqcast nfun_sqpow -arsh_rsh_sqcast.
+Qed.
+
+End AscReshape.
+
+(******************************************************************************)
 (*  Remaining obligations towards "sort_transpose.ml sorts".  The direction   *)
 (*  rule throughout sort_transpose.ml is periodic (`i land k`), so its target *)
 (*  net is pbsort k (sort_generic.v), NOT gnet/bfsort -- the two sort the same*)
