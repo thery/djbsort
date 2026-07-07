@@ -1029,6 +1029,36 @@ Qed.
 End DirFlip.
 
 (******************************************************************************)
+(*  Assembling one descending phase.  Within a single bitonic merge the       *)
+(*  direction is uniform, so a descending phase is realised by running the    *)
+(*  ascending AVX2 phase net between two sign flips (flip; ascending merge;   *)
+(*  flip = descending merge): chaining nfun_avx2_phase_asc with the direction *)
+(*  flip nfun_half_cleaner_rec_neg.  This is the b = true companion of        *)
+(*  nfun_avx2_phase_asc; together they reify either direction of a phase.     *)
+(*  (Alternation of directions across blocks -- which phase is which -- is the*)
+(*  layout of pbsort's recursion, handled when stacking phases.)              *)
+(******************************************************************************)
+Section PhaseDesc.
+
+Variable d : disp_t.
+Variable A : orderType d.
+Variable q : nat.
+Variable neg : A -> A.
+Hypothesis negK : involutive neg.
+Hypothesis neg_le : forall x y, (neg x <= neg y)%O = (y <= x)%O.
+
+Lemma nfun_avx2_phase_desc j (t : (`2^ (j + q + q)).-tuple A)
+    (E : `2^ (j + (q + q)) = `2^ (j + q + q)) :
+  nflip neg (nfun (take (j + q) (half_cleaner_rec false (j + q + q))
+                   ++ ecast n (network n) E (ntile (sqpow q) j)) (nflip neg t))
+    = nfun (half_cleaner_rec true (j + q + q)) t.
+Proof.
+by rewrite nfun_avx2_phase_asc -(nfun_half_cleaner_rec_neg negK neg_le).
+Qed.
+
+End PhaseDesc.
+
+(******************************************************************************)
 (*  Remaining obligations towards "sort_transpose.ml sorts".  The direction   *)
 (*  rule throughout sort_transpose.ml is periodic (`i land k`), so its target *)
 (*  net is pbsort k (sort_generic.v), NOT gnet/bfsort -- the two sort the same*)
