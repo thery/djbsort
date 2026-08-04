@@ -33,6 +33,7 @@ example/              original material that inspired the development
   portable4/          djbsort's reference constant-time C (sort.c)
   avx2/               djbsort's AVX2 C (sort.c)
 code/                 verification, organized per algorithm
+  common/             sorting-network foundation shared by both tracks
   portable4/          the portable Knuth-exchange sort
     c/  ml/  proof/
   avx2/               the AVX2 transpose+sign-flip bitonic sort
@@ -41,7 +42,9 @@ tools/                vcomment80.py (Coq comment column-80 formatter)
 ```
 
 `example/` is kept as the unmodified source of inspiration; `code/` holds the
-verification work, split per algorithm.
+verification work, split per algorithm. The foundation both tracks build on
+(`more_tuple.v`, `nsort.v`, `nbitonic.v`) lives once in `code/common/`; each
+proof directory picks it up through `-R ../../common extra`.
 
 ## `example/`
 
@@ -61,6 +64,14 @@ compare-and-swap order) with the branchless constant-time `int32_MINMAX`;
 `avx2/sort.c` is the hand-tuned AVX2 kernel (8×8 lane transpose + sign-flip
 bitonic). Both are kept unmodified as the source under verification.
 
+## `code/common/` — the shared foundation
+
+`more_tuple.v`, `nsort.v` and `nbitonic.v` (same contents as the corresponding
+`example/coq/` files) are the sorting-network theory both verification tracks
+rest on, kept in one place rather than copied per track. Both proof
+directories map it to the same logical name via `-R ../../common extra`, and
+build it first, so each still builds on its own.
+
 ## `code/portable4/` — verifying the portable `int32_sort` (exact network)
 
 - **`c/`** — the C under verification (`sort.c`, `int32_minmax.c`, header).
@@ -72,7 +83,6 @@ bitonic). Both are kept unmodified as the source under verification.
 
 | File | Contents |
 |------|----------|
-| `more_tuple.v`, `nsort.v` | Shared sorting-network foundation (copied from `example/coq/`). |
 | `nbjsort.v`    | Knuth's merge exchange (TAOCP 5.2.2M): recursive `knuth_exchange m` and iterative `iknuth_exchange`, both proved to sort. |
 | `int32_network.v`, `int32_reify.v`, `int32_check.v` | `me_pairs n` models `sort.c`'s exact comparator sequence; the network it runs is reduced to the verified Knuth-exchange result. |
 | `int32_sort.v` | Final theorem `sorting_int32_sort_network n : int32_sort_network n \is sorting`, for every `n`. |
@@ -95,7 +105,6 @@ bitonic). Both are kept unmodified as the source under verification.
 
 | File | Contents |
 |------|----------|
-| `more_tuple.v`, `nsort.v`, `nbitonic.v` | Shared foundation (copied from `example/coq/`). |
 | `sort_generic.v` | The periodic bitonic network `pbsort` (direction rule `i land k`), proved sorting (`sorting_pbsort`), with the padding wrapper for non-powers of two. |
 | `sort_transpose.v` | The main development: the 8×8 transpose (`ttr`/`rsh`) and sign flip (`neg`) algebra; the reification that the transpose+sign-flip realization computes `pbsort` (toolkit → single square → tiling → both merge-phase directions → recursive stacking → concrete merge); and the end-to-end theorems `tsort_avx2_pbsort`, `avx2_sort_sorted`/`_perm`/`_pad_sorted`/`_pad_perm`, instantiated at `'I_ n.+1` with `rev_ord`. |
 
@@ -123,6 +132,9 @@ is the one part checked empirically rather than in Coq.
 git clone https://github.com/thery/djbsort.git
 cd djbsort
 
+# everything under code/ (shared foundation, then both tracks)
+make -C code
+
 # the abstract formalization
 make -C example/coq
 
@@ -135,5 +147,7 @@ make -C code/avx2/proof               # Coq proof
 make -C code/avx2/ml trace            # generic sort trace == Rocq pbsort network
 ```
 
-In each Coq directory `Makefile`, `Makefile.coq`, `_CoqProject` drive the build
-(`.aux`, `.lia.cache`, `.coq-native/` are generated artifacts).
+Each proof directory builds standalone: its `Makefile.coq.local` builds
+`code/common` first. In each Coq directory `Makefile` and `_CoqProject` drive
+the build (`Makefile.coq`, `.aux`, `.lia.cache`, `.coq-native/` are generated
+artifacts, ignored by git).

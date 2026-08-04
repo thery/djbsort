@@ -2,9 +2,8 @@
 -arg -w -arg -ambiguous-paths
 -I .
 -R . extra
+-R ../../common extra
 
-more_tuple.v
-nsort.v
 nbjsort.v
 int32_network.v
 int32_reify.v
