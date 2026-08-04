@@ -1,0 +1,23 @@
+# Rocq/Coq build artefacts
+*.vo
+*.vok
+*.vos
+*.glob
+*.aux
+.*.aux
+.*.cache
+.coq-native/
+.Makefile.coq.d
+Makefile.coq
+Makefile.coq.conf
+!Makefile.coq.local
+
+# OCaml build artefacts
+*.cm[iox]
+*.cmxa
+*.o
+*.a
+code/avx2/ml/sort
+code/avx2/ml/sort_generic
+code/avx2/ml/sort_transpose
+code/avx2/ml/trace_check

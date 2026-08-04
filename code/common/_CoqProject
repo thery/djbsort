@@ -2,7 +2,7 @@
 -arg -w -arg -ambiguous-paths
 -I .
 -R . extra
--R ../../common extra
 
-sort_generic.v
-sort_transpose.v
+more_tuple.v
+nsort.v
+nbitonic.v
