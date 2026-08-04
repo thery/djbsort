@@ -1,6 +1,6 @@
 From mathcomp Require Import all_boot order perm algebra.zmodp.
 From mathcomp Require Import zify.
-Require Import more_tuple nsort.
+Require Import more_tuple nsort nalgebra.
 
 Import Order POrderTheory TotalTheory.
 
@@ -123,15 +123,11 @@ Definition me_pairs (n : nat) : seq (nat * nat) :=
 (*  Part 2.  Turning the index pairs into a `network`                         *)
 (* -------------------------------------------------------------------------- *)
 
-(* A pair (a,b) with a < b < n becomes the connector [cswap a b], which puts  *)
-(* the min on wire a and the max on wire b -- exactly int32_MINMAX(x[a],x[b]).*)
-(* Out-of-range pairs are dropped (they never occur, see me_pairs_bounded).   *)
-Definition oconn (n : nat) (ab : nat * nat) : option (connector n) :=
-  obind (fun i => omap (fun j => cswap i j) (insub ab.2)) (insub ab.1).
-
-Definition pnet (n : nat) (ps : seq (nat * nat)) : network n :=
-  pmap (oconn n) ps.
-
+(* `oconn` / `pnet` -- a pair (a,b) with a < b < n becomes the connector      *)
+(* [cswap a b], which puts the min on wire a and the max on wire b, exactly   *)
+(* int32_MINMAX(x[a],x[b]); out-of-range pairs are dropped (they never occur, *)
+(* see me_pairs_bounded).  Both live in common/nalgebra.v: the list <->       *)
+(* network bridge is generic, with nothing specific to sort.c about it.       *)
 Definition int32_sort_network (n : nat) : network n := pnet n (me_pairs n).
 
 (* -------------------------------------------------------------------------- *)
