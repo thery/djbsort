@@ -83,6 +83,16 @@ rewrite /nnoflip /neodup /neomerge.
 by elim: nt => [//|c nt IH] /= /andP[cc nn]; rewrite cnoflip_eomerge // IH.
 Qed.
 
+(* Deinterleaving a network distributes over concatenation.  This is what     *)
+(* lets a recursive `neodup`-based network be flattened: unfolding            *)
+(*   knuth_exchange m = neodup (knuth_exchange m.-1) ++ merge_m               *)
+(* repeatedly and pushing neodup inside every ++ exposes the network as a     *)
+(* concatenation of deinterleaved merge stages, in decreasing distance -- the *)
+(* same order a flat p = top, top/2, ..., 1 sweep visits them in.             *)
+Lemma neodup_cat n (n1 n2 : network n) :
+  neodup (n1 ++ n2) = neodup n1 ++ neodup n2.
+Proof. by rewrite /neodup /neomerge zip_cat // map_cat. Qed.
+
 (* -------------------------------------------------------------------------- *)
 (*  The comparators a connector performs                                      *)
 (* -------------------------------------------------------------------------- *)
