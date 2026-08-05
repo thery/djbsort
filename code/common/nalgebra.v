@@ -239,6 +239,13 @@ Lemma flatten_map_filter (T U : Type) (P : pred T) (F : T -> seq U) (l : seq T) 
     = flatten [seq (if P x then F x else [::]) | x <- l].
 Proof. by elim: l => [//|x l IH]; rewrite /=; case: (P x); rewrite /= IH. Qed.
 
+(* Indexing through a list that expands each entry to a pair of entries. *)
+Lemma flatten_pair_map (T V U : Type) (F : V -> seq U) (g h : T -> V)
+    (l : seq T) :
+  flatten [seq F j | j <- flatten [seq [:: g a; h a] | a <- l]]
+    = flatten [seq F (g a) ++ F (h a) | a <- l].
+Proof. by elim: l => [//|a l IH] /=; rewrite IH catA. Qed.
+
 (* Halving a quotient: doubling numerator and denominator, with or without   *)
 (* the odd offset the odd lines carry, leaves the quotient unchanged.  This  *)
 (* is what makes a "bit of the index is clear" test survive deinterleaving.  *)
@@ -455,6 +462,18 @@ Proof.
 move=> abB qsB qsD.
 rewrite (nfun_pnet_cat ps (qs ++ ab :: rs) t) (nfun_pnet_cat ps (ab :: qs ++ rs) t).
 by rewrite nfun_pnet_moveL.
+Qed.
+
+(* Blockwise replacement: if two families agree as functions block by block, *)
+(* the concatenations of the blocks agree too.                               *)
+Lemma nfun_pnet_flatten n (T : Type) (F G : T -> seq (nat * nat)) (l : seq T)
+    (t : n.-tuple A) :
+  (forall a (u : n.-tuple A), nfun (pnet n (F a)) u = nfun (pnet n (G a)) u) ->
+  nfun (pnet n (flatten [seq F a | a <- l])) t
+    = nfun (pnet n (flatten [seq G a | a <- l])) t.
+Proof.
+move=> H; elim: l t => [//|a l IH] t /=.
+by rewrite !nfun_pnet_cat H IH.
 Qed.
 
 (* Running one family of comparators and then another, versus interleaving   *)

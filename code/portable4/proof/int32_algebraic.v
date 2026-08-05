@@ -172,6 +172,121 @@ have HD : halves (`2^ k.+1) (`2^ k.+1) = `2^ k.+1 :: halves (`2^ k) (`2^ k).
 by rewrite E1 (halves_double (e2n_gt0 k.+1)) {2}HD IH map_cons.
 Qed.
 
+(* -------------------------------------------------------------------------- *)
+(*  The cascade under deinterleaving                                          *)
+(* -------------------------------------------------------------------------- *)
+
+(* One position's chain in sort.c's cascade, and the two ways a doubled       *)
+(* sweep can produce it: at the even copy of the position and at the odd one. *)
+Definition dbl (xy : nat * nat) : nat * nat := (xy.1.*2, xy.2.*2).
+Definition dblS (xy : nat * nat) : nat * nat := (xy.1.*2.+1, xy.2.*2.+1).
+
+Definition cchain (N T p a : nat) : seq (nat * nat) :=
+  [seq (a + p, a + r) | r <- [seq r <- halves T T | (p < r) && (a + r < N)]].
+
+Lemma casc_pairsE N T p :
+  casc_pairs N T p
+    = flatten [seq cchain N T p a | a <- [seq a <- iota 0 N | ~~ odd (a %/ p)]].
+Proof. by []. Qed.
+
+(* The distances of the doubled sweep are the doubles of the original ones.   *)
+(* The extra trailing 1 that halves_e2n_cons produces is discarded by the     *)
+(* filter, since p >= 1 makes p.*2 >= 2.                                      *)
+Lemma cchain_dbl N k p a : 0 < p ->
+  cchain N.*2 (`2^ k.+1) p.*2 a.*2 = [seq dbl x | x <- cchain N (`2^ k) p a].
+Proof.
+move=> p_gt0; rewrite /cchain halves_e2n_cons filter_cat.
+have -> : [seq r <- [:: 1] | (p.*2 < r) && (a.*2 + r < N.*2)] = [::].
+  by rewrite /=; have -> : (p.*2 < 1) = false by lia.
+have EF : preim (fun r => r.*2) (fun r => (p.*2 < r) && (a.*2 + r < N.*2))
+        =1 (fun r => (p < r) && (a + r < N)).
+  by move=> r /=; rewrite ltn_double -doubleD ltn_double.
+rewrite cats0 filter_map (eq_filter EF) -!map_comp.
+by apply: eq_map => r /=; rewrite /dbl /= !doubleD.
+Qed.
+
+Lemma cchain_dblS N k p a : 0 < p ->
+  cchain N.*2 (`2^ k.+1) p.*2 a.*2.+1 = [seq dblS x | x <- cchain N (`2^ k) p a].
+Proof.
+move=> p_gt0; rewrite /cchain halves_e2n_cons filter_cat.
+have -> : [seq r <- [:: 1] | (p.*2 < r) && (a.*2.+1 + r < N.*2)] = [::].
+  by rewrite /=; have -> : (p.*2 < 1) = false by lia.
+have EF : preim (fun r => r.*2) (fun r => (p.*2 < r) && (a.*2.+1 + r < N.*2))
+        =1 (fun r => (p < r) && (a + r < N)).
+  by move=> r /=; rewrite ltn_double addSn -doubleD -doubleS leq_double.
+rewrite cats0 filter_map (eq_filter EF) -!map_comp.
+by apply: eq_map => r /=; rewrite /dblS /= !addSn !doubleD.
+Qed.
+
+(* So the doubled cascade runs, for each original position, the whole chain   *)
+(* on the even copy and then the whole chain on the odd copy.                 *)
+Lemma casc_pairs_split N k p : 0 < p ->
+  casc_pairs N.*2 (`2^ k.+1) p.*2
+    = flatten [seq ([seq dbl x | x <- cchain N (`2^ k) p a]
+                    ++ [seq dblS x | x <- cchain N (`2^ k) p a])
+              | a <- [seq a <- iota 0 N | ~~ odd (a %/ p)]].
+Proof.
+move=> p_gt0.
+have JsE : [seq j <- iota 0 N.*2 | ~~ odd (j %/ p.*2)]
+         = flatten [seq [:: a.*2; a.*2.+1]
+                   | a <- [seq a <- iota 0 N | ~~ odd (a %/ p)]].
+  rewrite -[N.*2]addnn iota_eocat filter_flatten_seq -map_comp.
+  rewrite flatten_map_filter; congr flatten; apply: eq_map => a /=.
+  rewrite (divn_double a p_gt0) (divn_doubleS a p_gt0).
+  by case: ifP => H; rewrite H.
+rewrite casc_pairsE JsE flatten_pair_map.
+congr flatten; apply: eq_map => a /=.
+by rewrite (cchain_dbl N k a p_gt0) (cchain_dblS N k a p_gt0).
+Qed.
+
+(* Every comparator of a chain is in range, on either parity. *)
+Lemma bnd_cchain_dbl N k p a :
+  all (fun ab => bnd N.*2 (dbl ab)) (cchain N (`2^ k) p a).
+Proof.
+apply/allP => x /mapP[r]; rewrite mem_filter => /andP[/andP[pLr aRN] _] ->.
+by rewrite /bnd /dbl /= !ltn_double aRN andbT; lia.
+Qed.
+
+Lemma bnd_cchain_dblS N k p a :
+  all (fun ab => bnd N.*2 (dblS ab)) (cchain N (`2^ k) p a).
+Proof.
+apply/allP => x /mapP[r]; rewrite mem_filter => /andP[/andP[pLr aRN] _] ->.
+rewrite /bnd /dblS /=.
+have D1 : forall u, (u.*2.+1 < N.*2) = (u < N).
+  by move=> u; rewrite -doubleS leq_double.
+by rewrite !D1 aRN andbT; lia.
+Qed.
+
+(* An odd-parity comparator never shares a wire with an even-parity one. *)
+Lemma dpair_dblS_dbl ab cd : dpair (dblS ab) (dbl cd).
+Proof.
+case: ab => x1 x2; case: cd => y1 y2; rewrite /dpair /dblS /dbl /=.
+by apply/and4P; split; apply/eqP => /(congr1 odd); rewrite /= !odd_double.
+Qed.
+
+Section CascDouble.
+
+Variable d0 : disp_t.
+Variable A0 : orderType d0.
+
+(* THE casc_pairs DOUBLING LAW.  Not a list identity: the doubled sweep runs  *)
+(* a whole chain on the even copy of a position and then the whole chain on   *)
+(* the odd copy, while pdup alternates per comparator.  The two orders differ *)
+(* only by transpositions of comparators on disjoint wires -- one parity      *)
+(* against the other -- so they agree as functions, by nfun_pnet_mix.         *)
+Lemma nfun_casc_pairs_double N k p (t : (N.*2).-tuple A0) : 0 < p ->
+  nfun (pnet N.*2 (casc_pairs N.*2 (`2^ k.+1) p.*2)) t
+    = nfun (pnet N.*2 (pdup (casc_pairs N (`2^ k) p))) t.
+Proof.
+move=> p_gt0.
+rewrite (casc_pairs_split N k p_gt0) casc_pairsE pdup_flatten -map_comp.
+apply: nfun_pnet_flatten => a u.
+apply: nfun_pnet_mix; [exact: bnd_cchain_dbl | exact: bnd_cchain_dblS | ].
+by move=> ab cd; exact: dpair_dblS_dbl.
+Qed.
+
+End CascDouble.
+
 (* The jump chain of the merge stage, read off as comparators.  Its distances *)
 (* are `2^ k - 1, `2^ k.-1 - 1, ..., 1: each step halves via (uphalf r).-1,   *)
 (* and on numbers of that shape it lands exactly on the next one down.  All   *)
