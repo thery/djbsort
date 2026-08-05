@@ -6,7 +6,6 @@
 
 nbjsort.v
 int32_network.v
-int32_reify.v
+int32_knuth.v
 int32_sort.v
 int32_check.v
-int32_algebraic.v

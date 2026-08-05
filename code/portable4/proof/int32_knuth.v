@@ -6,7 +6,7 @@ Import Order POrderTheory TotalTheory.
 
 (******************************************************************************)
 (*                                                                            *)
-(*  int32_algebraic.v -- an ALGEBRAIC proof that sort.c's network sorts       *)
+(*  int32_knuth.v -- sort.c's network computes nbjsort's knuth_exchange       *)
 (*                                                                            *)
 (*  int32_sort.v proves `int32_sort_network (`2^ m) \is sorting` by LEAVING   *)
 (*  the network world: sort.c's comparator list becomes a [swap]-fold over    *)
@@ -21,9 +21,12 @@ Import Order POrderTheory TotalTheory.
 (*                                                                            *)
 (*  after which sorting is immediate from nbjsort's `sorting_knuth_exchange`. *)
 (*  It mirrors the avx2 capstone `tsort tmerge_avx2 false t =                 *)
-(*  nfun (pbsort false k) t`.  It does NOT use int32_reify.v or int32_sort.v: *)
-(*  Print Assumptions reports Closed under the global context with neither in *)
-(*  the dependencies, so this is an independent proof of Obligation D.        *)
+(*  nfun (pbsort false k) t`.                                                 *)
+(*                                                                            *)
+(*  (An earlier route left the network world instead, turning sort.c's list   *)
+(*  into a [swap]-fold over plain seqs and matching nbjsort's ITERATIVE       *)
+(*  `iknuth_exchange`; all the work then happened on `seq (nat * nat)`.  That *)
+(*  is what int32_reify.v used to do -- it is gone, see the git history.)     *)
 (*                                                                            *)
 (*  The route, by induction on m:                                             *)
 (*                                                                            *)
@@ -416,7 +419,7 @@ Variable A : orderType d.
 (*  top/2, ..., 1.  That is exactly the order the flat sweep visits p in.     *)
 (*  So the two sides agree block by block, and what is left is the OLD crux:  *)
 (*  inside one block, sort.c emits the cascade position-major while the       *)
-(*  network emits it distance-major (int32_reify's swseq_casc_dcasc).  With   *)
+(*  network emits it distance-major.  With                                    *)
 (*  nalgebra's cfun_comm that reordering can now be done on networks instead  *)
 (*  of on seqs.                                                               *)
 (*                                                                            *)
@@ -564,16 +567,15 @@ Qed.
 End Transpose.
 
 (* -------------------------------------------------------------------------- *)
-(*  (S2), closed.                                                             *)
+(*  The two sides agree, by induction on m                                    *)
 (*                                                                            *)
-(*  NOTE.  This closes (S2) the cheap way: both networks sort, and a sorting  *)
-(*  network computes the sort function, so they are equal as functions.  It   *)
-(*  is a valid proof, but it leans on `sorting_int32_sort_network`, i.e. on   *)
-(*  the reify route -- so the corollary below is NOT yet an independent       *)
-(*  proof of Obligation D.  Making it independent means proving this from     *)
-(*  the structure instead: level_pairs_double and nfun_casc_pairs_double give *)
-(*  the me_pairs split, and what then remains is the position-major versus    *)
-(*  distance-major cascade, for which nfun_pnet_moveL is the tool.            *)
+(*  m = 0 and m = 1 are the empty network and a single cswap (cpairs_eswap).  *)
+(*  At m = k.+2 both sides split the same way -- nfun_me_pairs_split on the   *)
+(*  left, nstages_knuth_exchangeS on the right -- into a doubled copy of the  *)
+(*  problem one size down, then the base pass at distance 1, then the         *)
+(*  cascade.  nfun_pnet_pdup turns the doubled comparator list into a         *)
+(*  deinterleaved network, so the induction hypothesis applies through        *)
+(*  nfun_eodup, and nfun_casc_kjumps settles the cascade.                     *)
 (* -------------------------------------------------------------------------- *)
 
 Lemma nfun_me_pairs_knuth m (t : (`2^ m).-tuple A) :
@@ -611,7 +613,7 @@ End Algebraic.
 
 (* -------------------------------------------------------------------------- *)
 (*  And the payoff: Obligation D without iknuth_exchange, iter1/2/3 or the    *)
-(*  cascade transpose swseq_casc_dcasc -- i.e. without int32_reify.v.         *)
+(*  cascade transpose swseq_casc_dcasc -- int32_reify.v is gone.              *)
 (* -------------------------------------------------------------------------- *)
 
 Corollary sorting_int32_sort_network_e2n_alg m :
