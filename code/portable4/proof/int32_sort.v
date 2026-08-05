@@ -10,7 +10,7 @@ Import Order POrderTheory TotalTheory.
 (*                  for every length n, with no admits.                       *)
 (*                                                                            *)
 (*  The power-of-two case is int32_knuth's                                    *)
-(*  `sorting_int32_sort_network_e2n_alg`, proved by staying inside `network`  *)
+(*  `sorting_int32_sort_network_e2n`, proved by staying inside `network`      *)
 (*  and showing that sort.c's comparator sequence computes the same function  *)
 (*  as nbjsort's recursive `knuth_exchange`.  int32_network's three reduction *)
 (*  facts (me_pairs_prune, sorting_pnet_prune, me_pairs_bounded) then lift it *)
@@ -37,7 +37,7 @@ rewrite /int32_sort_network me_pairs_prune.
 apply: (@sorting_pnet_prune (`2^ (mlog n))).
 - exact: n_le_e2n_mlog.
 - exact: me_pairs_bounded.
-- exact: sorting_int32_sort_network_e2n_alg.
+- exact: sorting_int32_sort_network_e2n.
 Qed.
 
 (* -------------------------------------------------------------------------- *)

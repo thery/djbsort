@@ -581,7 +581,7 @@ End Algebraic.
 (*  Sorting, for a power-of-two width.                                        *)
 (* -------------------------------------------------------------------------- *)
 
-Corollary sorting_int32_sort_network_e2n_alg m :
+Corollary sorting_int32_sort_network_e2n m :
   int32_sort_network (`2^ m) \is sorting.
 Proof.
 apply/forallP => t; rewrite nfun_int32_knuth.
