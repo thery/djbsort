@@ -377,6 +377,42 @@ Lemma nfun_pnet_cat n (ps qs : seq (nat * nat)) (t : n.-tuple A) :
   nfun (pnet n (ps ++ qs)) t = nfun (pnet n qs) (nfun (pnet n ps) t).
 Proof. by rewrite pnet_cat nfun_cat. Qed.
 
+(* Commutation, brought down to the comparator-list level.  Two comparators   *)
+(* sharing no wire may be exchanged wherever they sit in a list -- this is    *)
+(* cfun_comm with the pnet bookkeeping done once and for all, and it is what  *)
+(* a reordering of an emitted trace has to be justified by.                   *)
+Lemma cdisjoint_cswap n (a b c e : 'I_n) :
+  a != c -> a != e -> b != c -> b != e ->
+  cdisjoint (cswap a b) (cswap c e).
+Proof.
+move=> aNc aNe bNc bNe x; rewrite /cswap /= !ffunE.
+case: (x =P a) => [xa|/eqP xNa].
+  by rewrite xa (negPf aNc) (negPf aNe) /= eqxx orbT.
+case: (x =P b) => [xb|/eqP xNb].
+  by rewrite xb (negPf bNc) (negPf bNe) /= eqxx orbT.
+by rewrite eqxx.
+Qed.
+
+Lemma ord_sub_neq n (x y : nat) (xn : x < n) (yn : y < n) :
+  x != y -> (Sub x xn : 'I_n) != Sub y yn.
+Proof.
+move=> xNy; apply/eqP => H.
+by move/eqP: xNy; apply; exact: (congr1 (@nat_of_ord n) H).
+Qed.
+
+Lemma nfun_pnet_swap n (ps qs : seq (nat * nat)) a b c e (u : n.-tuple A)
+    (an : a < n) (bn : b < n) (cn : c < n) (en : e < n) :
+  a != c -> a != e -> b != c -> b != e ->
+  nfun (pnet n (ps ++ (a, b) :: (c, e) :: qs)) u
+    = nfun (pnet n (ps ++ (c, e) :: (a, b) :: qs)) u.
+Proof.
+move=> aNc aNe bNc bNe.
+rewrite !pnet_cat !nfun_cat (pnet_cons _ an bn) (pnet_cons _ cn en).
+rewrite (pnet_cons _ cn en) (pnet_cons _ an bn) !nfunE.
+congr (nfun _ _); apply: cfun_comm; apply: cdisjoint_sym.
+by apply: cdisjoint_cswap; apply: ord_sub_neq.
+Qed.
+
 (* A wire touched by none of the comparators keeps its value. *)
 Lemma tnth_nfun_pnet_avoid n (ps : seq (nat * nat)) (u : n.-tuple A)
     (i : 'I_n) :
