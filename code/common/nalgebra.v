@@ -163,6 +163,73 @@ apply/allP => [] [a b] /=; rewrite /cpairs mem_pmap => /mapP[j _] /=.
 by case: ifP => // jL [-> ->]; rewrite !ltn_ord.
 Qed.
 
+(* -------------------------------------------------------------------------- *)
+(*  Comparators of a deinterleaved network                                    *)
+(* -------------------------------------------------------------------------- *)
+
+(* Deinterleaving doubles every comparator: (a,b) is performed on the even    *)
+(* lines and on the odd lines, i.e. as (2a,2b) and (2a+1,2b+1).  Since the    *)
+(* enumeration visits 2a just before 2a+1 (enum_ord_eocat), the two copies    *)
+(* come out adjacent, and the whole comparator list of neodup is the original *)
+(* one with each entry expanded in place.                                     *)
+Definition pdup (ps : seq (nat * nat)) : seq (nat * nat) :=
+  flatten [seq [:: (ab.1.*2, ab.2.*2); (ab.1.*2.+1, ab.2.*2.+1)] | ab <- ps].
+
+Lemma pdup_cat ps qs : pdup (ps ++ qs) = pdup ps ++ pdup qs.
+Proof. by rewrite /pdup map_cat flatten_cat. Qed.
+
+Lemma pdup_flatten s : pdup (flatten s) = flatten [seq pdup x | x <- s].
+Proof. by elim: s => [//|a s IH]; rewrite /= pdup_cat IH. Qed.
+
+Lemma pmap_flatten_seq (T U : Type) (f : T -> option U) (s : seq (seq T)) :
+  pmap f (flatten s) = flatten [seq pmap f x | x <- s].
+Proof. by elim: s => [//|a s IH]; rewrite /= pmap_cat IH. Qed.
+
+Lemma pdup_pmap (T : Type) (g : T -> option (nat * nat)) (l : seq T) :
+  pdup (pmap g l) =
+  flatten [seq (if g x is Some ab
+                then [:: (ab.1.*2, ab.2.*2); (ab.1.*2.+1, ab.2.*2.+1)]
+                else [::]) | x <- l].
+Proof.
+by elim: l => [//|x l IH] /=; case: (g x) => [ab|] /=; rewrite /pdup /= -/(pdup _) IH.
+Qed.
+
+Lemma clink_ceodup_e n (c : connector n) (a : 'I_n) :
+  clink (ceodup c) (elift a) = elift (clink c a).
+Proof. by rewrite /ceodup /ceomerge /= ffunE val_elift odd_double eliftK. Qed.
+
+Lemma clink_ceodup_o n (c : connector n) (a : 'I_n) :
+  clink (ceodup c) (olift a) = olift (clink c a).
+Proof. by rewrite /ceodup /ceomerge /= ffunE val_olift /= odd_double /= oliftK. Qed.
+
+Lemma cpairs_eodup n (c : connector n) : cpairs (ceodup c) = pdup (cpairs c).
+Proof.
+rewrite /cpairs enum_ord_eocat pmap_flatten_seq pdup_pmap -!map_comp.
+congr flatten; apply: eq_map => a /=.
+rewrite clink_ceodup_e clink_ceodup_o !val_elift !val_olift ltn_double ltnS.
+by rewrite ltn_double; case: ifP.
+Qed.
+
+Lemma neodupE n (nt : network n) : neodup nt = [seq ceodup c | c <- nt].
+Proof. by rewrite /neodup /neomerge; elim: nt => [//|c nt IH] /=; rewrite IH. Qed.
+
+Lemma nstages_neodup n (nt : network n) :
+  nstages (neodup nt) = pdup (nstages nt).
+Proof.
+rewrite /nstages neodupE pdup_flatten -!map_comp.
+by congr flatten; apply: eq_map => c /=; rewrite cpairs_eodup.
+Qed.
+
+(* ... and for the iterated deinterleave: j applications of neodup expand     *)
+(* every comparator into the `2^ j copies of it that sit in the `2^ j         *)
+(* residue classes.  This is the comparator-level reading of neotile.         *)
+Fixpoint pdupn j (ps : seq (nat * nat)) : seq (nat * nat) :=
+  if j is j1.+1 then pdup (pdupn j1 ps) else ps.
+
+Lemma nstages_neotile q (net : network (`2^ q)) j :
+  nstages (neotile net j) = pdupn j (nstages net).
+Proof. by elim: j => [//|j IH]; rewrite neotileS nstages_neodup IH. Qed.
+
 Section Algebra.
 
 Variable d : disp_t.
