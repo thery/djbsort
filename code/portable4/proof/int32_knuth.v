@@ -8,63 +8,38 @@ Import Order POrderTheory TotalTheory.
 (*                                                                            *)
 (*  int32_knuth.v -- sort.c's network computes nbjsort's knuth_exchange       *)
 (*                                                                            *)
-(*  int32_sort.v proves `int32_sort_network (`2^ m) \is sorting` by LEAVING   *)
-(*  the network world: sort.c's comparator list becomes a [swap]-fold over    *)
-(*  plain seqs, matched against nbjsort's ITERATIVE `iknuth_exchange`, and    *)
-(*  all the work then happens on `seq (nat * nat)` (int32_reify.v, 633 l.).   *)
-(*                                                                            *)
-(*  This file does it the other way, in the style of the avx2 track: stay     *)
-(*  inside `network` and prove an equation between networks,                  *)
-(*                                                                            *)
 (*      nfun_int32_knuth :                                                    *)
 (*        nfun (int32_sort_network (`2^ m)) t = nfun (knuth_exchange m) t     *)
 (*                                                                            *)
-(*  after which sorting is immediate from nbjsort's `sorting_knuth_exchange`. *)
-(*  It mirrors the avx2 capstone `tsort tmerge_avx2 false t =                 *)
-(*  nfun (pbsort false k) t`.                                                 *)
-(*                                                                            *)
-(*  (An earlier route left the network world instead, turning sort.c's list   *)
-(*  into a [swap]-fold over plain seqs and matching nbjsort's ITERATIVE       *)
-(*  `iknuth_exchange`; all the work then happened on `seq (nat * nat)`.  That *)
-(*  is what int32_reify.v used to do -- it is gone, see the git history.)     *)
-(*                                                                            *)
-(*  The route, by induction on m:                                             *)
+(*  whence sorting, by sorting_knuth_exchange.  The proof is by induction on  *)
+(*  m and has three ingredients.                                              *)
 (*                                                                            *)
 (*    nfun_me_pairs_split      sort.c's sweep at `2^ m.+1 is its sweep at     *)
 (*                             `2^ m with every comparator doubled, followed  *)
 (*                             by the p = 1 block.  The p >= 2 blocks double  *)
-(*                             by level_pairs_double (as lists) and by        *)
-(*                             nfun_casc_pairs_double (as functions -- the    *)
-(*                             doubled sweep runs a whole chain on the even   *)
-(*                             copy of a position and only then on the odd    *)
-(*                             copy, where pdup alternates, so the two orders *)
-(*                             differ by transpositions of comparators on     *)
-(*                             disjoint wires).                               *)
+(*                             by level_pairs_double (a list identity) and by *)
+(*                             nfun_casc_pairs_double (an nfun one: a doubled *)
+(*                             sweep runs a whole chain on the even copy of a *)
+(*                             position and only then on the odd copy, where  *)
+(*                             pdup alternates, and the two orders differ by  *)
+(*                             transpositions of comparators on disjoint      *)
+(*                             lines).                                        *)
 (*                                                                            *)
-(*    nstages_knuth_exchangeS  the same shape on the network side: one        *)
-(*                             unfolding contributes the sub-sort's list with *)
-(*                             every comparator doubled, then the base pass   *)
-(*                             at distance 1, then the jump chain.  The       *)
-(*                             merge stage's connectors ARE sort.c's blocks   *)
-(*                             (cpairs_eswap, cpairs_odd_jump).               *)
+(*    nstages_knuth_exchangeS  the network splits the same way, and the merge *)
+(*                             stage's connectors are sort.c's blocks:        *)
+(*                             ceswap is the base pass at distance 1          *)
+(*                             (cpairs_eswap), codd_jump r the distance-r     *)
+(*                             pass on the odd lines (cpairs_odd_jump).       *)
 (*                                                                            *)
 (*    nfun_casc_kjumps         the cascade transpose: sort.c runs the cascade *)
 (*                             position-major, the network distance-major.    *)
-(*                             Peeling the largest distance off every chain   *)
-(*                             and moving those comparators to the front      *)
-(*                             turns one into the other, each move legitimate *)
-(*                             because a later position's large-distance      *)
-(*                             comparator shares no wire with an earlier      *)
-(*                             position's smaller-distance ones.              *)
+(*                             Pulling the largest distance of every chain to *)
+(*                             the front turns one into the other, each move  *)
+(*                             legitimate because a later position's          *)
+(*                             large-distance comparator shares no line with  *)
+(*                             an earlier position's smaller-distance ones.   *)
 (*                                                                            *)
-(*  The generic half lives in common/nalgebra.v, shared with the avx2 track:  *)
-(*  the commutation core (cdisjoint / cfun_comm / nfun_nswap and its list     *)
-(*  form nfun_pnet_swap / _moveL / _moveL_block / _heads_first), the          *)
-(*  list <-> network bridge (pnet / cpairs / nstages and their inverses),     *)
-(*  flip-freeness (cnoflip / nnoflip), and the deinterleave (pdup,            *)
-(*  nfun_pnet_pdup, neotile).                                                 *)
-(*                                                                            *)
-(*  No admits, no axioms.                                                     *)
+(*  The generic half is in common/nalgebra.v.                                 *)
 (*                                                                            *)
 (******************************************************************************)
 
@@ -76,13 +51,10 @@ Unset Printing Implicit Defensive.
 (*  The flat sweep under deinterleaving                                       *)
 (* -------------------------------------------------------------------------- *)
 
-(* Half of what (S2) needs: sort.c's blocks at `2^ m.+1 are the blocks at     *)
-(* `2^ m with every comparator doubled.  Here for the base pass.  Line i of   *)
-(* the big problem is 2a or 2a+1 for a line a of the small one, and both      *)
-(* satisfy the base pass's test exactly when a does: the distance test is     *)
-(* ltn_double, and the "p-bit of i is clear" test survives by divn_double /   *)
-(* divn_doubleS.  Since the enumeration visits 2a just before 2a+1, the two   *)
-(* copies come out adjacent -- which is precisely pdup.                       *)
+(* The base pass under doubling.  Line i of the big problem is 2a or 2a+1 for *)
+(* a line a of the small one, and both satisfy the test exactly when a does:  *)
+(* the distance test is ltn_double, the p-bit test survives by divn_double /  *)
+(* divn_doubleS.  The two copies come out adjacent, which is pdup.            *)
 Lemma level_pairs_double N p : 0 < p ->
   level_pairs N.*2 p.*2 p.*2 false = pdup (level_pairs N p p false).
 Proof.
@@ -102,12 +74,10 @@ Qed.
 (*  The merge stage's connectors ARE sort.c's blocks                          *)
 (* -------------------------------------------------------------------------- *)
 
-(* knuth_exchange's merge part is `ceswap` followed by a chain of             *)
-(* `codd_jump r`.  Read back as comparators, each of those connectors is      *)
-(* literally one of sort.c's `level_pairs` blocks: `ceswap` is the base pass  *)
-(* at distance 1 on the even positions, and `codd_jump r` is the distance-r   *)
-(* pass on the odd positions.  So the two sides do not merely agree up to     *)
-(* some encoding -- one is a list of the other's blocks.                      *)
+(* knuth_exchange's merge part is ceswap followed by a chain of codd_jump r.  *)
+(* Read back as comparators, each of those connectors is one of sort.c's      *)
+(* level_pairs blocks: ceswap the base pass at distance 1 on the even         *)
+(* positions, codd_jump r the distance-r pass on the odd ones.                *)
 
 Lemma cpairs_eswap n : cpairs (@ceswap n) = level_pairs n 1 1 false.
 Proof.
@@ -155,10 +125,9 @@ Qed.
 (*  halves under doubling                                                     *)
 (* -------------------------------------------------------------------------- *)
 
-(* `halves` carries a fuel argument, and the doubled sweep runs it with fuel  *)
-(* top.*2 where the original uses top, so nothing can be compared until the   *)
-(* fuel is shown irrelevant.  int32_network.v proves nothing about halves     *)
-(* beyond mem_halves_gt0, so this is built here.                              *)
+(* halves carries a fuel argument, and the doubled sweep runs it with fuel    *)
+(* top.*2 where the original uses top, so the fuel has to be shown            *)
+(* irrelevant before the two can be compared.                                 *)
 Lemma halves_fuel f1 f2 x : x <= f1 -> x <= f2 -> halves f1 x = halves f2 x.
 Proof.
 elim: f1 f2 x => [|f1 IH] [|f2] x //=.
@@ -168,8 +137,7 @@ case: x => [|x] //= xLf1 xLf2.
 by congr (_ :: _); apply: IH; lia.
 Qed.
 
-(* Doubling prepends one level and leaves the rest alone.  True for every x, *)
-(* not only for powers of two: the fuel is what has to be repaired.          *)
+(* Doubling prepends one level and leaves the rest alone. *)
 Lemma halves_double t : 0 < t -> halves (t.*2) (t.*2) = t.*2 :: halves t t.
 Proof.
 move=> t_gt0.
@@ -289,7 +257,7 @@ Section CascDouble.
 Variable d0 : disp_t.
 Variable A0 : orderType d0.
 
-(* THE casc_pairs DOUBLING LAW.  Not a list identity: the doubled sweep runs  *)
+(* The casc_pairs doubling law.  Not a list identity: the doubled sweep runs  *)
 (* a whole chain on the even copy of a position and then the whole chain on   *)
 (* the odd copy, while pdup alternates per comparator.  The two orders differ *)
 (* only by transpositions of comparators on disjoint wires -- one parity      *)
@@ -403,8 +371,7 @@ Variable d : disp_t.
 Variable A : orderType d.
 
 (* -------------------------------------------------------------------------- *)
-(*  (S2)  THE REAL HOLE -- reshaping sort.c's sweep into knuth_exchange's     *)
-(*        recursion.                                                          *)
+(*  Reshaping sort.c's sweep into knuth_exchange's recursion                  *)
 (*                                                                            *)
 (*  The block order is NOT the obstacle it looked like.  Expanding the        *)
 (*  recursion and pushing nalgebra's neodup_cat through every ++,             *)
@@ -433,9 +400,8 @@ Variable A : orderType d.
 (* -------------------------------------------------------------------------- *)
 
 (* -------------------------------------------------------------------------- *)
-(*  (S3)  knuth_exchange is built from ceswap and codd_jump, both of which    *)
-(*        take cflip_default false, so no connector in it flips.  The generic *)
-(*        half of this (codd_jump, ceomerge, neodup) is in nalgebra.v.        *)
+(*  knuth_exchange is built from ceswap and codd_jump, both of which take     *)
+(*  cflip_default false, so no connector in it flips.                         *)
 (* -------------------------------------------------------------------------- *)
 
 Lemma cnoflip_eswap k : cnoflip (@ceswap k).
@@ -521,7 +487,7 @@ Section Transpose.
 Variable d2 : disp_t.
 Variable A2 : orderType d2.
 
-(* THE CASCADE TRANSPOSE.  sort.c runs the cascade position-major (for each   *)
+(* The cascade transpose.  sort.c runs the cascade position-major (for each   *)
 (* even position, the whole distance chain); the network runs it              *)
 (* distance-major (for each distance, all positions).  Peeling the largest    *)
 (* distance off every chain and moving those comparators to the front turns   *)
@@ -612,8 +578,7 @@ Qed.
 End Algebraic.
 
 (* -------------------------------------------------------------------------- *)
-(*  And the payoff: Obligation D without iknuth_exchange, iter1/2/3 or the    *)
-(*  cascade transpose swseq_casc_dcasc -- int32_reify.v is gone.              *)
+(*  Sorting, for a power-of-two width.                                        *)
 (* -------------------------------------------------------------------------- *)
 
 Corollary sorting_int32_sort_network_e2n_alg m :
