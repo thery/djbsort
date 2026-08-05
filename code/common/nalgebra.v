@@ -6,36 +6,28 @@ Import Order POrderTheory TotalTheory.
 
 (******************************************************************************)
 (*                                                                            *)
-(*  nalgebra.v -- algebra of connectors and networks shared by both tracks    *)
+(*  nalgebra.v -- algebra of connectors and networks                          *)
 (*                                                                            *)
-(*  nsort.v builds networks only by splitting in halves (cmerge / cdup,       *)
-(*  ceomerge / ceodup, nmerge / ndup, neomerge / neodup, codd_jump).  Both    *)
-(*  verification tracks then needed more, and each grew its own: the avx2     *)
-(*  track added reshape and tiling operators inside sort_transpose.v, the     *)
-(*  portable4 track worked around the gap by leaving the network world for    *)
-(*  flat lists of index pairs.  This file collects the part that is generic.  *)
+(*  Everything here is generic: no program is mentioned.  It supplements      *)
+(*  nsort.v, whose combinators build a network only by splitting it in        *)
+(*  halves, with what is needed to run one network everywhere and to relate a *)
+(*  network to the comparator list a program emits.                           *)
 (*                                                                            *)
-(*    oconn / pnet     == turn a list of index pairs into a network (moved    *)
-(*                        here from portable4's int32_network.v: it is a      *)
-(*                        generic list <-> network bridge, nothing to do      *)
-(*                        with sort.c)                                        *)
-(*    pnet_cons        == one in-range pair in front of a pnet is a cswap     *)
-(*    cnoflip/nnoflip  == a connector (network) that never flips; this is     *)
-(*                        exactly the second conjunct of nsort's ctransp,     *)
-(*                        without its i+-1 adjacency requirement, which       *)
-(*                        codd_jump r violates for r > 1                      *)
-(*    cdisjoint        == no wire is moved by both connectors                 *)
-(*    cfun_comm        == disjoint connectors commute                         *)
-(*    nfun_nswap       == swapping two adjacent disjoint connectors in a      *)
-(*                        network preserves its function                      *)
-(*    cpairs / nstages == read a connector (network) back as the comparators  *)
-(*                        it performs                                         *)
+(*    oconn / pnet     turn a list of index pairs into a network              *)
+(*    cpairs / nstages read a connector (network) back as its comparators     *)
+(*    cnoflip/nnoflip  a connector (network) that never flips                 *)
+(*    cdisjoint        no line is moved by both connectors                    *)
+(*    cfun_comm        disjoint connectors commute; nfun_nswap, and the       *)
+(*                     comparator-list moves nfun_pnet_swap / _moveL /        *)
+(*                     _moveL_block / _heads_first / _mix built on it         *)
+(*    pdup / neotile   deinterleave a comparator list / a network, iterated   *)
+(*    ntile / arsh     tile a block network across an array, and the blocked  *)
+(*                     view of the array it tiles over                        *)
+(*    ttr / cconj      transpose an array, and conjugate a network by it      *)
+(*    nrows / ncols    run a network on the rows / columns of a square        *)
+(*    tflip / ntflip   sign-flip an array, and conjugate a network by it      *)
 (*                                                                            *)
-(*  The commutation group was written for portable4, proved, and then deleted *)
-(*  unused (`git show 3bbd559^:code/portable4/proof/sort_commute.v`); it is   *)
-(*  recovered here so that both tracks can reach it.                          *)
-(*                                                                            *)
-(*  Everything here is proved; no admits, no axioms.                          *)
+(*  No admits, no axioms.                                                     *)
 (*                                                                            *)
 (******************************************************************************)
 
@@ -87,12 +79,9 @@ rewrite /nnoflip /neodup /neomerge.
 by elim: nt => [//|c nt IH] /= /andP[cc nn]; rewrite cnoflip_eomerge // IH.
 Qed.
 
-(* Deinterleaving a network distributes over concatenation.  This is what     *)
-(* lets a recursive `neodup`-based network be flattened: unfolding            *)
-(*   knuth_exchange m = neodup (knuth_exchange m.-1) ++ merge_m               *)
-(* repeatedly and pushing neodup inside every ++ exposes the network as a     *)
-(* concatenation of deinterleaved merge stages, in decreasing distance -- the *)
-(* same order a flat p = top, top/2, ..., 1 sweep visits them in.             *)
+(* Deinterleaving a network distributes over concatenation, so a recursive    *)
+(* network built from neodup and ++ can be flattened into a concatenation of  *)
+(* deinterleaved stages.                                                      *)
 Lemma neodup_cat n (n1 n2 : network n) :
   neodup (n1 ++ n2) = neodup n1 ++ neodup n2.
 Proof. by rewrite /neodup /neomerge zip_cat // map_cat. Qed.
@@ -101,12 +90,10 @@ Proof. by rewrite /neodup /neomerge zip_cat // map_cat. Qed.
 (*  Iterated deinterleave, cast-free                                          *)
 (* -------------------------------------------------------------------------- *)
 
-(* `neodup` goes network m -> network (m + m), so iterating it naively builds *)
-(* a tower (m + m) + (m + m) + ... and every equation about it drowns in      *)
-(* casts.  But `2^ j.+1 is DEFINITIONALLY `2^ j + `2^ j (e2n is defined by    *)
-(* doubling, not by expn), so indexing the iteration by the EXPONENT keeps the*)
-(* type in `2^ form and no cast is ever needed.  This is the interleaved      *)
-(* sibling of the blocked `ntile` the avx2 track uses for the same reason.    *)
+(* j-fold deinterleave.  `neodup` goes network m -> network (m + m), so       *)
+(* iterating it on the size would build a tower of sums; indexing on the      *)
+(* exponent instead keeps the type a power, since `2^ j.+1 is definitionally  *)
+(* `2^ j + `2^ j, and no cast appears.                                        *)
 Fixpoint neotile q (net : network (`2^ q)) j : network (`2^ (j + q)) :=
   if j is j1.+1 then neodup (neotile net j1) else net.
 
@@ -125,10 +112,8 @@ Lemma nnoflip_neotile q (net : network (`2^ q)) j :
   nnoflip net -> nnoflip (neotile net j).
 Proof. by elim: j => [//|j IH] nn; rewrite neotileS nnoflip_neodup // IH. Qed.
 
-(* The enumeration of `I_(m + m) in the even/odd order the deinterleave uses: *)
-(* wire a of the sub-problem becomes the adjacent pair 2a, 2a+1.  This is the *)
-(* index-level counterpart of nfun_eodup, and what lets a comparator list be  *)
-(* read off a deinterleaved network.                                          *)
+(* The enumeration of `I_(m + m) in the order the deinterleave uses: line a   *)
+(* of the sub-problem becomes the adjacent pair 2a, 2a+1.                     *)
 Lemma iota_eocat m :
   iota 0 (m + m) = flatten [seq [:: a.*2; a.*2.+1] | a <- iota 0 m].
 Proof.
@@ -238,10 +223,9 @@ Qed.
 (* -------------------------------------------------------------------------- *)
 
 (* Deinterleaving doubles every comparator: (a,b) is performed on the even    *)
-(* lines and on the odd lines, i.e. as (2a,2b) and (2a+1,2b+1).  Since the    *)
-(* enumeration visits 2a just before 2a+1 (enum_ord_eocat), the two copies    *)
-(* come out adjacent, and the whole comparator list of neodup is the original *)
-(* one with each entry expanded in place.                                     *)
+(* lines and on the odd lines, as (2a,2b) and (2a+1,2b+1), and the two copies *)
+(* come out adjacent, so the comparator list of neodup is the original one    *)
+(* with each entry expanded in place.                                         *)
 Definition pdup (ps : seq (nat * nat)) : seq (nat * nat) :=
   flatten [seq [:: (ab.1.*2, ab.2.*2); (ab.1.*2.+1, ab.2.*2.+1)] | ab <- ps].
 
@@ -252,9 +236,7 @@ Lemma pdup_flatten s : pdup (flatten s) = flatten [seq pdup x | x <- s].
 Proof. by elim: s => [//|a s IH]; rewrite /= pdup_cat IH. Qed.
 
 (* Pushing map / filter / pmap through flatten, in the explicit form needed   *)
-(* to compare two flattened comprehensions termwise (the library's            *)
-(* map_flatten reassociates into the [seq _ | x <- s, y <- x] notation, which *)
-(* map_comp can then no longer see through).                                  *)
+(* to compare two flattened comprehensions termwise.                          *)
 Lemma pmap_flatten_seq (T U : Type) (f : T -> option U) (s : seq (seq T)) :
   pmap f (flatten s) = flatten [seq pmap f x | x <- s].
 Proof. by elim: s => [//|a s IH]; rewrite /= pmap_cat IH. Qed.
@@ -389,7 +371,7 @@ Variable d : disp_t.
 Variable A : orderType d.
 
 (* -------------------------------------------------------------------------- *)
-(*  Commutation core -- recovered from the deleted sort_commute.v             *)
+(*  Commutation                                                               *)
 (* -------------------------------------------------------------------------- *)
 
 (* A wire fixed by a connector keeps its value. *)
@@ -518,8 +500,7 @@ rewrite /bnd /dpair /= => /andP[an bn] /andP[cn en] /and4P[aNc aNe bNc bNe].
 exact: nfun_pnet_swap.
 Qed.
 
-(* Moving one comparator left past a block it is disjoint from.  Everything  *)
-(* below reduces a claimed reordering of an emitted trace to this.           *)
+(* Moving one comparator left past a block it is disjoint from. *)
 Lemma nfun_pnet_moveL n (qs rs : seq (nat * nat)) ab (t : n.-tuple A) :
   bnd n ab -> all (bnd n) qs -> all (dpair ab) qs ->
   nfun (pnet n (qs ++ ab :: rs)) t = nfun (pnet n (ab :: qs ++ rs)) t.
@@ -777,10 +758,8 @@ End Algebra.
 (* -------------------------------------------------------------------------- *)
 (*  Transpose, rows and columns, sign flips, tiling and reshape               *)
 (*                                                                            *)
-(*  Moved here from the avx2 track's sort_transpose.v, where they were built. *)
-(*  None of it mentions a program: it answers the question of running one     *)
-(*  network everywhere, for the blocked way of splitting an array, and is the *)
-(*  counterpart of the interleaved neotile above.                             *)
+(*  The blocked way of running one network everywhere, and the reshapes and   *)
+(*  conjugations that go with it.  Counterpart of the interleaved neotile.    *)
 (* -------------------------------------------------------------------------- *)
 
 Section Transpose.
