@@ -193,6 +193,39 @@ move=> Hg; rewrite /cpairs -val_enum_ord.
 by elim: (enum 'I_n) => [//|j l IH] /=; rewrite Hg IH.
 Qed.
 
+Lemma pmap_single (T U : eqType) (f : T -> option U) (l : seq T) a x :
+  a \in l -> uniq l -> f a = Some x -> (forall y, y != a -> f y = None) ->
+  pmap f l = [:: x].
+Proof.
+elim: l => [//|y l IH] /=.
+rewrite inE => /orP[/eqP ->|aIl] /andP[yNl ul] fa fN.
+- rewrite fa; congr (_ :: _).
+  apply/eqP; rewrite -[_ == _]/(pmap f l == [::]) -size_eq0 size_pmap.
+  apply/eqP; rewrite -(count_pred0 l); apply: eq_in_count => z zl /=.
+  by rewrite fN //; apply: contraNneq yNl => <-.
+have yNa : y != a by apply/eqP => yEa; move: yNl; rewrite yEa aIl.
+by rewrite (fN _ yNa) /= IH.
+Qed.
+
+(* A single ordered comparator is exactly one cswap, in both directions. *)
+Lemma cpairs_cswap n (a b : 'I_n) :
+  (a : nat) < b -> cpairs (cswap a b) = [:: (nat_of_ord a, nat_of_ord b)].
+Proof.
+move=> aLb.
+rewrite (cpairs_val (g := fun i => if i == nat_of_ord a then nat_of_ord b
+                                   else if i == nat_of_ord b then nat_of_ord a
+                                   else i)); last first.
+  move=> i; rewrite /cswap /= ffunE -!(inj_eq val_inj) /=.
+  by case: eqP => [_|_] //; case: eqP.
+apply: (@pmap_single _ _ _ _ (nat_of_ord a) (nat_of_ord a, nat_of_ord b)).
+- by rewrite mem_iota /= ltn_ord.
+- exact: iota_uniq.
+- by rewrite eqxx aLb.
+move=> y yNa /=; rewrite (negPf yNa).
+case: eqP => [->|_]; last by rewrite ltnn.
+by rewrite ltnNge (ltnW aLb).
+Qed.
+
 Lemma cpairs_bounded n (c : connector n) :
   all (fun ab => (ab.1 < n) && (ab.2 < n)) (cpairs c).
 Proof.
@@ -238,6 +271,11 @@ Lemma flatten_map_filter (T U : Type) (P : pred T) (F : T -> seq U) (l : seq T) 
   flatten [seq F x | x <- l & P x]
     = flatten [seq (if P x then F x else [::]) | x <- l].
 Proof. by elim: l => [//|x l IH]; rewrite /=; case: (P x); rewrite /= IH. Qed.
+
+Lemma map_filter_flatten (T U : Type) (P : pred T) (f : T -> U) (l : seq T) :
+  [seq f x | x <- l & P x]
+    = flatten [seq (if P x then [:: f x] else [::]) | x <- l].
+Proof. by elim: l => [//|x l IH] /=; case: (P x); rewrite /= IH. Qed.
 
 (* Indexing through a list that expands each entry to a pair of entries. *)
 Lemma flatten_pair_map (T V U : Type) (F : V -> seq U) (g h : T -> V)
@@ -305,6 +343,45 @@ Fixpoint pdupn j (ps : seq (nat * nat)) : seq (nat * nat) :=
 Lemma nstages_neotile q (net : network (`2^ q)) j :
   nstages (neotile net j) = pdupn j (nstages net).
 Proof. by elim: j => [//|j IH]; rewrite neotileS nstages_neodup IH. Qed.
+
+(* On the lists a program actually emits -- ordered, in range -- pnet and    *)
+(* nstages are inverse, and the resulting network never flips.               *)
+Definition okp n (ab : nat * nat) : bool := (ab.1 < ab.2) && (ab.2 < n).
+
+Lemma okp_cpairs n (c : connector n) : all (okp n) (cpairs c).
+Proof.
+apply/allP => [] [a b] /=; rewrite /cpairs mem_pmap => /mapP[j _] /=.
+by case: ifP => // jL [-> ->]; rewrite /okp /= jL ltn_ord.
+Qed.
+
+Lemma okp_nstages n (nt : network n) : all (okp n) (nstages nt).
+Proof.
+rewrite /nstages; elim: nt => [//|c nt IH] /=.
+by rewrite all_cat okp_cpairs IH.
+Qed.
+
+Lemma nstages_pnet n (ps : seq (nat * nat)) :
+  all (okp n) ps -> nstages (pnet n ps) = ps.
+Proof.
+elim: ps => [//|[a b] ps IH] /andP[ab_ok H].
+have /andP[aLb bLn] : (a < b) && (b < n) := ab_ok.
+have aLn : a < n by apply: ltn_trans bLn.
+by rewrite (pnet_cons _ aLn bLn) nstages_cons cpairs_cswap // IH.
+Qed.
+
+Lemma nnoflip_pnet n (ps : seq (nat * nat)) :
+  all (okp n) ps -> nnoflip (pnet n ps).
+Proof.
+elim: ps => [//|[a b] ps IH] /andP[ab_ok H].
+have /andP[aLb bLn] : (a < b) && (b < n) := ab_ok.
+have aLn : a < n by apply: ltn_trans bLn.
+rewrite (pnet_cons _ aLn bLn) /nnoflip /= -/(nnoflip _) IH // andbT.
+apply/forallP => i; rewrite /cswap /= ffunE.
+case: (i =P Sub a aLn) => [_|_]; first by rewrite ltnNge (ltnW aLb).
+case: (i =P Sub b bLn) => [_|_] //.
+by rewrite ltnNge (ltnW aLb).
+Qed.
+
 
 Section Algebra.
 
@@ -488,6 +565,68 @@ move=> H; elim: l t => [//|a l IH] t /=.
 by rewrite !nfun_pnet_cat H IH.
 Qed.
 
+Lemma nfun_pnet_flatten_in n (T : eqType) (F G : T -> seq (nat * nat))
+    (l : seq T) (t : n.-tuple A) :
+  (forall a, a \in l ->
+     forall u : n.-tuple A, nfun (pnet n (F a)) u = nfun (pnet n (G a)) u) ->
+  nfun (pnet n (flatten [seq F a | a <- l])) t
+    = nfun (pnet n (flatten [seq G a | a <- l])) t.
+Proof.
+elim: l t => [//|a l IH] t H /=.
+rewrite !nfun_pnet_cat H ?mem_head //.
+by apply: IH => x xl u; apply: H; rewrite inE xl orbT.
+Qed.
+
+(* Moving a whole block left past another block it is disjoint from. *)
+Lemma nfun_pnet_moveL_block n (qs bs rs : seq (nat * nat)) (t : n.-tuple A) :
+  all (bnd n) qs -> all (bnd n) bs ->
+  all (fun b => all (dpair b) qs) bs ->
+  nfun (pnet n (qs ++ bs ++ rs)) t = nfun (pnet n (bs ++ qs ++ rs)) t.
+Proof.
+elim: bs rs t => [//|b bs IH] rs t qsB /andP[bB bsB] /andP[bD bsD].
+rewrite cat_cons (@nfun_pnet_moveL n qs (bs ++ rs) b t bB qsB bD).
+rewrite cat_cons.
+rewrite -[b :: (qs ++ bs ++ rs)]cat1s -[b :: (bs ++ qs ++ rs)]cat1s.
+rewrite (nfun_pnet_cat [:: b] (qs ++ bs ++ rs) t).
+rewrite (nfun_pnet_cat [:: b] (bs ++ qs ++ rs) t).
+by apply: IH.
+Qed.
+
+(* Running, for each index, its first block and then its second block, is   *)
+(* the same as running all the first blocks and then all the second blocks, *)
+(* provided a later first block shares no wire with an earlier second one.  *)
+Lemma nfun_pnet_heads_first n (T : eqType) (lt : rel T)
+    (F G : T -> seq (nat * nat)) (l : seq T) (t : n.-tuple A) :
+  transitive lt -> sorted lt l ->
+  (forall a, all (bnd n) (F a)) -> (forall a, all (bnd n) (G a)) ->
+  (forall a b, a \in l -> b \in l -> lt a b ->
+     all (fun x => all (dpair x) (G a)) (F b)) ->
+  nfun (pnet n (flatten [seq F a ++ G a | a <- l])) t
+    = nfun (pnet n (flatten [seq F a | a <- l] ++ flatten [seq G a | a <- l])) t.
+Proof.
+move=> ltT; elim: l t => [//|a l IH] t Sl FB GB D /=.
+have Sl' : sorted lt l by apply: path_sorted Sl.
+have aL : all (lt a) l by apply: order_path_min Sl.
+have D' : forall x y, x \in l -> y \in l -> lt x y ->
+    all (fun z => all (dpair z) (G x)) (F y).
+  by move=> x y xl yl; apply: D; rewrite inE ?xl ?yl orbT.
+rewrite (nfun_pnet_cat (F a ++ G a)
+           (flatten [seq F x ++ G x | x <- l]) t) (IH _ Sl' FB GB D').
+rewrite -nfun_pnet_cat.
+rewrite -!catA.
+rewrite (nfun_pnet_cat (F a)
+  (G a ++ flatten [seq F x | x <- l] ++ flatten [seq G x | x <- l]) t).
+rewrite (nfun_pnet_cat (F a)
+  (flatten [seq F x | x <- l] ++ G a ++ flatten [seq G x | x <- l]) t).
+apply: (@nfun_pnet_moveL_block n (G a) (flatten [seq F x | x <- l])
+                               (flatten [seq G x | x <- l])).
+- exact: GB.
+- by apply/allP => x /flattenP[c /mapP[b _ ->]] xc; move: (FB b) => /allP; apply.
+apply/allP => x /flattenP[c /mapP[b bl ->]] xc.
+have := D a b (mem_head a l) _ (allP aL _ bl).
+by rewrite inE bl orbT => /(_ isT) /allP; apply.
+Qed.
+
 (* Running one family of comparators and then another, versus interleaving   *)
 (* them pairwise.  When every comparator of the second family is disjoint    *)
 (* from every comparator of the first -- as happens when one lands on even   *)
@@ -616,5 +755,21 @@ elim: nt t => [//|c nt IH] t /andP[cc nn].
 rewrite /nstages /= /pnet pmap_cat nfun_cat.
 by rewrite -/(pnet n (cpairs c)) -/(pnet n (nstages nt)) nfun_pnet_cpairs // IH.
 Qed.
+
+(* Hence the pdup of an emitted list runs that list on the even lanes and on *)
+(* the odd lanes: the comparator-level image of nfun_eodup.                  *)
+Lemma nfun_pnet_pdup n (ps : seq (nat * nat)) (t : (n + n).-tuple A) :
+  all (okp n) ps ->
+  nfun (pnet (n + n) (pdup ps)) t = nfun (neodup (pnet n ps)) t.
+Proof.
+move=> H.
+rewrite {1}(esym (nstages_pnet H)) -nstages_neodup nfun_pnet_nstages //.
+by apply: nnoflip_neodup; apply: nnoflip_pnet.
+Qed.
+
+Lemma nfun_neodup_eq n (n1 n2 : network n) (t : (n + n).-tuple A) :
+  (forall u : n.-tuple A, nfun n1 u = nfun n2 u) ->
+  nfun (neodup n1) t = nfun (neodup n2) t.
+Proof. by move=> H; rewrite !nfun_eodup !H. Qed.
 
 End Algebra.

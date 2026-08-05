@@ -1,50 +1,67 @@
 From mathcomp Require Import all_boot order perm algebra.zmodp.
 From mathcomp Require Import zify.
-Require Import more_tuple nsort nalgebra nbjsort int32_network int32_sort.
+Require Import more_tuple nsort nalgebra nbjsort int32_network.
 
 Import Order POrderTheory TotalTheory.
 
 (******************************************************************************)
 (*                                                                            *)
-(*  int32_algebraic.v -- SKELETON of an algebraic route to Obligation D       *)
+(*  int32_algebraic.v -- an ALGEBRAIC proof that sort.c's network sorts       *)
 (*                                                                            *)
 (*  int32_sort.v proves `int32_sort_network (`2^ m) \is sorting` by LEAVING   *)
 (*  the network world: sort.c's comparator list becomes a [swap]-fold over    *)
-(*  plain seqs, matched against nbjsort's ITERATIVE `iknuth_exchange`.  All   *)
-(*  the work then happens on `seq (nat * nat)` (int32_reify.v, 633 lines).    *)
+(*  plain seqs, matched against nbjsort's ITERATIVE `iknuth_exchange`, and    *)
+(*  all the work then happens on `seq (nat * nat)` (int32_reify.v, 633 l.).   *)
 (*                                                                            *)
-(*  This file sketches the ALGEBRAIC alternative, in the style of the avx2    *)
-(*  track: stay inside `network` and prove an equation between networks,      *)
+(*  This file does it the other way, in the style of the avx2 track: stay     *)
+(*  inside `network` and prove an equation between networks,                  *)
 (*                                                                            *)
-(*      nfun (int32_sort_network (`2^ m)) =1 nfun (knuth_exchange m)          *)
+(*      nfun_int32_knuth :                                                    *)
+(*        nfun (int32_sort_network (`2^ m)) t = nfun (knuth_exchange m) t     *)
 (*                                                                            *)
 (*  after which sorting is immediate from nbjsort's `sorting_knuth_exchange`. *)
 (*  It mirrors the avx2 capstone `tsort tmerge_avx2 false t =                 *)
-(*  nfun (pbsort false k) t`.                                                 *)
+(*  nfun (pbsort false k) t`.  It does NOT use int32_reify.v or int32_sort.v: *)
+(*  Print Assumptions reports Closed under the global context with neither in *)
+(*  the dependencies, so this is an independent proof of Obligation D.        *)
 (*                                                                            *)
-(*  KNOWN OBSTACLE, recorded in the deleted sort_commute.v (recover it with   *)
-(*  `git show 3bbd559^:code/portable4/proof/sort_commute.v`): adjacent        *)
-(*  commutation ALONE does not suffice.  `knuth_exchange` deinterleaves       *)
-(*  (even/odd) and recurses innermost-first, whereas `me_pairs` -- like       *)
-(*  sort.c -- is a flat loop p = top, top/2, ..., 1 outermost-first, and      *)
-(*  "those two structures do not line up by adjacent commutation".            *)
+(*  The route, by induction on m:                                             *)
 (*                                                                            *)
-(*  That is exactly the flat-loops-vs-recursive-structure gap the avx2 track  *)
-(*  closed with RESHAPE / TILING (arsh, afla, ntile, ntile_ntile), not with   *)
-(*  commutation -- which is where the avx2 toolkit earns its place here.      *)
+(*    nfun_me_pairs_split      sort.c's sweep at `2^ m.+1 is its sweep at     *)
+(*                             `2^ m with every comparator doubled, followed  *)
+(*                             by the p = 1 block.  The p >= 2 blocks double  *)
+(*                             by level_pairs_double (as lists) and by        *)
+(*                             nfun_casc_pairs_double (as functions -- the    *)
+(*                             doubled sweep runs a whole chain on the even   *)
+(*                             copy of a position and only then on the odd    *)
+(*                             copy, where pdup alternates, so the two orders *)
+(*                             differ by transpositions of comparators on     *)
+(*                             disjoint wires).                               *)
 (*                                                                            *)
-(*  The generic parts of the route now live in common/nalgebra.v, shared with *)
-(*  the avx2 track: the commutation core (cdisjoint / cfun_comm /             *)
-(*  nfun_nswap), the list <-> network bridge (pnet / cpairs / nstages), and   *)
-(*  flip-freeness (cnoflip / nnoflip).  What is left here is what mentions    *)
-(*  sort.c or nbjsort:                                                        *)
+(*    nstages_knuth_exchangeS  the same shape on the network side: one        *)
+(*                             unfolding contributes the sub-sort's list with *)
+(*                             every comparator doubled, then the base pass   *)
+(*                             at distance 1, then the jump chain.  The       *)
+(*                             merge stage's connectors ARE sort.c's blocks   *)
+(*                             (cpairs_eswap, cpairs_odd_jump).               *)
 (*                                                                            *)
-(*    (S2) THE REAL HOLE -- reshape sort.c's flat outermost-first sweep into  *)
-(*         knuth_exchange's deinterleaved innermost-first recursion.          *)
-(*    (S3) knuth_exchange's connectors are flip-free -- DONE.                 *)
+(*    nfun_casc_kjumps         the cascade transpose: sort.c runs the cascade *)
+(*                             position-major, the network distance-major.    *)
+(*                             Peeling the largest distance off every chain   *)
+(*                             and moving those comparators to the front      *)
+(*                             turns one into the other, each move legitimate *)
+(*                             because a later position's large-distance      *)
+(*                             comparator shares no wire with an earlier      *)
+(*                             position's smaller-distance ones.              *)
 (*                                                                            *)
-(*  (S2) is now the ONLY remaining hole in the whole route; nalgebra.v is     *)
-(*  admit-free.  Nothing here is on the trust path of int32_sort.v.           *)
+(*  The generic half lives in common/nalgebra.v, shared with the avx2 track:  *)
+(*  the commutation core (cdisjoint / cfun_comm / nfun_nswap and its list     *)
+(*  form nfun_pnet_swap / _moveL / _moveL_block / _heads_first), the          *)
+(*  list <-> network bridge (pnet / cpairs / nstages and their inverses),     *)
+(*  flip-freeness (cnoflip / nnoflip), and the deinterleave (pdup,            *)
+(*  nfun_pnet_pdup, neotile).                                                 *)
+(*                                                                            *)
+(*  No admits, no axioms.                                                     *)
 (*                                                                            *)
 (******************************************************************************)
 
@@ -241,17 +258,17 @@ Qed.
 
 (* Every comparator of a chain is in range, on either parity. *)
 Lemma bnd_cchain_dbl N k p a :
-  all (fun ab => bnd N.*2 (dbl ab)) (cchain N (`2^ k) p a).
+  all (fun ab => bnd (N + N) (dbl ab)) (cchain N (`2^ k) p a).
 Proof.
 apply/allP => x /mapP[r]; rewrite mem_filter => /andP[/andP[pLr aRN] _] ->.
-by rewrite /bnd /dbl /= !ltn_double aRN andbT; lia.
+by rewrite /bnd /dbl /= addnn !ltn_double aRN andbT; lia.
 Qed.
 
 Lemma bnd_cchain_dblS N k p a :
-  all (fun ab => bnd N.*2 (dblS ab)) (cchain N (`2^ k) p a).
+  all (fun ab => bnd (N + N) (dblS ab)) (cchain N (`2^ k) p a).
 Proof.
 apply/allP => x /mapP[r]; rewrite mem_filter => /andP[/andP[pLr aRN] _] ->.
-rewrite /bnd /dblS /=.
+rewrite /bnd /dblS /= addnn.
 have D1 : forall u, (u.*2.+1 < N.*2) = (u < N).
   by move=> u; rewrite -doubleS leq_double.
 by rewrite !D1 aRN andbT; lia.
@@ -274,18 +291,67 @@ Variable A0 : orderType d0.
 (* the odd copy, while pdup alternates per comparator.  The two orders differ *)
 (* only by transpositions of comparators on disjoint wires -- one parity      *)
 (* against the other -- so they agree as functions, by nfun_pnet_mix.         *)
-Lemma nfun_casc_pairs_double N k p (t : (N.*2).-tuple A0) : 0 < p ->
-  nfun (pnet N.*2 (casc_pairs N.*2 (`2^ k.+1) p.*2)) t
-    = nfun (pnet N.*2 (pdup (casc_pairs N (`2^ k) p))) t.
+Lemma nfun_casc_pairs_double N k p (t : (N + N).-tuple A0) : 0 < p ->
+  nfun (pnet (N + N) (casc_pairs (N + N) (`2^ k.+1) p.*2)) t
+    = nfun (pnet (N + N) (pdup (casc_pairs N (`2^ k) p))) t.
 Proof.
 move=> p_gt0.
-rewrite (casc_pairs_split N k p_gt0) casc_pairsE pdup_flatten -map_comp.
+have C : casc_pairs (N + N) (`2^ k.+1) p.*2 = casc_pairs N.*2 (`2^ k.+1) p.*2.
+  by rewrite addnn.
+rewrite C (casc_pairs_split N k p_gt0) casc_pairsE pdup_flatten -map_comp.
 apply: nfun_pnet_flatten => a u.
 apply: nfun_pnet_mix; [exact: bnd_cchain_dbl | exact: bnd_cchain_dblS | ].
 by move=> ab cd; exact: dpair_dblS_dbl.
 Qed.
 
 End CascDouble.
+
+(* -------------------------------------------------------------------------- *)
+(*  The p-loop split                                                          *)
+(* -------------------------------------------------------------------------- *)
+
+Lemma me_top_e2n k : me_top (`2^ k.+1) = `2^ k.
+Proof.
+apply: (me_topE (k := k)); first by rewrite -[1]/(`2^ 0) ltn_e2n.
+by apply/andP; split; rewrite ?ltn_e2n //.
+Qed.
+
+Lemma me_pairsE N :
+  me_pairs N = flatten [seq level_pairs N p p false ++ casc_pairs N (me_top N) p
+                       | p <- halves (me_top N) (me_top N)].
+Proof. by []. Qed.
+
+Section PLoop.
+
+Variable d1 : disp_t.
+Variable A1 : orderType d1.
+
+(* sort.c's sweep at `2^ k.+2 is its sweep at `2^ k.+1 with every comparator  *)
+(* doubled, followed by the p = 1 block.  The p >= 2 blocks double by         *)
+(* level_pairs_double (as lists) and nfun_casc_pairs_double (as functions).   *)
+Lemma nfun_me_pairs_split k (t : (`2^ k.+2).-tuple A1) :
+  nfun (pnet (`2^ k.+2) (me_pairs (`2^ k.+2))) t
+    = nfun (pnet (`2^ k.+2)
+             (pdup (me_pairs (`2^ k.+1))
+              ++ (level_pairs (`2^ k.+2) 1 1 false
+                  ++ casc_pairs (`2^ k.+2) (`2^ k.+1) 1))) t.
+Proof.
+have E2 : `2^ k.+2 = (`2^ k.+1).*2 by rewrite e2Sn addnn.
+rewrite [in LHS]me_pairsE !me_top_e2n halves_e2n_cons map_cat flatten_cat.
+rewrite -map_comp /= cats0.
+rewrite [in RHS]me_pairsE me_top_e2n pdup_flatten -map_comp.
+rewrite !nfun_pnet_cat; congr (nfun _ _); congr (nfun _ _).
+apply: nfun_pnet_flatten_in => p pH u.
+have p_gt0 : 0 < p by apply: mem_halves_gt0 pH.
+rewrite /= pdup_cat !nfun_pnet_cat.
+rewrite -[`2^ k + `2^ k]/(`2^ k.+1) -[`2^ k.+1 + `2^ k.+1]/(`2^ k.+2).
+have L : level_pairs (`2^ k.+2) p.*2 p.*2 false
+       = pdup (level_pairs (`2^ k.+1) p p false).
+  by rewrite {1}E2; exact: (level_pairs_double _ p_gt0).
+by rewrite L (nfun_casc_pairs_double k _ p_gt0).
+Qed.
+
+End PLoop.
 
 (* The jump chain of the merge stage, read off as comparators.  Its distances *)
 (* are `2^ k - 1, `2^ k.-1 - 1, ..., 1: each step halves via (uphalf r).-1,   *)
@@ -385,6 +451,119 @@ by rewrite /= cnoflip_eswap /=; apply: nnoflip_knuth_jump_rec.
 Qed.
 
 (* -------------------------------------------------------------------------- *)
+(*  The cascade transpose                                                     *)
+(* -------------------------------------------------------------------------- *)
+
+Lemma casc_pairs_1 N : casc_pairs N 1 1 = [::].
+Proof.
+rewrite /casc_pairs.
+by elim: [seq j <- iota 0 N | ~~ odd (j %/ 1)] => [//|j l IH] /=; rewrite IH.
+Qed.
+
+(* One position's cascade at base distance 1, split at its largest distance. *)
+Lemma casc_pairs_cons N k :
+  casc_pairs N (`2^ k.+1) 1
+    = flatten [seq ((if (1 < `2^ k.+1) && (j + `2^ k.+1 < N)
+                     then [:: (j + 1, j + `2^ k.+1)] else [::])
+                    ++ [seq (j + 1, j + r)
+                       | r <- [seq r <- halves (`2^ k) (`2^ k)
+                              | (1 < r) && (j + r < N)]])
+              | j <- [seq j <- iota 0 N | ~~ odd (j %/ 1)]].
+Proof.
+have E2 : `2^ k.+1 = (`2^ k).*2 by rewrite e2Sn addnn.
+have HD : halves (`2^ k.+1) (`2^ k.+1) = `2^ k.+1 :: halves (`2^ k) (`2^ k).
+  by rewrite {1 2}E2 (halves_double (e2n_gt0 k)) -E2.
+rewrite /casc_pairs HD; congr flatten; apply: eq_map => j /=.
+by case: ifP => _.
+Qed.
+
+(* The largest-distance comparators of the cascade, taken over all positions, *)
+(* are exactly one of sort.c's base passes -- the cascade indexes them by the *)
+(* even position j, the base pass by the odd wire j+1.                        *)
+Lemma heads_level M k :
+  flatten [seq (if (1 < `2^ k.+1) && (j + `2^ k.+1 < M + M)
+                then [:: (j + 1, j + `2^ k.+1)] else [::])
+          | j <- [seq j <- iota 0 (M + M) | ~~ odd (j %/ 1)]]
+    = level_pairs (M + M) 1 ((`2^ k.+1).-1) true.
+Proof.
+have e_gt1 : 1 < `2^ k.+1 by rewrite -[1]/(`2^ 0) ltn_e2n.
+have e_gt0 : 0 < `2^ k.+1 by apply: e2n_gt0.
+rewrite flatten_map_filter /level_pairs map_filter_flatten.
+rewrite iota_eocat !flatten_pair_map.
+congr flatten; apply: eq_map => a /=.
+rewrite !divn1 odd_double /=.
+rewrite !odd_double /= andbF /= -e2Sn e_gt1 /= cats0.
+have -> : a.*2.+1 + (`2^ k.+1).-1 = a.*2 + `2^ k.+1 by lia.
+by rewrite andbT -e2Sn addn1.
+Qed.
+
+Lemma mem_halves_le f x r : r \in halves f x -> r <= x.
+Proof.
+elim: f x => [x|f IH x] /=; first by rewrite in_nil.
+case: ifP => [x_gt0|_]; last by rewrite in_nil.
+by rewrite inE => /orP[/eqP ->//|/IH H]; lia.
+Qed.
+
+(* Every cascade distance beyond the first is a power of two, hence even.     *)
+Lemma halves_e2n_even k r :
+  r \in halves (`2^ k) (`2^ k) -> 1 < r -> ~~ odd r.
+Proof.
+elim: k r => [r|k IH r]; first by rewrite inE => /eqP ->.
+rewrite halves_e2n_cons mem_cat inE => /orP[/mapP[x _ ->] _|/eqP -> //].
+by rewrite odd_double.
+Qed.
+
+Section Transpose.
+
+Variable d2 : disp_t.
+Variable A2 : orderType d2.
+
+(* THE CASCADE TRANSPOSE.  sort.c runs the cascade position-major (for each   *)
+(* even position, the whole distance chain); the network runs it              *)
+(* distance-major (for each distance, all positions).  Peeling the largest    *)
+(* distance off every chain and moving those comparators to the front turns   *)
+(* one into the other, and each move is legitimate because a later position's *)
+(* large-distance comparator shares no wire with an earlier position's        *)
+(* smaller-distance ones: parity rules out three of the four coincidences,    *)
+(* and a + r < b + `2^ k.+1 (a < b, r <= `2^ k) rules out the fourth.         *)
+Lemma nfun_casc_kjumps M k (t : (M + M).-tuple A2) :
+  nfun (pnet (M + M) (casc_pairs (M + M) (`2^ k) 1)) t
+    = nfun (pnet (M + M) (kjumps (M + M) k)) t.
+Proof.
+elim: k t => [t|k IH t]; first by rewrite /= casc_pairs_1.
+have e_gt1 : 1 < `2^ k.+1 by rewrite -[1]/(`2^ 0) ltn_e2n.
+have e_even : ~~ odd (`2^ k.+1) by rewrite e2Sn addnn odd_double.
+rewrite casc_pairs_cons.
+rewrite (@nfun_pnet_heads_first d2 A2 (M + M) _ ltn
+           (fun j => if (1 < `2^ k.+1) && (j + `2^ k.+1 < M + M)
+                     then [:: (j + 1, j + `2^ k.+1)] else [::])
+           (fun j => [seq (j + 1, j + r)
+                     | r <- [seq r <- halves (`2^ k) (`2^ k)
+                            | (1 < r) && (j + r < M + M)]])
+           [seq j <- iota 0 (M + M) | ~~ odd (j %/ 1)] t).
+- rewrite nfun_pnet_cat heads_level /= nfun_pnet_cat.
+  exact: IH.
+- exact: ltn_trans.
+- by apply: sorted_filter; [exact: ltn_trans | exact: iota_ltn_sorted].
+- move=> a; case: ifP => // /andP[_ aN] /=.
+  by rewrite /bnd /= aN andbT; lia.
+- move=> a; apply/allP => x /mapP[r].
+  rewrite mem_filter => /andP[/andP[r1 arN] _] ->.
+  by rewrite /bnd /= arN andbT; lia.
+move=> a b; rewrite !mem_filter !divn1 => /andP[aE _] /andP[bE _] aLb.
+case: ifP => // _; apply/allP => x; rewrite inE => /eqP -> /=.
+apply/allP => y /mapP[r]; rewrite mem_filter.
+move=> /andP[/andP[r1 arN] rH] ->.
+have rE : ~~ odd r by apply: halves_e2n_even rH r1.
+have rLe : r <= `2^ k by apply: mem_halves_le rH.
+have kLk : `2^ k < `2^ k + `2^ k by lia.
+by rewrite /dpair /=; apply/and4P; split; apply/eqP => E;
+   move: aE bE rE e_even E; rewrite e2Sn; lia.
+Qed.
+
+End Transpose.
+
+(* -------------------------------------------------------------------------- *)
 (*  (S2), closed.                                                             *)
 (*                                                                            *)
 (*  NOTE.  This closes (S2) the cheap way: both networks sort, and a sorting  *)
@@ -401,12 +580,20 @@ Lemma nfun_me_pairs_knuth m (t : (`2^ m).-tuple A) :
   nfun (pnet (`2^ m) (me_pairs (`2^ m))) t =
   nfun (pnet (`2^ m) (nstages (knuth_exchange m))) t.
 Proof.
-rewrite nfun_pnet_nstages; last exact: nnoflip_knuth_exchange.
-rewrite -[pnet (`2^ m) (me_pairs (`2^ m))]/(int32_sort_network (`2^ m)).
-suff E : nfun (int32_sort_network (`2^ m)) t = nfun (knuth_exchange m) t :> seq A.
-  exact: val_inj E.
-rewrite (nfun_sort _ (sorting_int32_sort_network (`2^ m))).
-by rewrite (nfun_sort _ (sorting_knuth_exchange m)).
+elim: m t => [t|m IH t]; first by [].
+case: m IH t => [IH t|k IH t].
+  by rewrite /nstages /= cats0 cpairs_eswap.
+rewrite nfun_me_pairs_split nstages_knuth_exchangeS.
+rewrite !nfun_pnet_cat.
+have okM : all (okp (`2^ k.+1)) (me_pairs (`2^ k.+1)).
+  apply/allP => ab abM; have := allP (me_pairs_bounded (`2^ k.+1)) _ abM.
+  by rewrite /okp.
+have okN : all (okp (`2^ k.+1)) (nstages (knuth_exchange k.+1)).
+  exact: okp_nstages.
+rewrite (nfun_pnet_pdup _ okM) (nfun_pnet_pdup _ okN).
+rewrite (nfun_neodup_eq _ IH).
+rewrite (@nfun_casc_kjumps d A (`2^ k.+1) k.+1).
+by rewrite /= nfun_pnet_cat.
 Qed.
 
 (* -------------------------------------------------------------------------- *)
