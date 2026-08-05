@@ -59,6 +59,10 @@ Lemma pnet_cons (n x y : nat) (ps : seq (nat * nat)) (xn : x < n) (yn : y < n) :
   pnet n ((x, y) :: ps) = cswap (Sub x xn) (Sub y yn) :: pnet n ps.
 Proof. by rewrite /pnet /= /oconn insubT /= insubT /=. Qed.
 
+Lemma pnet_cat n (ps qs : seq (nat * nat)) :
+  pnet n (ps ++ qs) = pnet n ps ++ pnet n qs.
+Proof. by rewrite /pnet pmap_cat. Qed.
+
 (* -------------------------------------------------------------------------- *)
 (*  Flip-free connectors                                                      *)
 (* -------------------------------------------------------------------------- *)
@@ -155,6 +159,35 @@ Definition cpairs n (c : connector n) : seq (nat * nat) :=
 (* A whole network flattened into the comparator list it performs. *)
 Definition nstages n (nt : network n) : seq (nat * nat) :=
   flatten (map (@cpairs n) nt).
+
+Lemma nstages_cat n (n1 n2 : network n) :
+  nstages (n1 ++ n2) = nstages n1 ++ nstages n2.
+Proof. by rewrite /nstages map_cat flatten_cat. Qed.
+
+Lemma map_filter_pmap (T U : Type) (P : pred T) (f : T -> U) (l : seq T) :
+  [seq f x | x <- l & P x] = pmap (fun x => if P x then Some (f x) else None) l.
+Proof. by elim: l => [//|x l IH] /=; case: (P x); rewrite /= IH. Qed.
+
+Lemma eq_in_pmap (T : eqType) (U : Type) (f1 f2 : T -> option U) (l : seq T) :
+  {in l, f1 =1 f2} -> pmap f1 l = pmap f2 l.
+Proof.
+elim: l => [//|x l IH] H /=; rewrite H ?mem_head // IH // => y yl.
+by apply: H; rewrite inE yl orbT.
+Qed.
+
+(* When a connector's link is given by a function of the index -- as it is    *)
+(* for every connector built from codd_jump, ceswap and friends -- its        *)
+(* comparator list is a plain scan of `iota 0 n`, in the same shape sort.c's  *)
+(* level_pairs and casc_pairs have.  This is the bridge that lets a network   *)
+(* stage be compared with a block of the flat sweep.                          *)
+Lemma cpairs_val n (c : connector n) (g : nat -> nat) :
+  (forall i : 'I_n, nat_of_ord (clink c i) = g (nat_of_ord i)) ->
+  cpairs c = pmap (fun i => if (i < g i)%N then Some (i, g i) else None)
+                  (iota 0 n).
+Proof.
+move=> Hg; rewrite /cpairs -val_enum_ord.
+by elim: (enum 'I_n) => [//|j l IH] /=; rewrite Hg IH.
+Qed.
 
 Lemma cpairs_bounded n (c : connector n) :
   all (fun ab => (ab.1 < n) && (ab.2 < n)) (cpairs c).
@@ -335,6 +368,10 @@ Lemma nfun_pnet_cons n x y (ps : seq (nat * nat)) (xn : x < n) (yn : y < n)
   nfun (pnet n ((x, y) :: ps)) t =
   nfun (pnet n ps) (cfun (cswap (Sub x xn) (Sub y yn)) t).
 Proof. by rewrite pnet_cons nfunE. Qed.
+
+Lemma nfun_pnet_cat n (ps qs : seq (nat * nat)) (t : n.-tuple A) :
+  nfun (pnet n (ps ++ qs)) t = nfun (pnet n qs) (nfun (pnet n ps) t).
+Proof. by rewrite pnet_cat nfun_cat. Qed.
 
 (* A wire touched by none of the comparators keeps its value. *)
 Lemma tnth_nfun_pnet_avoid n (ps : seq (nat * nat)) (u : n.-tuple A)

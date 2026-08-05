@@ -78,6 +78,59 @@ rewrite e0 e1.
 by case: ifP => H; rewrite H /= ?doubleD ?addSn.
 Qed.
 
+(* -------------------------------------------------------------------------- *)
+(*  The merge stage's connectors ARE sort.c's blocks                          *)
+(* -------------------------------------------------------------------------- *)
+
+(* knuth_exchange's merge part is `ceswap` followed by a chain of             *)
+(* `codd_jump r`.  Read back as comparators, each of those connectors is      *)
+(* literally one of sort.c's `level_pairs` blocks: `ceswap` is the base pass  *)
+(* at distance 1 on the even positions, and `codd_jump r` is the distance-r   *)
+(* pass on the odd positions.  So the two sides do not merely agree up to     *)
+(* some encoding -- one is a list of the other's blocks.                      *)
+
+Lemma cpairs_eswap n : cpairs (@ceswap n) = level_pairs n 1 1 false.
+Proof.
+rewrite (cpairs_val (g := fun i => if odd i then i.-1
+                                   else (if i == n.-1 then i else i.+1)));
+    last first.
+  move=> i; rewrite /ceswap /= /clink_eswap ffunE.
+  by case: ifP => iO; rewrite ?val_ipred ?val_inext.
+rewrite /level_pairs map_filter_pmap.
+apply: eq_in_pmap => i; rewrite mem_iota add0n => /andP[_ iLn].
+rewrite divn1 addn1.
+have n_gt0 : 0 < n by apply: (leq_ltn_trans (leq0n i)).
+case: (boolP (odd i)) => iO /=.
+  by rewrite ltnNge leq_pred /= andbF.
+rewrite andbT.
+case: (boolP (i == n.-1 :> nat)) => [/eqP iE|iNe] /=.
+  by rewrite ltnn iE prednK // ltnn.
+rewrite ltnSn.
+have iLn1 : i < n.-1 by rewrite ltn_neqAle iNe /= -ltnS prednK.
+by rewrite -(prednK n_gt0) ltnS iLn1.
+Qed.
+
+Lemma cpairs_odd_jump n r : 0 < r -> odd r ->
+  cpairs (@codd_jump n r) = level_pairs n 1 r true.
+Proof.
+move=> r_gt0 rO.
+rewrite (cpairs_val (g := fun i => if odd i then (if r + i < n then r + i else i)
+                                   else (if r <= i then i - r else i)));
+    last first.
+  move=> i; rewrite /codd_jump /= /clink_odd_jump rO ffunE.
+  by case: ifP => iO; rewrite ?val_iadd ?val_isub.
+rewrite /level_pairs map_filter_pmap.
+apply: eq_in_pmap => i; rewrite mem_iota add0n => /andP[_ iLn].
+rewrite divn1.
+case: (boolP (odd i)) => iO /=; last first.
+  have gLe : (if r <= i then i - r else i) <= i.
+    by case: ifP => H; [exact: leq_subr | exact: leqnn].
+  by rewrite ltnNge gLe /= andbF.
+rewrite andbT [r + i]addnC.
+case: (boolP (i + r < n)) => H /=; last by rewrite ltnn.
+by rewrite -{1}[i]addn0 ltn_add2l r_gt0.
+Qed.
+
 Section Algebraic.
 
 Variable d : disp_t.
