@@ -131,6 +131,47 @@ case: (boolP (i + r < n)) => H /=; last by rewrite ltnn.
 by rewrite -{1}[i]addn0 ltn_add2l r_gt0.
 Qed.
 
+(* -------------------------------------------------------------------------- *)
+(*  halves under doubling                                                     *)
+(* -------------------------------------------------------------------------- *)
+
+(* `halves` carries a fuel argument, and the doubled sweep runs it with fuel  *)
+(* top.*2 where the original uses top, so nothing can be compared until the   *)
+(* fuel is shown irrelevant.  int32_network.v proves nothing about halves     *)
+(* beyond mem_halves_gt0, so this is built here.                              *)
+Lemma halves_fuel f1 f2 x : x <= f1 -> x <= f2 -> halves f1 x = halves f2 x.
+Proof.
+elim: f1 f2 x => [|f1 IH] [|f2] x //=.
+- by rewrite leqn0 => /eqP ->.
+- by move=> _; rewrite leqn0 => /eqP ->.
+case: x => [|x] //= xLf1 xLf2.
+by congr (_ :: _); apply: IH; lia.
+Qed.
+
+(* Doubling prepends one level and leaves the rest alone.  True for every x, *)
+(* not only for powers of two: the fuel is what has to be repaired.          *)
+Lemma halves_double t : 0 < t -> halves (t.*2) (t.*2) = t.*2 :: halves t t.
+Proof.
+move=> t_gt0.
+have tg : 0 < t.*2 by lia.
+have h1 : t <= (t.*2).-1 by lia.
+rewrite {1}(_ : t.*2 = ((t.*2).-1).+1); last by lia.
+by rewrite /= tg doubleK (halves_fuel h1 (leqnn t)).
+Qed.
+
+(* At a power of two the whole list doubles, except that a final 1 appears.  *)
+Lemma halves_e2n_cons k :
+  halves (`2^ k.+1) (`2^ k.+1)
+    = [seq r.*2 | r <- halves (`2^ k) (`2^ k)] ++ [:: 1].
+Proof.
+elim: k => [//|k IH].
+have E1 : `2^ k.+2 = (`2^ k.+1).*2 by rewrite e2Sn addnn.
+have E2 : `2^ k.+1 = (`2^ k).*2 by rewrite e2Sn addnn.
+have HD : halves (`2^ k.+1) (`2^ k.+1) = `2^ k.+1 :: halves (`2^ k) (`2^ k).
+  by rewrite {1 2}E2 (halves_double (e2n_gt0 k)) -E2.
+by rewrite E1 (halves_double (e2n_gt0 k.+1)) {2}HD IH map_cons.
+Qed.
+
 (* The jump chain of the merge stage, read off as comparators.  Its distances *)
 (* are `2^ k - 1, `2^ k.-1 - 1, ..., 1: each step halves via (uphalf r).-1,   *)
 (* and on numbers of that shape it lands exactly on the next one down.  All   *)
@@ -155,7 +196,7 @@ Lemma nstages_knuth_jump_rec n k :
 Proof.
 elim: k => [//|k IH].
 have /andP[rO r_gt0] := odd_e2n_pred (j := k.+1) isT.
-by rewrite /= uphalf_e2n_pred nstages_cons (cpairs_odd_jump r_gt0 rO) IH.
+by rewrite /= uphalf_e2n_pred nstages_cons (cpairs_odd_jump _ r_gt0 rO) IH.
 Qed.
 
 (* One unfolding step of the recursive network, entirely as comparator lists: *)
