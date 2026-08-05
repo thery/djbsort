@@ -413,6 +413,89 @@ congr (nfun _ _); apply: cfun_comm; apply: cdisjoint_sym.
 by apply: cdisjoint_cswap; apply: ord_sub_neq.
 Qed.
 
+(* Two comparators sharing no wire, and a comparator being in range.         *)
+Definition dpair (ab cd : nat * nat) : bool :=
+  [&& ab.1 != cd.1, ab.1 != cd.2, ab.2 != cd.1 & ab.2 != cd.2].
+
+Definition bnd n (ab : nat * nat) : bool := (ab.1 < n) && (ab.2 < n).
+
+Lemma dpair_sym ab cd : dpair ab cd -> dpair cd ab.
+Proof.
+by rewrite /dpair => /and4P[h1 h2 h3 h4]; apply/and4P; split; rewrite eq_sym.
+Qed.
+
+Lemma nfun_pnet_swap2 n (ps qs : seq (nat * nat)) ab cd (u : n.-tuple A) :
+  bnd n ab -> bnd n cd -> dpair ab cd ->
+  nfun (pnet n (ps ++ ab :: cd :: qs)) u
+    = nfun (pnet n (ps ++ cd :: ab :: qs)) u.
+Proof.
+case: ab => a b; case: cd => c e.
+rewrite /bnd /dpair /= => /andP[an bn] /andP[cn en] /and4P[aNc aNe bNc bNe].
+exact: nfun_pnet_swap.
+Qed.
+
+(* Moving one comparator left past a block it is disjoint from.  Everything  *)
+(* below reduces a claimed reordering of an emitted trace to this.           *)
+Lemma nfun_pnet_moveL n (qs rs : seq (nat * nat)) ab (t : n.-tuple A) :
+  bnd n ab -> all (bnd n) qs -> all (dpair ab) qs ->
+  nfun (pnet n (qs ++ ab :: rs)) t = nfun (pnet n (ab :: qs ++ rs)) t.
+Proof.
+elim: qs t => [//|[c e] qs IH] t abB /andP[cdB qsB] /andP[abcd qsD].
+have [cn en] : (c < n) /\ (e < n) by move: cdB; rewrite /bnd /= => /andP[].
+rewrite !cat_cons.
+rewrite -(nfun_pnet_swap2 [::] (qs ++ rs) t cdB abB (dpair_sym abcd)).
+by rewrite !(pnet_cons _ cn en) !nfunE IH.
+Qed.
+
+Lemma nfun_pnet_moveL_cat n (ps qs rs : seq (nat * nat)) ab (t : n.-tuple A) :
+  bnd n ab -> all (bnd n) qs -> all (dpair ab) qs ->
+  nfun (pnet n (ps ++ qs ++ ab :: rs)) t
+    = nfun (pnet n (ps ++ ab :: qs ++ rs)) t.
+Proof.
+move=> abB qsB qsD.
+rewrite (nfun_pnet_cat ps (qs ++ ab :: rs) t) (nfun_pnet_cat ps (ab :: qs ++ rs) t).
+by rewrite nfun_pnet_moveL.
+Qed.
+
+(* Running one family of comparators and then another, versus interleaving   *)
+(* them pairwise.  When every comparator of the second family is disjoint    *)
+(* from every comparator of the first -- as happens when one lands on even   *)
+(* wires and the other on odd ones -- the two give the same function.  This  *)
+(* is precisely the gap between a doubled sweep, which finishes one parity   *)
+(* before starting the other, and `pdup`, which alternates.                  *)
+Lemma nfun_pnet_mix n (ps : seq (nat * nat)) (f g : nat * nat -> nat * nat)
+    (t : n.-tuple A) :
+  all (fun ab => bnd n (f ab)) ps -> all (fun ab => bnd n (g ab)) ps ->
+  (forall ab cd, dpair (g ab) (f cd)) ->
+  nfun (pnet n ([seq f ab | ab <- ps] ++ [seq g ab | ab <- ps])) t
+    = nfun (pnet n (flatten [seq [:: f ab; g ab] | ab <- ps])) t.
+Proof.
+move=> fB gB D; elim: ps t fB gB => [//|a0 ps IH] t /andP[fa fsB] /andP[ga gsB].
+have E1 : [seq f ab | ab <- a0 :: ps] ++ [seq g ab | ab <- a0 :: ps]
+        = [:: f a0] ++ ([seq f ab | ab <- ps] ++ g a0 :: [seq g ab | ab <- ps]).
+  by [].
+have E2 : flatten [seq [:: f ab; g ab] | ab <- a0 :: ps]
+        = [:: f a0] ++ (g a0 :: flatten [seq [:: f ab; g ab] | ab <- ps]).
+  by [].
+have E3 : forall X : seq (nat * nat), g a0 :: X = [:: g a0] ++ X by [].
+rewrite E1 E2.
+rewrite (nfun_pnet_cat [:: f a0]
+           ([seq f ab | ab <- ps] ++ g a0 :: [seq g ab | ab <- ps]) t).
+rewrite (nfun_pnet_cat [:: f a0]
+           (g a0 :: flatten [seq [:: f ab; g ab] | ab <- ps]) t).
+set u := nfun (pnet n [:: f a0]) t.
+have MV : nfun (pnet n ([seq f ab | ab <- ps] ++ g a0 :: [seq g ab | ab <- ps])) u
+        = nfun (pnet n (g a0 :: ([seq f ab | ab <- ps] ++ [seq g ab | ab <- ps]))) u.
+  apply: nfun_pnet_moveL; [exact: ga | by rewrite all_map | ].
+  by apply/allP => x /mapP[y _ ->]; apply: D.
+rewrite MV (E3 ([seq f ab | ab <- ps] ++ [seq g ab | ab <- ps])).
+rewrite (E3 (flatten [seq [:: f ab; g ab] | ab <- ps])).
+rewrite (nfun_pnet_cat [:: g a0]
+           ([seq f ab | ab <- ps] ++ [seq g ab | ab <- ps]) u).
+rewrite (nfun_pnet_cat [:: g a0] (flatten [seq [:: f ab; g ab] | ab <- ps]) u).
+by apply: IH.
+Qed.
+
 (* A wire touched by none of the comparators keeps its value. *)
 Lemma tnth_nfun_pnet_avoid n (ps : seq (nat * nat)) (u : n.-tuple A)
     (i : 'I_n) :
