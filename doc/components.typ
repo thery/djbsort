@@ -191,7 +191,20 @@ Lemma nfun_nswap m (n1 n2 : network m) (c1 c2 : connector m) t :
 
 Two connectors that share no line commute, so adjacent disjoint connectors in a
 network may be exchanged. This is what licenses reordering a comparator
-sequence.
+sequence. Brought down to the list level, with the `pnet` bookkeeping done once
+and for all:
+
+```coq
+Lemma nfun_pnet_swap n (ps qs : seq (nat * nat)) a b c e u :
+  a < n -> b < n -> c < n -> e < n ->
+  a != c -> a != e -> b != c -> b != e ->
+  nfun (pnet n (ps ++ (a, b) :: (c, e) :: qs)) u
+    = nfun (pnet n (ps ++ (c, e) :: (a, b) :: qs)) u.
+```
+
+via `cdisjoint_cswap` and `ord_sub_neq`. Any claim that a program emits its
+comparators "in a different but equivalent order" reduces to repeated use of
+this.
 
 == Reading a connector back as comparators
 
@@ -437,11 +450,44 @@ Lemma level_pairs_double N p : 0 < p ->
 one, and both pass the base-pass test exactly when $a$ does, by `ltn_double`
 for the distance and by `divn_double` / `divn_doubleS` for the bit test.
 
-What remains #open is the same doubling law for `casc_pairs`, and then the
-$p = 1$ block against the merge stage. The latter is the old crux, unchanged:
-`sort.c` emits the cascade position-major and the network emits it
-distance-major. It is now a statement about networks, so `cfun_comm` applies
-to it, rather than one about sequences.
+The recursive side is now fully reduced to comparator lists, and the merge
+stage's connectors turn out to *be* sort.c's blocks rather than merely to
+correspond to them:
+
+```coq
+Lemma cpairs_eswap    n   : cpairs (ceswap : connector n) = level_pairs n 1 1 false.
+Lemma cpairs_odd_jump n r : 0 < r -> odd r ->
+                            cpairs (codd_jump r) = level_pairs n 1 r true.
+Lemma nstages_knuth_exchangeS m :
+  nstages (knuth_exchange m.+1)
+    = pdup (nstages (knuth_exchange m))
+      ++ (level_pairs (`2^ m.+1) 1 1 false ++ kjumps (`2^ m.+1) m).
+```
+
+where `kjumps n k` is the flat counterpart of the jump chain, whose distances
+are $2^k - 1, 2^(k-1) - 1, dots, 1$ --- each step halves via `(uphalf r).-1`,
+and on numbers of that shape it lands exactly on the next one down
+(`uphalf_e2n_pred`), all of them odd and positive (`odd_e2n_pred`).
+
+So exactly two things remain #open. First, the same doubling law for
+`casc_pairs`. It is *not* a list identity like `level_pairs_double`: doubling
+gives, for each position $a$, the whole $r$-chain at $2a$ and then the whole
+chain at $2a+1$, whereas `pdup` interleaves the two parities per comparator.
+Same comparators, different order, related by transposing comparators on
+disjoint wires --- so it has to be stated as an `nfun` equality and justified
+by `nfun_pnet_swap`.
+
+Second, `casc_pairs n top 1` against `kjumps n m`: the old crux, `sort.c`
+emitting the cascade position-major where the network emits it distance-major.
+The comparator sets do coincide --- a cascade entry $(j+1, j+r)$ with $j$ even
+is the distance-$(r-1)$ comparator at the odd line $j+1$, and $r$ ranges over
+the powers of two, so $r-1$ ranges over exactly `kjumps`' distances. What has
+to be shown is that the two orders differ only by transpositions of disjoint
+comparators, which they do: moving a smaller-distance comparator at position
+$j$ past a larger-distance one at $j' > j$ is safe because $j + r < j' + r'$
+whenever $r < r'$ and $j < j'$, and parity rules out every other overlap. This
+is the network-level analogue of `int32_reify`'s `swseq_casc_dcasc`, and it is
+a theorem of real size rather than a cleanup.
 
 = The `avx2` track
 
@@ -565,6 +611,9 @@ width.
   [`nfun_pnet_cpairs`], [closed], [sequential comparators = parallel stage],
   [`nstages_neodup`], [closed], [deinterleaving doubles every comparator],
   [`level_pairs_double`], [closed], [the base pass survives deinterleaving],
+  [`cpairs_odd_jump`], [closed], [a merge connector is one of sort.c's blocks],
+  [`nstages_knuth_exchangeS`], [closed], [one unfolding step, as comparator lists],
+  [`nfun_pnet_swap`], [closed], [disjoint comparators may be exchanged],
   [`nfun_int32_knuth`], [modulo #open], [the algebraic route's capstone],
   [`nfun_me_pairs_knuth`], [#open], [flat sweep = deinterleaved recursion],
 )
