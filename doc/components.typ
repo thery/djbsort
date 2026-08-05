@@ -344,6 +344,13 @@ which say that doubling numerator and denominator leaves a quotient alone,
 with or without the odd offset the odd lines carry. That is exactly what makes
 a test of the form "bit $k$ of the index is clear" survive deinterleaving.
 
+== Transpose, rows and columns, sign flips, tiling #new
+
+The AVX2 track built a second answer to "run this network everywhere" --- the
+*blocked* one, where `neotile` above is the interleaved one --- and it has now
+moved here from `sort_transpose.v`, unchanged. It is described in §5.1--§5.4,
+where it is used; nothing in it mentions a program.
+
 = The `int32` track
 
 `sort.c` implements Knuth 5.2.2M as a flat loop: `p` descends from `top` by
@@ -469,6 +476,10 @@ Here the program is not a list of comparators at all: it is a loop nest over a
 vector width, in which a comparator's *distance* decides whether it becomes a
 vector min/max or a lane shuffle. The network is the same for every width, so
 the proof goes straight to the network.
+
+The constructions of §5.1--§5.4 were built for this track but are generic, and
+now live in `nalgebra.v` (§3.7); `sort_transpose.v` keeps only what is actually
+about `sort_transpose.ml`.
 
 == Transposition
 
@@ -606,13 +617,13 @@ about the algorithm.
   [`code/common/more_tuple.v`], [tuple and index helpers, the `e2n` power notation],
   [`code/common/nsort.v`], [connectors, networks, `sorting`, binary combinators],
   [`code/common/nbitonic.v`], [half cleaners, `bsort`, `bfsort`],
-  [`code/common/nalgebra.v` #new], [the shared algebra of §3],
+  [`code/common/nalgebra.v` #new], [the shared algebra of §3, including §5.1--§5.4],
   [`code/portable4/proof/nbjsort.v`], [`knuth_exchange` and `iknuth_exchange`],
   [`code/portable4/proof/int32_network.v`], [`me_pairs`, the reduction facts],
   [`code/portable4/proof/int32_knuth.v` #new], [the power-of-two case, §4.3],
   [`code/portable4/proof/int32_sort.v`], [the final theorem, `sortc_faithful`],
   [`code/avx2/proof/sort_generic.v`], [`gnet`, `pbsort`, padding],
-  [`code/avx2/proof/sort_transpose.v`], [§5 in its entirety],
+  [`code/avx2/proof/sort_transpose.v`], [§5.5--§5.6: the square block, the phases, the capstone],
 )
 
 == A remark on what was missing
@@ -623,4 +634,7 @@ a way to say "run this network everywhere". The AVX2 track built it for blocks
 worked around it on lists instead, in a 633-line file that reused nothing and
 that nothing could reuse. That file is gone: with the shared algebra of §3 in
 place --- and `neotile`, the same idea for the other way of splitting an array
---- the `int32` proof is half the size and every piece of it is generic.
+--- the `int32` proof is half the size and every piece of it is generic. The
+AVX2 track's own toolkit has moved to the same place, so `sort_transpose.v` is
+down from 1345 lines to 717 and what remains in it is only what is about the
+program.
