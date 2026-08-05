@@ -1,6 +1,6 @@
 From mathcomp Require Import all_boot order perm algebra.zmodp.
 From mathcomp Require Import zify.
-Require Import more_tuple nsort nalgebra nbjsort int32_network.
+Require Import more_tuple nsort nalgebra nbjsort int32_network int32_sort.
 
 Import Order POrderTheory TotalTheory.
 
@@ -363,11 +363,6 @@ Variable A : orderType d.
 (*  step, not more work inside this file.                                     *)
 (* -------------------------------------------------------------------------- *)
 
-Lemma nfun_me_pairs_knuth m (t : (`2^ m).-tuple A) :
-  nfun (pnet (`2^ m) (me_pairs (`2^ m))) t =
-  nfun (pnet (`2^ m) (nstages (knuth_exchange m))) t.
-Admitted.
-
 (* -------------------------------------------------------------------------- *)
 (*  (S3)  knuth_exchange is built from ceswap and codd_jump, both of which    *)
 (*        take cflip_default false, so no connector in it flips.  The generic *)
@@ -387,6 +382,31 @@ Proof.
 elim: m => [//|m IH] /=.
 rewrite /nnoflip all_cat; apply/andP; split; first exact: nnoflip_neodup.
 by rewrite /= cnoflip_eswap /=; apply: nnoflip_knuth_jump_rec.
+Qed.
+
+(* -------------------------------------------------------------------------- *)
+(*  (S2), closed.                                                             *)
+(*                                                                            *)
+(*  NOTE.  This closes (S2) the cheap way: both networks sort, and a sorting  *)
+(*  network computes the sort function, so they are equal as functions.  It   *)
+(*  is a valid proof, but it leans on `sorting_int32_sort_network`, i.e. on   *)
+(*  the reify route -- so the corollary below is NOT yet an independent       *)
+(*  proof of Obligation D.  Making it independent means proving this from     *)
+(*  the structure instead: level_pairs_double and nfun_casc_pairs_double give *)
+(*  the me_pairs split, and what then remains is the position-major versus    *)
+(*  distance-major cascade, for which nfun_pnet_moveL is the tool.            *)
+(* -------------------------------------------------------------------------- *)
+
+Lemma nfun_me_pairs_knuth m (t : (`2^ m).-tuple A) :
+  nfun (pnet (`2^ m) (me_pairs (`2^ m))) t =
+  nfun (pnet (`2^ m) (nstages (knuth_exchange m))) t.
+Proof.
+rewrite nfun_pnet_nstages; last exact: nnoflip_knuth_exchange.
+rewrite -[pnet (`2^ m) (me_pairs (`2^ m))]/(int32_sort_network (`2^ m)).
+suff E : nfun (int32_sort_network (`2^ m)) t = nfun (knuth_exchange m) t :> seq A.
+  exact: val_inj E.
+rewrite (nfun_sort _ (sorting_int32_sort_network (`2^ m))).
+by rewrite (nfun_sort _ (sorting_knuth_exchange m)).
 Qed.
 
 (* -------------------------------------------------------------------------- *)

@@ -464,6 +464,18 @@ rewrite (nfun_pnet_cat ps (qs ++ ab :: rs) t) (nfun_pnet_cat ps (ab :: qs ++ rs)
 by rewrite nfun_pnet_moveL.
 Qed.
 
+(* Any sorting network computes the sort function, so two sorting networks   *)
+(* on the same width compute the same function.  (Also in avx2's             *)
+(* sort_generic.v; kept here so both tracks can reach it.)                   *)
+Lemma nfun_sort m (net : network m) (t : m.-tuple A) :
+  net \is sorting -> nfun net t = sort <=%O t :> seq A.
+Proof.
+move=> ns; apply: (sorted_eq (@le_trans _ _) (@le_anti _ _)).
+- by apply: sorting_sorted.
+- exact: (sort_sorted (@le_total _ _)).
+by apply: (perm_trans (perm_nfun _ _)); rewrite perm_sym; exact: (permEl (perm_sort _ _)).
+Qed.
+
 (* Blockwise replacement: if two families agree as functions block by block, *)
 (* the concatenations of the blocks agree too.                               *)
 Lemma nfun_pnet_flatten n (T : Type) (F G : T -> seq (nat * nat)) (l : seq T)
