@@ -181,9 +181,41 @@ Proof. by rewrite /pdup map_cat flatten_cat. Qed.
 Lemma pdup_flatten s : pdup (flatten s) = flatten [seq pdup x | x <- s].
 Proof. by elim: s => [//|a s IH]; rewrite /= pdup_cat IH. Qed.
 
+(* Pushing map / filter / pmap through flatten, in the explicit form needed   *)
+(* to compare two flattened comprehensions termwise (the library's            *)
+(* map_flatten reassociates into the [seq _ | x <- s, y <- x] notation, which *)
+(* map_comp can then no longer see through).                                  *)
 Lemma pmap_flatten_seq (T U : Type) (f : T -> option U) (s : seq (seq T)) :
   pmap f (flatten s) = flatten [seq pmap f x | x <- s].
 Proof. by elim: s => [//|a s IH]; rewrite /= pmap_cat IH. Qed.
+
+Lemma map_flatten_seq (T U : Type) (f : T -> U) (s : seq (seq T)) :
+  map f (flatten s) = flatten [seq [seq f y | y <- x] | x <- s].
+Proof. by elim: s => [//|a s IH]; rewrite /= map_cat IH. Qed.
+
+Lemma filter_flatten_seq (T : Type) (P : pred T) (s : seq (seq T)) :
+  filter P (flatten s) = flatten [seq filter P x | x <- s].
+Proof. by elim: s => [//|a s IH]; rewrite /= filter_cat IH. Qed.
+
+Lemma flatten_map_filter (T U : Type) (P : pred T) (F : T -> seq U) (l : seq T) :
+  flatten [seq F x | x <- l & P x]
+    = flatten [seq (if P x then F x else [::]) | x <- l].
+Proof. by elim: l => [//|x l IH]; rewrite /=; case: (P x); rewrite /= IH. Qed.
+
+(* Halving a quotient: doubling numerator and denominator, with or without   *)
+(* the odd offset the odd lines carry, leaves the quotient unchanged.  This  *)
+(* is what makes a "bit of the index is clear" test survive deinterleaving.  *)
+Lemma divn_double a p : 0 < p -> a.*2 %/ p.*2 = a %/ p.
+Proof. by move=> p_gt0; rewrite -!muln2 -!(mulnC 2) divnMl. Qed.
+
+Lemma divn_doubleS a p : 0 < p -> a.*2.+1 %/ p.*2 = a %/ p.
+Proof.
+move=> p_gt0.
+have aE : a.*2.+1 = (a %% p).*2.+1 + (a %/ p) * p.*2.
+  by rewrite {1}(divn_eq a p) doubleD -addnS addnC; congr (_ + _); lia.
+rewrite aE divnDMl ?double_gt0 // divn_small ?add0n //.
+by rewrite -doubleS leq_double ltn_mod.
+Qed.
 
 Lemma pdup_pmap (T : Type) (g : T -> option (nat * nat)) (l : seq T) :
   pdup (pmap g l) =

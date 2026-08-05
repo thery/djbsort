@@ -52,6 +52,32 @@ Set Implicit Arguments.
 Unset Strict Implicit.
 Unset Printing Implicit Defensive.
 
+(* -------------------------------------------------------------------------- *)
+(*  The flat sweep under deinterleaving                                       *)
+(* -------------------------------------------------------------------------- *)
+
+(* Half of what (S2) needs: sort.c's blocks at `2^ m.+1 are the blocks at     *)
+(* `2^ m with every comparator doubled.  Here for the base pass.  Line i of   *)
+(* the big problem is 2a or 2a+1 for a line a of the small one, and both      *)
+(* satisfy the base pass's test exactly when a does: the distance test is     *)
+(* ltn_double, and the "p-bit of i is clear" test survives by divn_double /   *)
+(* divn_doubleS.  Since the enumeration visits 2a just before 2a+1, the two   *)
+(* copies come out adjacent -- which is precisely pdup.                       *)
+Lemma level_pairs_double N p : 0 < p ->
+  level_pairs N.*2 p.*2 p.*2 false = pdup (level_pairs N p p false).
+Proof.
+move=> p_gt0.
+rewrite /level_pairs /pdup -[N.*2]addnn iota_eocat filter_flatten_seq.
+rewrite map_flatten_seq -!map_comp flatten_map_filter.
+congr flatten; apply: eq_map => a /=.
+rewrite addnn !divn_double // !divn_doubleS //.
+have e0 : (a.*2 + p.*2 < N.*2) = (a + p < N) by rewrite -doubleD ltn_double.
+have e1 : (a.*2.+1 + p.*2 < N.*2) = (a + p < N).
+  by rewrite addSn -doubleD -doubleS leq_double.
+rewrite e0 e1.
+by case: ifP => H; rewrite H /= ?doubleD ?addSn.
+Qed.
+
 Section Algebraic.
 
 Variable d : disp_t.
