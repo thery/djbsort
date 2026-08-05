@@ -250,9 +250,9 @@ Lemma neodup_cat n (n1 n2 : network n) :
 which lets a recursive network be flattened. Iterating `neodup` naively is
 painful, though: it goes `network m -> network (m + m)`, so $j$ iterations land
 in a tower $(m+m)+(m+m)+dots$ and every equation drowns in casts. Since `e2n` is
-defined by doubling rather than by `expn`, `` `2^ j.+1 `` is *definitionally*
-`` `2^ j + `2^ j ``, so indexing the iteration by the exponent keeps the type in
-`` `2^ `` form and no cast is ever needed:
+defined by doubling rather than by `expn`, the type $2^(j+1)$ is
+*definitionally* $2^j + 2^j$, so indexing the iteration by the exponent keeps
+the type a power and no cast is ever needed:
 
 ```coq
 Fixpoint neotile q (net : network (`2^ q)) j : network (`2^ (j + q)) :=
@@ -272,6 +272,45 @@ Lemma iota_eocat m : iota 0 (m + m) = flatten [seq [:: a.*2; a.*2.+1] | a <- iot
 Lemma enum_ord_eocat m :
   enum 'I_(m + m) = flatten [seq [:: elift a; olift a] | a <- enum 'I_m].
 ```
+
+== Comparators under deinterleaving #new
+
+Combining the previous two sections: deinterleaving doubles every comparator,
+running $(a,b)$ on the even lines and on the odd lines, as $(2a,2b)$ and
+$(2a+1,2b+1)$. Because the enumeration visits $2a$ immediately before $2a+1$,
+the two copies come out *adjacent*, so the comparator list of a deinterleaved
+network is the original list with each entry expanded in place.
+
+```coq
+Definition pdup (ps : seq (nat * nat)) : seq (nat * nat) :=
+  flatten [seq [:: (ab.1.*2, ab.2.*2); (ab.1.*2.+1, ab.2.*2.+1)] | ab <- ps].
+Fixpoint pdupn j ps := if j is j1.+1 then pdup (pdupn j1 ps) else ps.
+
+Lemma cpairs_eodup n (c : connector n) : cpairs (ceodup c) = pdup (cpairs c).
+Lemma nstages_neodup n (nt : network n) : nstages (neodup nt) = pdup (nstages nt).
+Lemma nstages_neotile q (net : network (`2^ q)) j :
+  nstages (neotile net j) = pdupn j (nstages net).
+```
+
+with `pdup_cat`, `pdup_flatten`, `pdup_pmap`, `neodupE` (`neodup nt` is
+`map ceodup nt`) and `clink_ceodup_e` / `_o`.
+
+Two groups of small generic lemmas support this and §4.5. First, pushing
+`map`, `filter` and `pmap` through `flatten` in an explicit form ---
+`map_flatten_seq`, `filter_flatten_seq`, `pmap_flatten_seq`,
+`flatten_map_filter`. The library's `map_flatten` reassociates into the
+`[seq _ | x <- s, y <- x]` notation, which `map_comp` can then no longer see
+through, so the explicit versions are what let two flattened comprehensions be
+compared termwise. Second, two arithmetic facts,
+
+```coq
+Lemma divn_double  a p : 0 < p -> a.*2   %/ p.*2 = a %/ p.
+Lemma divn_doubleS a p : 0 < p -> a.*2.+1 %/ p.*2 = a %/ p.
+```
+
+which say that doubling numerator and denominator leaves a quotient alone,
+with or without the odd offset the odd lines carry. That is exactly what makes
+a test of the form "bit $k$ of the index is clear" survive deinterleaving.
 
 = The `int32` track
 
@@ -382,9 +421,27 @@ $ "knuth_exchange"(m) = "neodup"^(m-1) "merge"_1 #h(0.4em) "++" #h(0.4em) dots.c
 where $"merge"_k$ is `ceswap` followed by the `knuth_jump_rec` chain on
 $2^k$ lines.
 Each `neodup` doubles distances, so the blocks come out in *decreasing*
-distance --- exactly the order the flat sweep visits `p` in. What is left inside
-a block is the old crux: position-major versus distance-major cascade, which
-`cfun_comm` now allows to be done on networks rather than on sequences.
+distance --- exactly the order the flat sweep visits `p` in.
+
+That is the recursive side; §3.6 turns it into a statement about comparator
+lists, since `nstages (neodup nt)` is `pdup (nstages nt)`. The flat side needs
+the matching claim: that `me_pairs` at $2^(m+1)$ is `pdup` of `me_pairs` at
+$2^m$, followed by the $p = 1$ block. Its first half is proved,
+
+```coq
+Lemma level_pairs_double N p : 0 < p ->
+  level_pairs N.*2 p.*2 p.*2 false = pdup (level_pairs N p p false).
+```
+
+--- line $i$ of the big problem is $2a$ or $2a+1$ for a line $a$ of the small
+one, and both pass the base-pass test exactly when $a$ does, by `ltn_double`
+for the distance and by `divn_double` / `divn_doubleS` for the bit test.
+
+What remains #open is the same doubling law for `casc_pairs`, and then the
+$p = 1$ block against the merge stage. The latter is the old crux, unchanged:
+`sort.c` emits the cascade position-major and the network emits it
+distance-major. It is now a statement about networks, so `cfun_comm` applies
+to it, rather than one about sequences.
 
 = The `avx2` track
 
@@ -506,9 +563,15 @@ width.
   [`tsort_avx2_pbsort`], [closed], [the AVX2 sort computes `pbsort`],
   [`avx2_sort_sorted`, `_perm`], [closed], [hence it sorts and permutes],
   [`nfun_pnet_cpairs`], [closed], [sequential comparators = parallel stage],
+  [`nstages_neodup`], [closed], [deinterleaving doubles every comparator],
+  [`level_pairs_double`], [closed], [the base pass survives deinterleaving],
   [`nfun_int32_knuth`], [modulo #open], [the algebraic route's capstone],
   [`nfun_me_pairs_knuth`], [#open], [flat sweep = deinterleaved recursion],
 )
+
+The single open statement is `nfun_me_pairs_knuth`; everything else listed is
+closed under the global context. What it still needs is the doubling law for
+`casc_pairs` and the cascade reordering inside the $p = 1$ block (§4.5).
 
 == Files
 
