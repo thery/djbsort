@@ -43,8 +43,8 @@ Import Order POrderTheory TotalTheory.
 (*         knuth_exchange's deinterleaved innermost-first recursion.          *)
 (*    (S3) knuth_exchange's connectors are flip-free -- DONE.                 *)
 (*                                                                            *)
-(*  (S2) here, and nalgebra's nfun_pnet_cpairs, are the only holes; the rest  *)
-(*  is proved.  Nothing here is on the trust path of int32_sort.v.            *)
+(*  (S2) is now the ONLY remaining hole in the whole route; nalgebra.v is     *)
+(*  admit-free.  Nothing here is on the trust path of int32_sort.v.           *)
 (*                                                                            *)
 (******************************************************************************)
 

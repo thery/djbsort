@@ -35,7 +35,7 @@ Import Order POrderTheory TotalTheory.
 (*  unused (`git show 3bbd559^:code/portable4/proof/sort_commute.v`); it is   *)
 (*  recovered here so that both tracks can reach it.                          *)
 (*                                                                            *)
-(*  ONE HOLE, nfun_pnet_cpairs -- see the design note at its statement.       *)
+(*  Everything here is proved; no admits, no axioms.                          *)
 (*                                                                            *)
 (******************************************************************************)
 
@@ -193,21 +193,72 @@ rewrite IH //.
 by rewrite cswapE_neq // -(inj_eq val_inj) /= eq_sym.
 Qed.
 
-(* One stage, run comparator by comparator, is the stage.                     *)
+(* One stage, run comparator by comparator, IS the stage.                     *)
 (*                                                                            *)
-(*  OPEN.  The wire-by-wire argument (case on clink c i, split `enum 'I_n` at *)
-(*  the generating wire, then tnth_nfun_pnet_avoid on either side) works but  *)
-(*  degenerates into list surgery -- the style this file exists to replace.   *)
-(*  The clean statement is that a flip-free connector IS a product of         *)
-(*  disjoint transpositions: induct on #|[set i | clink c i != i]|, peeling   *)
-(*  one pair off c at a time, with cfun_comm above making the peeling order   *)
-(*  irrelevant.  That needs a "connector minus one pair" construction, which  *)
-(*  is the piece still missing here -- and the same piece (S2) of             *)
-(*  int32_algebraic.v wants in order to regroup a flat comparator sweep into  *)
-(*  a recursive network.  Its right home is this file.                        *)
+(* The comparators of a connector are pairwise wire-disjoint, since clink is  *)
+(* an involution, so running them in sequence never lets one disturb another. *)
+(* The proof generalises over the list of GENERATING wires (those j with      *)
+(* j < clink c j, which is what cpairs scans `enum 'I_n` for) and describes   *)
+(* the whole run in one shot: wire i gets the min if its generator has        *)
+(* already been reached, the max if it is itself the partner of one, and its  *)
+(* own value otherwise.  Each induction step then only has to check the three *)
+(* positions the head comparator can touch.                                   *)
 Lemma nfun_pnet_cpairs n (c : connector n) (t : n.-tuple A) :
   cnoflip c -> nfun (pnet n (cpairs c)) t = cfun c t.
-Admitted.
+Proof.
+move=> cnf.
+have subE : forall (x : 'I_n) (H : (x : nat) < n), Sub (nat_of_ord x) H = x.
+  by move=> x H; apply: val_inj.
+have inv : forall x : 'I_n, clink c (clink c x) = x.
+  by move=> x; apply/eqP; apply: (forallP (cfinv c)).
+pose gen := [seq j <- enum 'I_n | (nat_of_ord j < nat_of_ord (clink c j))%N].
+have cpE : cpairs c = [seq (nat_of_ord j, nat_of_ord (clink c j)) | j <- gen].
+  rewrite /cpairs /gen; elim: (enum 'I_n) => [//|j l IH] /=.
+  by case: ifP => jL //=; rewrite IH.
+have Key : forall (l : seq 'I_n) (u : n.-tuple A) (i : 'I_n),
+    uniq l -> (forall j, j \in l -> (nat_of_ord j < nat_of_ord (clink c j))%N) ->
+    tnth (nfun (pnet n [seq (nat_of_ord j, nat_of_ord (clink c j)) | j <- l]) u) i
+    = if i \in l then Order.min (tnth u i) (tnth u (clink c i))
+      else if clink c i \in l then Order.max (tnth u (clink c i)) (tnth u i)
+      else tnth u i.
+  elim=> [|j l IH] u i huniq hgen; first by rewrite /pnet /=.
+  move: huniq => /= /andP[jNl uql].
+  have jL : (nat_of_ord j < nat_of_ord (clink c j))%N.
+    by apply: hgen; rewrite inE eqxx.
+  have jn : (nat_of_ord j < n)%N := ltn_ord j.
+  have kn : (nat_of_ord (clink c j) < n)%N := ltn_ord (clink c j).
+  rewrite /oconn /= insubT /= insubT /=.
+  have kNl : clink c j \notin l.
+    apply/negP => kl.
+    have kk : (nat_of_ord (clink c j) < nat_of_ord (clink c (clink c j)))%N.
+      by apply: hgen; rewrite inE kl orbT.
+    by move: kk; rewrite inv => kj; move: jL; rewrite ltnNge (ltnW kj).
+  rewrite !subE IH //; last by move=> x xl; apply: hgen; rewrite inE xl orbT.
+  case: (eqVneq i j) => [iEj|iNj].
+    rewrite iEj !inE eqxx /= (negPf jNl) (negPf kNl).
+    exact: cswapE_min.
+  case: (eqVneq i (clink c j)) => [iEk|iNk].
+    have kNj : (clink c j == j) = false.
+      by apply/eqP => E; move: jL; rewrite E ltnn.
+    rewrite iEk inv !inE eqxx kNj (negPf kNl) (negPf jNl) /=.
+    exact: cswapE_max.
+  have ciNj : clink c i != j.
+    by apply/eqP => E; case/eqP: iNk; rewrite -E inv.
+  have ciNk : clink c i != clink c j.
+    by apply/eqP => E; case/eqP: iNj; rewrite -[i]inv E inv.
+  by rewrite !inE (negPf iNj) (negPf ciNj) /= !cswapE_neq.
+have /forallP cnf' := cnf.
+apply: eq_from_tnth => i.
+rewrite cpE Key; first last.
+- by move=> x; rewrite /gen mem_filter => /andP[].
+- by rewrite /gen filter_uniq // enum_uniq.
+rewrite /gen !mem_filter !mem_enum !andbT inv tnth_mktuple (negPf (cnf' i)).
+case: ltngtP => [iLc|cLi|iEc].
+- by [].
+- by rewrite maxC.
+have -> : clink c i = i by apply: val_inj; exact: esym iEc.
+by rewrite minxx.
+Qed.
 
 (* ... hence for a whole network, by induction on the stage list. *)
 Lemma nfun_pnet_nstages n (nt : network n) (t : n.-tuple A) :
