@@ -140,7 +140,9 @@ Alongside the recursive `knuth_exchange`, the development also carries an
 *imperative* version, `iknuth_exchange`, a `seq`-level program with three nested
 loops `iter1`/`iter2`/`iter3` performing swaps. The two are proved to sort
 independently of one another; nothing connects them. Which of the two a proof
-picks up turns out to determine its whole shape (§4).
+picks up determines its whole shape. The `int32` verification originally took
+the imperative one and left the network world to do it; it now takes the
+recursive one and stays inside (§4.3).
 
 = Shared algebra #new
 
@@ -204,7 +206,11 @@ Lemma nfun_pnet_swap n (ps qs : seq (nat * nat)) a b c e u :
 
 via `cdisjoint_cswap` and `ord_sub_neq`. Any claim that a program emits its
 comparators "in a different but equivalent order" reduces to repeated use of
-this.
+this, through three derived moves: `nfun_pnet_moveL` (move one comparator left
+past a block it is disjoint from), `nfun_pnet_moveL_block` (move a whole
+block), and `nfun_pnet_heads_first` (run every index's first block before any
+of the second blocks --- with the sortedness and membership hypotheses the
+disjointness genuinely needs, since for arbitrary $a < b$ it fails).
 
 == Reading a connector back as comparators
 
@@ -308,6 +314,19 @@ Lemma nstages_neotile q (net : network (`2^ q)) j :
 with `pdup_cat`, `pdup_flatten`, `pdup_pmap`, `neodupE` (`neodup nt` is
 `map ceodup nt`) and `clink_ceodup_e` / `_o`.
 
+On the lists a program actually emits --- ordered, in range --- `pnet` and
+`nstages` are inverse (`nstages_pnet`, via `cpairs_cswap` and `pmap_single`),
+and the resulting network never flips (`nnoflip_pnet`). Hence
+
+```coq
+Lemma nfun_pnet_pdup n ps (t : (n + n).-tuple A) :
+  all (okp n) ps -> nfun (pnet (n + n) (pdup ps)) t = nfun (neodup (pnet n ps)) t.
+```
+
+--- the doubled comparator list runs the original list on the even lines and on
+the odd lines. This is what lets an induction on a comparator list pass through
+`nfun_eodup`.
+
 Two groups of small generic lemmas support this and §4.5. First, pushing
 `map`, `filter` and `pmap` through `flatten` in an explicit form ---
 `map_flatten_seq`, `filter_flatten_seq`, `pmap_flatten_seq`,
@@ -367,29 +386,48 @@ Lemma sorting_pnet_prune (N n : nat) (ps : seq (nat * nat)) :
 the last being a general 0-1-principle statement: pruning a sorting pair-network
 to its low lines still sorts.
 
-== The reification layer
+== The power-of-two case #new
 
-For the power-of-two case the proof leaves the network world entirely. It turns
-the network into a `foldl` of `seq`-level swaps and matches it against the
-*imperative* `iknuth_exchange`:
-
-```coq
-Lemma foldl_swap_me_pairs_iknuth s : foldl swap s (me_pairs (size s)) = iknuth_exchange s.
-```
-
-Everything then happens on `seq (nat * nat)`: `cdep` (two comparators share a
-line), `indep_blocks`, `is_size_ordered`, `iso`, `dcasc_aux` (the distance-major
-cascade), and the crux
+`int32_knuth.v` proves it in the style of the AVX2 track: stay inside
+`network` and prove an equation between networks.
 
 ```coq
-Lemma swseq_casc_dcasc : ...   (* distance-major -> position-major transpose *)
+Theorem nfun_int32_knuth m t :
+  nfun (int32_sort_network (`2^ m)) t = nfun (knuth_exchange m) t.
 ```
 
-`cdep` is the `seq`-level shadow of `cdisjoint` (§3.3). The reason the proof
-took this shape is recorded in the development: `iknuth_exchange` "is the SAME
-iterative algorithm as `sort.c`, so it matches `me_pairs` directly (unlike the
-recursive `knuth_exchange`)". The price is that no part of the argument is
-reusable, and the AVX2 track could take nothing from it.
+Sorting is then immediate from `sorting_knuth_exchange`. The induction on $m$
+has three ingredients.
+
+*The sweep splits.* `nfun_me_pairs_split`: sort.c's sweep at $2^(m+1)$ is its
+sweep at $2^m$ with every comparator doubled, followed by the $p = 1$ block.
+The $p >= 2$ blocks double by `level_pairs_double` (a list identity) and by
+`nfun_casc_pairs_double`. The latter cannot be a list identity: the doubled
+sweep runs a whole chain on the even copy of a position and only then the whole
+chain on the odd copy, whereas `pdup` alternates per comparator. One copy lands
+entirely on even lines and the other entirely on odd ones, so every cross pair
+is disjoint and `nfun_pnet_mix` crosses the gap.
+
+*The network splits the same way.* `nstages_knuth_exchangeS`, and the merge
+stage's connectors turn out to *be* sort.c's blocks rather than merely to
+correspond to them --- `ceswap` is the base pass at distance 1
+(`cpairs_eswap`), `codd_jump r` the distance-$r$ pass on the odd lines
+(`cpairs_odd_jump`). `nfun_pnet_pdup` then turns the doubled comparator list
+into a deinterleaved network, so the induction hypothesis applies through
+`nfun_eodup`.
+
+*The cascade transposes.* `nfun_casc_kjumps`: sort.c runs the cascade
+position-major, for each even position the whole distance chain; the network
+runs it distance-major, for each distance all positions. Peeling the largest
+distance off every chain and moving those comparators to the front turns one
+into the other, and each move is legitimate because a later position's
+large-distance comparator shares no line with an earlier position's
+smaller-distance ones --- parity rules out three of the four coincidences, and
+$a + r < b + 2^(k+1)$ (from $a < b$ and $r <= 2^k$) rules out the fourth.
+`nfun_pnet_heads_first` performs the move, `heads_level` identifies the
+comparators pulled out as one of sort.c's base passes (the cascade indexes them
+by the even position $j$, the base pass by the odd line $j+1$; the two are
+matched through `iota_eocat`).
 
 == Results
 
@@ -405,89 +443,25 @@ Parameter sortc_trace : nat -> seq (nat * nat).
 Axiom sortc_faithful : forall n, sortc_trace n = me_pairs n.
 ```
 
-== The algebraic route #new
+== Why the block order is not the obstacle #new
 
-`int32_algebraic.v` redoes the power-of-two case in the style of the AVX2 track:
-stay inside `network`, and prove an equation between networks.
-
-```coq
-Theorem nfun_int32_knuth m t :
-  nfun (int32_sort_network (`2^ m)) t = nfun (knuth_exchange m) t.
-Corollary sorting_int32_sort_network_e2n_alg m : int32_sort_network (`2^ m) \is sorting.
-```
-
-Sorting then comes from `sorting_knuth_exchange`, and `iknuth_exchange`,
-`iter1`/`iter2`/`iter3` and `swseq_casc_dcasc` all leave the trust path. The
-remaining step #open is
-
-```coq
-Lemma nfun_me_pairs_knuth m t :
-  nfun (pnet (`2^ m) (me_pairs (`2^ m))) t
-    = nfun (pnet (`2^ m) (nstages (knuth_exchange m))) t.
-```
-
-The block *order* is not the obstacle it was believed to be. Pushing
-`neodup_cat` through the unfolded recursion gives
+The reason the network route was long thought impossible is that
+`knuth_exchange` deinterleaves and recurses innermost-first, while `me_pairs`
+--- like sort.c --- is a flat loop $p = "top", "top"/2, dots, 1$
+outermost-first. But pushing `neodup_cat` through the unfolded recursion gives
 
 $ "knuth_exchange"(m) = "neodup"^(m-1) "merge"_1 #h(0.4em) "++" #h(0.4em) dots.c #h(0.4em) "++" #h(0.4em) "merge"_m $
 
-where $"merge"_k$ is `ceswap` followed by the `knuth_jump_rec` chain on
-$2^k$ lines.
-Each `neodup` doubles distances, so the blocks come out in *decreasing*
-distance --- exactly the order the flat sweep visits `p` in.
+where $"merge"_k$ is `ceswap` followed by the `knuth_jump_rec` chain on $2^k$
+lines. Each `neodup` doubles distances, so the blocks come out in *decreasing*
+distance --- exactly the order the flat sweep visits $p$ in. The two sides line
+up block by block; what is left inside a block is the cascade transpose, which
+§4.3 settles.
 
-That is the recursive side; §3.6 turns it into a statement about comparator
-lists, since `nstages (neodup nt)` is `pdup (nstages nt)`. The flat side needs
-the matching claim: that `me_pairs` at $2^(m+1)$ is `pdup` of `me_pairs` at
-$2^m$, followed by the $p = 1$ block. Its first half is proved,
-
-```coq
-Lemma level_pairs_double N p : 0 < p ->
-  level_pairs N.*2 p.*2 p.*2 false = pdup (level_pairs N p p false).
-```
-
---- line $i$ of the big problem is $2a$ or $2a+1$ for a line $a$ of the small
-one, and both pass the base-pass test exactly when $a$ does, by `ltn_double`
-for the distance and by `divn_double` / `divn_doubleS` for the bit test.
-
-The recursive side is now fully reduced to comparator lists, and the merge
-stage's connectors turn out to *be* sort.c's blocks rather than merely to
-correspond to them:
-
-```coq
-Lemma cpairs_eswap    n   : cpairs (ceswap : connector n) = level_pairs n 1 1 false.
-Lemma cpairs_odd_jump n r : 0 < r -> odd r ->
-                            cpairs (codd_jump r) = level_pairs n 1 r true.
-Lemma nstages_knuth_exchangeS m :
-  nstages (knuth_exchange m.+1)
-    = pdup (nstages (knuth_exchange m))
-      ++ (level_pairs (`2^ m.+1) 1 1 false ++ kjumps (`2^ m.+1) m).
-```
-
-where `kjumps n k` is the flat counterpart of the jump chain, whose distances
-are $2^k - 1, 2^(k-1) - 1, dots, 1$ --- each step halves via `(uphalf r).-1`,
-and on numbers of that shape it lands exactly on the next one down
+`kjumps n k` is the flat counterpart of the jump chain, whose distances are
+$2^k - 1, 2^(k-1) - 1, dots, 1$: each step halves via `(uphalf r).-1`, and on
+numbers of that shape it lands exactly on the next one down
 (`uphalf_e2n_pred`), all of them odd and positive (`odd_e2n_pred`).
-
-So exactly two things remain #open. First, the same doubling law for
-`casc_pairs`. It is *not* a list identity like `level_pairs_double`: doubling
-gives, for each position $a$, the whole $r$-chain at $2a$ and then the whole
-chain at $2a+1$, whereas `pdup` interleaves the two parities per comparator.
-Same comparators, different order, related by transposing comparators on
-disjoint wires --- so it has to be stated as an `nfun` equality and justified
-by `nfun_pnet_swap`.
-
-Second, `casc_pairs n top 1` against `kjumps n m`: the old crux, `sort.c`
-emitting the cascade position-major where the network emits it distance-major.
-The comparator sets do coincide --- a cascade entry $(j+1, j+r)$ with $j$ even
-is the distance-$(r-1)$ comparator at the odd line $j+1$, and $r$ ranges over
-the powers of two, so $r-1$ ranges over exactly `kjumps`' distances. What has
-to be shown is that the two orders differ only by transpositions of disjoint
-comparators, which they do: moving a smaller-distance comparator at position
-$j$ past a larger-distance one at $j' > j$ is safe because $j + r < j' + r'$
-whenever $r < r'$ and $j < j'$, and parity rules out every other overlap. This
-is the network-level analogue of `int32_reify`'s `swseq_casc_dcasc`, and it is
-a theorem of real size rather than a cleanup.
 
 = The `avx2` track
 
@@ -614,13 +588,14 @@ width.
   [`cpairs_odd_jump`], [closed], [a merge connector is one of sort.c's blocks],
   [`nstages_knuth_exchangeS`], [closed], [one unfolding step, as comparator lists],
   [`nfun_pnet_swap`], [closed], [disjoint comparators may be exchanged],
-  [`nfun_int32_knuth`], [modulo #open], [the algebraic route's capstone],
-  [`nfun_me_pairs_knuth`], [#open], [flat sweep = deinterleaved recursion],
+  [`nfun_casc_kjumps`], [closed], [the cascade transpose],
+  [`nfun_me_pairs_knuth`], [closed], [flat sweep = deinterleaved recursion],
+  [`nfun_int32_knuth`], [closed], [sort.c's network computes `knuth_exchange`],
 )
 
-The single open statement is `nfun_me_pairs_knuth`; everything else listed is
-closed under the global context. What it still needs is the doubling law for
-`casc_pairs` and the cascade reordering inside the $p = 1$ block (§4.5).
+Everything listed is closed under the global context. `sortc_faithful` is the
+only assumption anywhere in the development, and it is about the C source, not
+about the algorithm.
 
 == Files
 
@@ -634,9 +609,8 @@ closed under the global context. What it still needs is the doubling law for
   [`code/common/nalgebra.v` #new], [the shared algebra of §3],
   [`code/portable4/proof/nbjsort.v`], [`knuth_exchange` and `iknuth_exchange`],
   [`code/portable4/proof/int32_network.v`], [`me_pairs`, the reduction facts],
-  [`code/portable4/proof/int32_reify.v`], [the `seq`-level bridge],
+  [`code/portable4/proof/int32_knuth.v` #new], [the power-of-two case, §4.3],
   [`code/portable4/proof/int32_sort.v`], [the final theorem, `sortc_faithful`],
-  [`code/portable4/proof/int32_algebraic.v` #new], [the algebraic route of §4.5],
   [`code/avx2/proof/sort_generic.v`], [`gnet`, `pbsort`, padding],
   [`code/avx2/proof/sort_transpose.v`], [§5 in its entirety],
 )
@@ -645,7 +619,8 @@ closed under the global context. What it still needs is the doubling law for
 
 Both tracks needed the same thing and neither could get it from the foundation:
 a way to say "run this network everywhere". The AVX2 track built it for blocks
-(`ntile`) and got a clean development; the `int32` track did not build it,
-worked around it on lists, and got a development that reuses nothing. The
-shared algebra of §3 is that missing layer, and `neotile` is the same idea for
-the other way of splitting an array.
+(`ntile`) and got a clean development; the `int32` track did not build it and
+worked around it on lists instead, in a 633-line file that reused nothing and
+that nothing could reuse. That file is gone: with the shared algebra of §3 in
+place --- and `neotile`, the same idea for the other way of splitting an array
+--- the `int32` proof is half the size and every piece of it is generic.
