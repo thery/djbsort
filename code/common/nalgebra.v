@@ -94,6 +94,54 @@ Lemma neodup_cat n (n1 n2 : network n) :
 Proof. by rewrite /neodup /neomerge zip_cat // map_cat. Qed.
 
 (* -------------------------------------------------------------------------- *)
+(*  Iterated deinterleave, cast-free                                          *)
+(* -------------------------------------------------------------------------- *)
+
+(* `neodup` goes network m -> network (m + m), so iterating it naively builds *)
+(* a tower (m + m) + (m + m) + ... and every equation about it drowns in      *)
+(* casts.  But `2^ j.+1 is DEFINITIONALLY `2^ j + `2^ j (e2n is defined by    *)
+(* doubling, not by expn), so indexing the iteration by the EXPONENT keeps the*)
+(* type in `2^ form and no cast is ever needed.  This is the interleaved      *)
+(* sibling of the blocked `ntile` the avx2 track uses for the same reason.    *)
+Fixpoint neotile q (net : network (`2^ q)) j : network (`2^ (j + q)) :=
+  if j is j1.+1 then neodup (neotile net j1) else net.
+
+Lemma neotile0 q (net : network (`2^ q)) : neotile net 0 = net.
+Proof. by []. Qed.
+
+Lemma neotileS q (net : network (`2^ q)) j :
+  neotile net j.+1 = neodup (neotile net j).
+Proof. by []. Qed.
+
+Lemma neotile_cat q (n1 n2 : network (`2^ q)) j :
+  neotile (n1 ++ n2) j = neotile n1 j ++ neotile n2 j.
+Proof. by elim: j => [//|j IH]; rewrite !neotileS IH neodup_cat. Qed.
+
+Lemma nnoflip_neotile q (net : network (`2^ q)) j :
+  nnoflip net -> nnoflip (neotile net j).
+Proof. by elim: j => [//|j IH] nn; rewrite neotileS nnoflip_neodup // IH. Qed.
+
+(* The enumeration of `I_(m + m) in the even/odd order the deinterleave uses: *)
+(* wire a of the sub-problem becomes the adjacent pair 2a, 2a+1.  This is the *)
+(* index-level counterpart of nfun_eodup, and what lets a comparator list be  *)
+(* read off a deinterleaved network.                                          *)
+Lemma iota_eocat m :
+  iota 0 (m + m) = flatten [seq [:: a.*2; a.*2.+1] | a <- iota 0 m].
+Proof.
+elim: m => [//|m IH].
+rewrite addSn addnS -[(m + m).+2]addn2 iotaD IH -[m.+1]addn1 iotaD.
+by rewrite map_cat flatten_cat /= add0n addnn.
+Qed.
+
+Lemma enum_ord_eocat m :
+  enum 'I_(m + m) = flatten [seq [:: elift a; olift a] | a <- enum 'I_m].
+Proof.
+apply: (inj_map val_inj).
+rewrite val_enum_ord iota_eocat -val_enum_ord map_flatten -!map_comp.
+by congr flatten; apply: eq_map => a /=; rewrite val_elift val_olift.
+Qed.
+
+(* -------------------------------------------------------------------------- *)
 (*  The comparators a connector performs                                      *)
 (* -------------------------------------------------------------------------- *)
 
