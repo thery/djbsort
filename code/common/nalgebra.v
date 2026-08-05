@@ -160,6 +160,10 @@ Definition cpairs n (c : connector n) : seq (nat * nat) :=
 Definition nstages n (nt : network n) : seq (nat * nat) :=
   flatten (map (@cpairs n) nt).
 
+Lemma nstages_cons n (c : connector n) (nt : network n) :
+  nstages (c :: nt) = cpairs c ++ nstages nt.
+Proof. by []. Qed.
+
 Lemma nstages_cat n (n1 n2 : network n) :
   nstages (n1 ++ n2) = nstages n1 ++ nstages n2.
 Proof. by rewrite /nstages map_cat flatten_cat. Qed.

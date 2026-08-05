@@ -131,6 +131,47 @@ case: (boolP (i + r < n)) => H /=; last by rewrite ltnn.
 by rewrite -{1}[i]addn0 ltn_add2l r_gt0.
 Qed.
 
+(* The jump chain of the merge stage, read off as comparators.  Its distances *)
+(* are `2^ k - 1, `2^ k.-1 - 1, ..., 1: each step halves via (uphalf r).-1,   *)
+(* and on numbers of that shape it lands exactly on the next one down.  All   *)
+(* of them are odd and positive, which is what codd_jump needs.               *)
+
+Fixpoint kjumps n k : seq (nat * nat) :=
+  if k is k1.+1 then level_pairs n 1 ((`2^ k1.+1).-1) true ++ kjumps n k1
+  else [::].
+
+Lemma uphalf_e2n_pred j : uphalf ((`2^ j.+1).-1) = `2^ j.
+Proof. by have jg : 0 < `2^ j := e2n_gt0 j; rewrite e2Sn; lia. Qed.
+
+Lemma odd_e2n_pred j : 0 < j -> odd ((`2^ j).-1) && (0 < (`2^ j).-1).
+Proof.
+case: j => // j _; have jg : 0 < `2^ j := e2n_gt0 j.
+have -> : (`2^ j.+1).-1 = (((`2^ j).-1).*2).+1 by rewrite e2Sn addnn; lia.
+by rewrite /= odd_double.
+Qed.
+
+Lemma nstages_knuth_jump_rec n k :
+  nstages (knuth_jump_rec n k ((`2^ k).-1)) = kjumps n k.
+Proof.
+elim: k => [//|k IH].
+have /andP[rO r_gt0] := odd_e2n_pred (j := k.+1) isT.
+by rewrite /= uphalf_e2n_pred nstages_cons (cpairs_odd_jump r_gt0 rO) IH.
+Qed.
+
+(* One unfolding step of the recursive network, entirely as comparator lists: *)
+(* the sub-sort contributes its own list with every comparator doubled, and   *)
+(* the merge contributes sort.c's base pass at distance 1 followed by the     *)
+(* jump chain.  Compare with what the flat sweep must be shown to do at       *)
+(* `2^ m.+1: pdup of itself at `2^ m, then its p = 1 block.                   *)
+Lemma nstages_knuth_exchangeS m :
+  nstages (knuth_exchange m.+1)
+  = pdup (nstages (knuth_exchange m))
+    ++ (level_pairs (`2^ m.+1) 1 1 false ++ kjumps (`2^ m.+1) m).
+Proof.
+by rewrite /= nstages_cat nstages_neodup nstages_cons cpairs_eswap
+           nstages_knuth_jump_rec.
+Qed.
+
 Section Algebraic.
 
 Variable d : disp_t.
