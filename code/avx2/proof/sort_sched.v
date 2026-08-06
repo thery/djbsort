@@ -583,17 +583,70 @@ Definition avx2_net (n : nat) : network (avx2_wires n) :=
   nbatch _ (avx2_stages n).
 
 (* -------------------------------------------------------------------------- *)
-(*  What is left to prove                                                     *)
+(*  It sorts, for n a power of two: the plan                                  *)
 (* -------------------------------------------------------------------------- *)
 
-(* a batch does what its comparators do one after another                    *)
-Lemma nfun_cbatch (n : nat) (ps : batch) :
-  okb n ps -> forall d (A : orderType d) (t : n.-tuple A),
-  cfun (cbatch n ps) t = nfun (pnet n ps) t.
+(*  The goal is                                                               *)
+(*                                                                            *)
+(*      sorting_avx2_net : 2 < k -> avx2_net (`2^ k) \is sorting              *)
+(*                                                                            *)
+(*  and it splits in two.                                                     *)
+(*                                                                            *)
+(*  The plumbing.  The comparing sweeps only read and write the same wires,   *)
+(*  so they leave the memory alone; the parts that shuffle move the cells     *)
+(*  around by a permutation.  Hence the memory is a permutation of the wires  *)
+(*  throughout, naming a wire by the position it ends in is a renaming, and   *)
+(*  the batches are well formed, so each is one connector.                    *)
+(*                                                                            *)
+(*  The content.  Every vector operation of the program acts on one row of    *)
+(*  the array read as eight rows of n/8, so its comparators are a network of  *)
+(*  that blocked layout, and the two transposes are what turn it back into    *)
+(*  the linear one.  This is the picture sort_transpose.v already works in,   *)
+(*  and ntile / ttr / cconj / nrows / ncols / tflip of nalgebra.v are the     *)
+(*  combinators for it.  Which network the blocked part is has still to be    *)
+(*  worked out, part by part.                                                 *)
+
+(* -------------------------------------------------------------------------- *)
+(*  Plumbing                                                                  *)
+(* -------------------------------------------------------------------------- *)
+
+(* the wires a memory carries, in order                                       *)
+Definition wires (m : memo) : seq nat := [seq c.1 | c <- m].
+
+(* a comparing sweep reads and writes the same wires: the memory is unchanged *)
+Lemma mem_blockn base span q cnt g m : (blockn base span q cnt g m).1 = m.
 Proof. Admitted.
 
-(* the batches the program emits are well formed                            *)
-Lemma okb_avx2_stages n : all (okb (avx2_wires n)) (avx2_stages n).
+Lemma mem_stage off n cnt q g m : (stage off n cnt q g m).1 = m.
+Proof. Admitted.
+
+Lemma mem_ladder off n m : (ladder off n m).1 = m.
+Proof. Admitted.
+
+Lemma mem_oe_reduce off n m : (oe_reduce off n m).1 = m.
+Proof. Admitted.
+
+Lemma mem_snet off g m : (snet off g m).1 = m.
+Proof. Admitted.
+
+(* the parts that shuffle move the cells around, they do not lose any         *)
+Lemma wires_rev_pass off n p m :
+  perm_eq (wires (rev_pass off n p m).1) (wires m).
+Proof. Admitted.
+
+Lemma wires_bmerge j w f m : perm_eq (wires (bmerge j w f m).1) (wires m).
+Proof. Admitted.
+
+Lemma wires_tsort64 off n b m : perm_eq (wires (tsort64 off n b m).1) (wires m).
+Proof. Admitted.
+
+Lemma wires_tsort_out off n b m :
+  perm_eq (wires (tsort_out off n b m).1) (wires m).
+Proof. Admitted.
+
+(* so the whole run does, and naming a wire by its final position is a        *)
+(* renaming                                                                   *)
+Lemma avx2_perm_uniq n : perm_eq (avx2_perm n) (iota 0 (avx2_wires n)).
 Proof. Admitted.
 
 (* every emitted pair is in range                                             *)
@@ -605,15 +658,41 @@ Proof. Admitted.
 Lemma avx2_noflip n : all (fun c => ~~ c.2) (avx2_run n).1.
 Proof. Admitted.
 
-(* the run moves the wires around by a permutation, so naming them by their   *)
-(* final slot is a renaming                                                   *)
-Lemma avx2_perm_uniq n : perm_eq (avx2_perm n) (iota 0 (avx2_wires n)).
+(* the eight comparators of a vector compare-exchange are on distinct wires   *)
+Lemma okb_avx2_stages n : all (okb (avx2_wires n)) (avx2_stages n).
 Proof. Admitted.
 
-(* when n is not a power of two the array is padded, and the extra positions  *)
-(* sit above the n asked for                                                  *)
-Lemma avx2_wires_ge n : n <= avx2_wires n.
+(* a batch does what its comparators do one after another                     *)
+Lemma nfun_cbatch (n : nat) (ps : batch) :
+  okb n ps -> forall d (A : orderType d) (t : n.-tuple A),
+  cfun (cbatch n ps) t = nfun (pnet n ps) t.
 Proof. Admitted.
 
-Theorem sorting_avx2_net n : avx2_net n \is sorting.
+Lemma nfun_nbatch (n : nat) (bs : trace) :
+  all (okb n) bs -> forall d (A : orderType d) (t : n.-tuple A),
+  nfun (nbatch n bs) t = nfun (pnet n (flatten bs)) t.
+Proof. Admitted.
+
+(* -------------------------------------------------------------------------- *)
+(*  Content                                                                   *)
+(* -------------------------------------------------------------------------- *)
+
+(* on a power of two the run is sort_big, whose six parts follow each other   *)
+Lemma avx2_run_e2n k : 2 < k ->
+  avx2_run (`2^ k) = sort_big 0 (`2^ k) false (idmem (`2^ k)).
+Proof. Admitted.
+
+(* the array read as eight rows of n/8, which is the layout every vector      *)
+(* operation works in                                                         *)
+Definition rows (n : nat) (m : memo) : seq (seq cell) :=
+  [seq [seq nth c0 m (i + t * (n %/ 8)) | i <- iota 0 (n %/ 8)]
+  | t <- iota 0 8].
+
+(* What is missing is the identification of the comparators of each part with *)
+(* a network of that layout: oe_reduce and pdouble sorting the rows, the      *)
+(* three reversing passes with their ladders merging across them, and the two *)
+(* transposes carrying the result back.  Once each part is named, the whole   *)
+(* is a bitonic sort and the theorem follows by the 0-1 principle.            *)
+
+Theorem sorting_avx2_net k : 2 < k -> avx2_net (`2^ k) \is sorting.
 Proof. Admitted.
