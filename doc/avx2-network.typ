@@ -139,9 +139,56 @@ ends in.
 
 = Where the eight-at-a-time grouping sits
 
-A vector instruction compares eight pairs at once. Those eight pairs are one
-line of the picture repeated across eight places: at every distance the code
-compares position $i$ with position $i + d$ for eight values of $i$ at once.
-So the grouping cuts across the boxes rather than following them, and each
-group of eight is a connector in its own right, its comparisons being on
-distinct lines.
+One vector instruction performs eight comparisons at once. They are always
+eight copies of the same comparison, placed regularly across the array, so a
+single instruction is a connector in its own right --- its eight comparisons
+are on sixteen distinct lines. Here are four of the eighty-two, on all 64
+lines.
+
+#v(0.6em)
+
+#let gp = 2.9pt
+#let onebatch(ps, label) = {
+  block[
+    #box(width: 96pt, height: gp * 63 + 10pt, {
+      for i in range(64) {
+        place(dx: 0pt, dy: gp * i, line(length: 96pt, stroke: 0.25pt + luma(170)))
+      }
+      let xs = (10pt, 21pt, 32pt, 43pt, 54pt, 65pt, 76pt, 87pt)
+      for i in range(8) {
+        let a = ps.at(i).at(0)
+        let b = ps.at(i).at(1)
+        place(dx: xs.at(i), dy: gp * a,
+              line(end: (0pt, gp * (b - a)), stroke: 0.7pt))
+        place(dx: xs.at(i) - 1.3pt, dy: gp * a - 1.3pt,
+              circle(radius: 1.3pt, fill: black, stroke: none))
+        place(dx: xs.at(i) - 1.3pt, dy: gp * b - 1.3pt,
+              circle(radius: 1.3pt, fill: black, stroke: none))
+      }
+    })
+    #v(0.2em)
+    #align(center)[#text(size: 7.5pt)[#label]]
+  ]
+}
+
+#align(center)[
+  #grid(columns: (104pt, 104pt, 104pt, 104pt), column-gutter: 4pt,
+    onebatch(((0,1),(8,9),(16,17),(24,25),(32,33),(40,41),(48,49),(56,57)),
+             [no. 1, distance 1]),
+    onebatch(((0,4),(8,12),(16,20),(24,28),(32,36),(40,44),(48,52),(56,60)),
+             [no. 11, distance 4]),
+    onebatch(((0,8),(4,12),(16,24),(20,28),(32,40),(36,44),(48,56),(52,60)),
+             [no. 23, distance 8]),
+    onebatch(((0,32),(1,33),(2,34),(3,35),(4,36),(5,37),(6,38),(7,39)),
+             [no. 59, distance 32]))
+]
+
+#v(0.6em)
+
+The comparisons of one instruction are eight lines apart in most stages, and
+next to each other in the stage that follows the transpose. That is what the
+transposes are for: they change which sixteen lines sit together in the
+registers, so that the next distance can again be handled eight at a time.
+
+The whole sort is 82 such instructions, and the picture on the first page is
+what they add up to.
