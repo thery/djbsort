@@ -192,3 +192,102 @@ registers, so that the next distance can again be handled eight at a time.
 
 The whole sort is 82 such instructions, and the picture on the first page is
 what they add up to.
+
+= What the transposes do
+
+A transpose compares nothing, so it does not appear in the picture on the
+first page at all: naming each line by the position its value ends in absorbs
+it. What it decides is which eight positions sit in one register, and hence
+which comparisons can be done together.
+
+Write the 64 positions as an eight by eight grid, one register to a row. On
+the left each register holds eight consecutive positions; after the transpose
+each holds eight positions that are eight apart. The shaded register becomes
+a column.
+
+#v(0.6em)
+
+#let cell(v, hot) = box(width: 15pt, height: 11pt, inset: 1pt,
+  fill: if hot { luma(215) } else { white }, stroke: 0.3pt + luma(150),
+  align(center + horizon, text(size: 6.5pt)[#v]))
+
+#let gridof(f) = grid(columns: (15pt,) * 8, rows: (11pt,) * 8,
+  ..range(64).map(i => {
+    let v = f(calc.div-euclid(i, 8), calc.rem-euclid(i, 8))
+    cell(v, v >= 8 and v < 16)
+  }))
+
+#align(center)[
+  #grid(columns: (124pt, 46pt, 124pt), align: horizon + center,
+    gridof((r, c) => 8 * r + c),
+    text(size: 8.5pt)[transpose #linebreak() $-->$],
+    gridof((r, c) => r + 8 * c))
+]
+
+#v(0.4em)
+#align(center)[#text(size: 8pt)[
+  one register to a row --- before, and after
+]]
+
+#v(0.6em)
+
+That is why the same distance is handled with two different pictures on the
+previous page: comparisons eight lines apart while the registers hold
+consecutive positions, comparisons on neighbouring lines once they hold
+strided ones. The code transposes twice, and between the two it does the
+merges that need the other grouping.
+
+= How it works, at 64 positions
+
+The same thing seen on the data rather than on the network. A bar is the 64
+array positions; a box inside it is a sorted run, the arrow pointing towards
+the larger values. Each stage joins neighbouring runs of opposite direction
+into runs of twice the length.
+
+#v(0.8em)
+
+#let W = 336pt
+#let bar(runs, label) = {
+  grid(columns: (74pt, W), align: (right + horizon, left), row-gutter: 5pt,
+    text(size: 8pt)[#label #h(6pt)],
+    box(width: W, height: 15pt, {
+      let x = 0pt
+      for r in runs {
+        let w = W * r.at(0) / 64
+        place(dx: x, dy: 0pt,
+          rect(width: w, height: 15pt, radius: 1.5pt,
+               stroke: 0.4pt + luma(80), fill: luma(247),
+               align(center + horizon,
+                 text(size: 7.5pt)[#if r.at(1) == none [ ]
+                                   else if r.at(1) [$arrow.r$] else [$arrow.l$]])))
+        x = x + w
+      }
+    }))
+}
+
+#align(center)[
+  #stack(spacing: 7pt,
+    bar(((64, none),), [start]),
+    bar(range(16).map(j => (4, calc.odd(j))), [sort 4]),
+    bar(range(8).map(j => (8, calc.odd(j))), [merge 8]),
+    bar(range(4).map(j => (16, calc.odd(j))), [merge 16]),
+    bar(range(2).map(j => (32, calc.odd(j))), [merge 32]),
+    bar(((64, true),), [merge 64]))
+]
+
+#v(0.4em)
+#align(center)[#text(size: 8pt)[
+  the first bar is the input, unsorted; the last is the answer
+]]
+
+#v(0.8em)
+
+Two runs of opposite direction laid end to end form a sequence that rises then
+falls, or falls then rises, and that is exactly what a merge needs. So the
+alternation is not decoration: it is what lets the next stage be a merge
+rather than a full sort.
+
+The eight-at-a-time part sits underneath all of this. Every box in a bar is
+handled together with seven boxes like it elsewhere in the same bar, which is
+why every run at a given stage has the same length: the eight are the eight
+lanes of one instruction.
