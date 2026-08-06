@@ -16,8 +16,8 @@ Import Order POrderTheory TotalTheory.
 (*  pair of wires it joins and leaves the data alone -- so what comes out is  *)
 (*  the network:                                                              *)
 (*                                                                            *)
-(*      cell            == one memory slot: the wire it carries, and whether  *)
-(*                         that value is currently complemented               *)
+(*      cell            == one array position: the wire it carries, and       *)
+(*                         whether that value is currently complemented       *)
 (*      avx2_perm n     == the wire ending in each array position             *)
 (*      avx2_pairs n    == the compare-exchanges sort_short.c performs, in    *)
 (*                         order, named by the position each wire ends in     *)
@@ -35,13 +35,13 @@ Unset Strict Implicit.
 Unset Printing Implicit Defensive.
 
 (* -------------------------------------------------------------------------- *)
-(*  Cells, vectors, memory                                                    *)
+(*  Cells, vectors, the layout                                                *)
 (* -------------------------------------------------------------------------- *)
 
 Definition cell := (nat * bool)%type.
 Definition c0 : cell := (0, false).
 Definition vec := seq cell.
-Definition memo := seq cell.
+Definition layout := seq cell.
 (* one vector compare-exchange is eight comparators at once: a batch.  A     *)
 (* run is a list of such batches, in order -- each batch is one stage of     *)
 (* the network, its comparators being pairwise disjoint.                     *)
@@ -50,8 +50,8 @@ Definition trace := seq batch.
 
 Definition lane (v : vec) (k : nat) : cell := nth c0 v k.
 
-(* the identity state on n wires: slot k holds wire k, not complemented       *)
-Definition idmem (n : nat) : memo := [seq (k, false) | k <- iota 0 n].
+(* the layout to start from: position k holds wire k, not complemented        *)
+Definition idlay (n : nat) : layout := [seq (k, false) | k <- iota 0 n].
 
 (* -------------------------------------------------------------------------- *)
 (*  The AVX2 lane shuffles, as selections of lanes                            *)
@@ -139,24 +139,24 @@ Definition pwu32 : seq vec -> seq vec :=
   pw (fun p a b => if p then unpackhi32 a b else unpacklo32 a b).
 
 (* -------------------------------------------------------------------------- *)
-(*  Memory access                                                             *)
+(*  Reading and writing the array                                             *)
 (* -------------------------------------------------------------------------- *)
 
-Definition vload (m : memo) (i : nat) : vec := take 8 (drop i m).
-Definition vstore (m : memo) (i : nat) (v : vec) : memo :=
+Definition vload (m : layout) (i : nat) : vec := take 8 (drop i m).
+Definition vstore (m : layout) (i : nat) (v : vec) : layout :=
   take i m ++ v ++ drop (i + 8) m.
 
-Definition loadn (m : memo) (base q cnt : nat) : seq vec :=
+Definition loadn (m : layout) (base q cnt : nat) : seq vec :=
   [seq vload m (base + t * q) | t <- iota 0 cnt].
-Definition storen (m : memo) (base q : nat) (vs : seq vec) : memo :=
+Definition storen (m : layout) (base q : nat) (vs : seq vec) : layout :=
   foldl (fun mm t => vstore mm (base + t * q) (nth [::] vs t)) m
         (iota 0 (size vs)).
 
 (* -------------------------------------------------------------------------- *)
-(*  Steps: a piece of the program takes a memory to a memory and a trace      *)
+(*  Steps: a piece of the program takes a layout to a layout and a trace      *)
 (* -------------------------------------------------------------------------- *)
 
-Definition step := memo -> memo * trace.
+Definition step := layout -> layout * trace.
 
 Definition idle : step := fun m => (m, [::]).
 Definition seqs (f g : step) : step :=
@@ -244,7 +244,7 @@ Definition bmerge (j w : nat) (first : seq (nat * nat)) : step := fun m =>
 (*  Scalar compare-exchanges, for the tails                                   *)
 (* -------------------------------------------------------------------------- *)
 
-Definition smm (m : memo) (a b : nat) : batch :=
+Definition smm (m : layout) (a b : nat) : batch :=
   [:: cmpc (nth c0 m a) (nth c0 m b)].
 
 Definition snet (off : nat) (g : seq (nat * nat)) : step :=
@@ -555,8 +555,8 @@ Definition nbatch (n : nat) (t : trace) : network n :=
 (*  The network                                                               *)
 (* -------------------------------------------------------------------------- *)
 
-Definition avx2_run (n : nat) : memo * trace :=
-  avx2_sort n 0 n (idmem (if n <= 8 then n
+Definition avx2_run (n : nat) : layout * trace :=
+  avx2_sort n 0 n (idlay (if n <= 8 then n
                           else if n == 2 ^ (trunc_log 2 n) then n
                           else if sq n <= 128 then (sq n).*2 else n)).
 
@@ -593,8 +593,8 @@ Definition avx2_net (n : nat) : network (avx2_wires n) :=
 (*  and it splits in two.                                                     *)
 (*                                                                            *)
 (*  The plumbing.  The comparing sweeps only read and write the same wires,   *)
-(*  so they leave the memory alone; the parts that shuffle move the cells     *)
-(*  around by a permutation.  Hence the memory is a permutation of the wires  *)
+(*  so they leave the layout alone; the parts that shuffle move the cells     *)
+(*  around by a permutation.  Hence the layout is a permutation of the wires  *)
 (*  throughout, naming a wire by the position it ends in is a renaming, and   *)
 (*  the batches are well formed, so each is one connector.                    *)
 (*                                                                            *)
@@ -610,23 +610,24 @@ Definition avx2_net (n : nat) : network (avx2_wires n) :=
 (*  Plumbing                                                                  *)
 (* -------------------------------------------------------------------------- *)
 
-(* the wires a memory carries, in order                                       *)
-Definition wires (m : memo) : seq nat := [seq c.1 | c <- m].
+(* the wires an array holds, position by position                             *)
+Definition wires (m : layout) : seq nat := [seq c.1 | c <- m].
 
-(* a comparing sweep reads and writes the same wires: the memory is unchanged *)
-Lemma mem_blockn base span q cnt g m : (blockn base span q cnt g m).1 = m.
+(* a comparing sweep reads and writes the same positions: the layout does not *)
+(* change                                                                     *)
+Lemma layout_blockn base span q cnt g m : (blockn base span q cnt g m).1 = m.
 Proof. Admitted.
 
-Lemma mem_stage off n cnt q g m : (stage off n cnt q g m).1 = m.
+Lemma layout_stage off n cnt q g m : (stage off n cnt q g m).1 = m.
 Proof. Admitted.
 
-Lemma mem_ladder off n m : (ladder off n m).1 = m.
+Lemma layout_ladder off n m : (ladder off n m).1 = m.
 Proof. Admitted.
 
-Lemma mem_oe_reduce off n m : (oe_reduce off n m).1 = m.
+Lemma layout_oe_reduce off n m : (oe_reduce off n m).1 = m.
 Proof. Admitted.
 
-Lemma mem_snet off g m : (snet off g m).1 = m.
+Lemma layout_snet off g m : (snet off g m).1 = m.
 Proof. Admitted.
 
 (* the parts that shuffle move the cells around, they do not lose any         *)
@@ -679,12 +680,12 @@ Proof. Admitted.
 
 (* on a power of two the run is sort_big, whose six parts follow each other   *)
 Lemma avx2_run_e2n k : 2 < k ->
-  avx2_run (`2^ k) = sort_big 0 (`2^ k) false (idmem (`2^ k)).
+  avx2_run (`2^ k) = sort_big 0 (`2^ k) false (idlay (`2^ k)).
 Proof. Admitted.
 
 (* the array read as eight rows of n/8, which is the layout every vector      *)
 (* operation works in                                                         *)
-Definition rows (n : nat) (m : memo) : seq (seq cell) :=
+Definition rows (n : nat) (m : layout) : seq (seq cell) :=
   [seq [seq nth c0 m (i + t * (n %/ 8)) | i <- iota 0 (n %/ 8)]
   | t <- iota 0 8].
 
