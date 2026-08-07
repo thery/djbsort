@@ -157,3 +157,51 @@ Proof. by move=> pS; rewrite pfun_pnetwork sorting_sorted. Qed.
 
 End Prog.
 
+(* -------------------------------------------------------------------------- *)
+(*  Moves that act inside every aligned block                                 *)
+(* -------------------------------------------------------------------------- *)
+
+(* Lane shuffles rearrange a fixed number of positions and do the same in     *)
+(* every block: [bperm f] applies f inside each aligned block of k positions. *)
+
+Section Block.
+
+Variables m k : nat.
+Hypothesis k_gt0 : 0 < k.
+Hypothesis kDm : k %| m.
+Variable f : 'I_k -> 'I_k.
+Hypothesis fI : injective f.
+
+Lemma bmove_proof (p : 'I_m) : p %/ k * k + f (Ordinal (ltn_pmod p k_gt0)) < m.
+Proof.
+have H1 : p %/ k < m %/ k by rewrite ltn_divLR // divnK.
+rewrite -[X in _ < X](divnK kDm).
+apply: leq_trans (_ : (p %/ k).+1 * k <= _); last by rewrite leq_mul2r H1 orbT.
+by rewrite mulSnr ltn_add2l.
+Qed.
+
+Definition bmove (p : 'I_m) : 'I_m := Ordinal (bmove_proof p).
+
+Lemma bmove_inj : injective bmove.
+Proof.
+move=> p q /(congr1 val) /= pq.
+have vE : \val (f (Ordinal (ltn_pmod p k_gt0)))
+        = \val (f (Ordinal (ltn_pmod q k_gt0))).
+  move: pq => /(congr1 (fun x => x %% k)) /=; rewrite !modnMDl.
+  by move=> H; rewrite -[LHS](modn_small (ltn_ord _)) H modn_small.
+have oE : Ordinal (ltn_pmod p k_gt0) = Ordinal (ltn_pmod q k_gt0).
+  by apply: fI; apply: val_inj.
+have mE : p %% k = q %% k by have := congr1 val oE.
+have dE : p %/ k = q %/ k.
+  move: pq; rewrite oE => /eqP.
+  by rewrite eqn_add2r eqn_pmul2r // => /eqP.
+by apply: val_inj => /=; rewrite (divn_eq p k) (divn_eq q k) dE mE.
+Qed.
+
+Definition bperm : 'S_m := perm bmove_inj.
+
+Lemma bpermE (p : 'I_m) :
+  bperm p = p %/ k * k + f (Ordinal (ltn_pmod p k_gt0)) :> nat.
+Proof. by rewrite permE. Qed.
+
+End Block.
