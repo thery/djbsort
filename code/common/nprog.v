@@ -247,37 +247,50 @@ End Block.
 
 Section ByCol.
 
-Variables a q : nat.
-Hypothesis a_gt0 : 0 < a.
-Hypothesis q_gt0 : 0 < q.
+Variables m a : nat.
+Hypothesis aDm : a %| m.
 
-Lemma bycol_proof (p : 'I_(a * q)) : p %% q * a + p %/ q < a * q.
+Local Notation q := (m %/ a).
+
+Lemma bycol_proof (p : 'I_m) : p %% q * a + p %/ q < m.
 Proof.
+have m_gt0 : 0 < m := leq_ltn_trans (leq0n p) (ltn_ord p).
+have a_gt0 : 0 < a.
+  case: (posnP a) aDm => // ->; rewrite dvd0n => /eqP mE.
+  by rewrite mE in m_gt0.
+have q_gt0 : 0 < q by rewrite divn_gt0 // dvdn_leq.
+have mE : a * q = m by rewrite mulnC divnK.
 have H1 : p %% q < q by rewrite ltn_pmod.
-have H2 : p %/ q < a by rewrite ltn_divLR.
-rewrite mulnC.
-apply: leq_trans (_ : a * (p %% q).+1 <= _); last by rewrite leq_mul2l H1 orbT.
-by rewrite mulnSr ltn_add2l.
+have H2 : p %/ q < a by rewrite ltn_divLR // mE.
+apply: leq_trans (_ : (p %% q).+1 * a <= m); last first.
+  by rewrite -[X in _ <= X]mE [X in X <= _]mulnC leq_mul2l H1 orbT.
+by rewrite mulSnr ltn_add2l.
 Qed.
 
-Definition bycol_move (p : 'I_(a * q)) : 'I_(a * q) := Ordinal (bycol_proof p).
+Definition bycol_move (p : 'I_m) : 'I_m := Ordinal (bycol_proof p).
 
 Lemma bycol_inj : injective bycol_move.
 Proof.
 move=> p r /(congr1 val) /= pr.
-have Hp : p %/ q < a by rewrite ltn_divLR.
-have Hr : r %/ q < a by rewrite ltn_divLR.
+have m_gt0 : 0 < m := leq_ltn_trans (leq0n p) (ltn_ord p).
+have a_gt0 : 0 < a.
+  case: (posnP a) aDm => // ->; rewrite dvd0n => /eqP mE.
+  by rewrite mE in m_gt0.
+have q_gt0 : 0 < q by rewrite divn_gt0 // dvdn_leq.
+have mE : a * q = m by rewrite mulnC divnK.
+have Hp : p %/ q < a by rewrite ltn_divLR // mE.
+have Hr : r %/ q < a by rewrite ltn_divLR // mE.
 have dE : p %/ q = r %/ q.
   move: pr => /(congr1 (fun x => x %% a)) /=.
   by rewrite !modnMDl !modn_small.
-have mE : p %% q = r %% q.
+have mqE : p %% q = r %% q.
   by move: pr; rewrite dE => /eqP; rewrite eqn_add2r eqn_pmul2r // => /eqP.
-by apply: val_inj => /=; rewrite (divn_eq p q) (divn_eq r q) dE mE.
+by apply: val_inj => /=; rewrite (divn_eq p q) (divn_eq r q) dE mqE.
 Qed.
 
-Definition bycol : 'S_(a * q) := perm bycol_inj.
+Definition bycol : 'S_m := perm bycol_inj.
 
-Lemma bycolE (p : 'I_(a * q)) : bycol p = p %% q * a + p %/ q :> nat.
+Lemma bycolE (p : 'I_m) : bycol p = p %% q * a + p %/ q :> nat.
 Proof. by rewrite permE. Qed.
 
 End ByCol.
