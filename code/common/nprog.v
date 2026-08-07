@@ -355,3 +355,73 @@ by apply/eqP; rewrite -(nth_uniq 0 _ _ tbU) ?tb_size ?ij.
 Qed.
 
 End Table.
+(* -------------------------------------------------------------------------- *)
+(*  Permutations that compute                                                 *)
+(* -------------------------------------------------------------------------- *)
+
+(* A permutation of 'I_m carries proofs and goes through the machinery of     *)
+(* finite types, so asking where one position goes does not evaluate.  A      *)
+(* permutation given by its table does, and [cperm_of] takes it to the other  *)
+(* one, so a program can be run on numbers and reasoned about on positions.   *)
+
+Section CPerm.
+
+Variable m : nat.
+
+Record cperm := CPerm { ctab : seq nat; _ : perm_eq ctab (iota 0 m) }.
+
+Lemma cpermP (s : cperm) : perm_eq (ctab s) (iota 0 m).
+Proof. by case: s. Qed.
+
+Lemma ctab_size (s : cperm) : size (ctab s) = m.
+Proof. by rewrite (perm_size (cpermP s)) size_iota. Qed.
+
+(* where position i reads from                                                *)
+Definition capp (s : cperm) (i : nat) : nat := nth 0 (ctab s) i.
+
+Lemma cappE (s : cperm) : [seq capp s j | j <- iota 0 m] = ctab s.
+Proof.
+rewrite /capp -[m in iota 0 m](ctab_size s).
+by rewrite -/(mkseq (nth 0 (ctab s)) (size (ctab s))) mkseq_nth.
+Qed.
+
+Lemma cid_proof : perm_eq (iota 0 m) (iota 0 m).
+Proof. by []. Qed.
+
+Definition cid : cperm := CPerm cid_proof.
+
+Lemma ccomp_proof (s u : cperm) :
+  perm_eq [seq capp s j | j <- ctab u] (iota 0 m).
+Proof.
+apply: perm_trans (perm_map (capp s) (cpermP u)) _.
+by rewrite cappE; apply: cpermP.
+Qed.
+
+(* first u, then s: position i ends up reading from capp s (capp u i)         *)
+Definition ccomp (s u : cperm) : cperm := CPerm (ccomp_proof s u).
+
+Lemma cappM (s u : cperm) i : i < m -> capp (ccomp s u) i = capp s (capp u i).
+Proof.
+move=> iLm; rewrite /capp /= (nth_map 0) ?ctab_size //.
+Qed.
+
+(* the same permutation, seen by the algebra                                  *)
+Definition cperm_of (s : cperm) : 'S_m :=
+  perm (@tabf_inj m (ctab s) (cpermP s)).
+
+Lemma cperm_ofE (s : cperm) (i : 'I_m) : cperm_of s i = capp s i :> nat.
+Proof. by rewrite permE. Qed.
+
+Lemma cperm_ofM (s u : cperm) :
+  cperm_of (ccomp s u) = (cperm_of u * cperm_of s)%g.
+Proof.
+apply/permP => i; apply: val_inj; rewrite permM /= !permE /=.
+by rewrite (nth_map 0) ?ctab_size.
+Qed.
+
+Lemma cperm_of1 : cperm_of cid = 1%g.
+Proof.
+by apply/permP => i; apply: val_inj; rewrite !permE /capp /= nth_iota.
+Qed.
+
+End CPerm.
