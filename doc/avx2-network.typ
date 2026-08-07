@@ -234,7 +234,7 @@ a column.
 That is why the same distance is handled with two different pictures on the
 previous page: comparisons eight lines apart while the registers hold
 consecutive positions, comparisons on neighbouring lines once they hold
-strided ones. The code transposes twice, and between the two it does the
+spread-out ones. The code transposes twice, and between the two it does the
 merges that need the other grouping.
 
 = How it works, at 64 positions
