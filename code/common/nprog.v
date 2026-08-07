@@ -14,7 +14,11 @@ Import Order POrderTheory TotalTheory.
 (*  comparison by renaming the two positions it joins.                        *)
 (*                                                                            *)
 (*      pmove s t   == the tuple whose position i holds what t had at s i     *)
-(*      item        == one instruction: a pair to compare, or a move          *)
+(*      item        == one instruction: Cmp is a single compare-exchange,     *)
+(*                     Vcmp a vector compare-exchange given by its lanes,     *)
+(*                     Vshuf a vector lane shuffle.  The two vector ones are  *)
+(*                     named apart so every use of the vector unit shows      *)
+(*      nvec p      == how many vector instructions p performs                *)
 (*      pfun p t    == running the program p on t                             *)
 (*      pflat p     == the comparisons p performs, named as they are at the   *)
 (*                     moment they happen, and the accumulated move           *)
@@ -38,9 +42,20 @@ Variable m : nat.
 (*  Moving values around                                                      *)
 (* -------------------------------------------------------------------------- *)
 
-(* one instruction: the pair of positions to compare, or the move to perform  *)
-Definition item := (('I_m * 'I_m) + 'S_m)%type.
+(* One instruction.  The two vector ones are what the hardware does eight     *)
+(* lanes at a time, and they are named apart from the scalar comparison so    *)
+(* that every use of the vector unit can be traced through the development.   *)
+Inductive item : Type :=
+  | Cmp   of 'I_m * 'I_m          (* one compare-exchange: the scalar tails  *)
+  | Vcmp  of seq ('I_m * 'I_m)    (* one vector compare-exchange: its lanes  *)
+  | Vshuf of 'S_m.                (* one vector lane shuffle                 *)
+
 Definition prog := seq item.
+
+(* what the vector unit is asked to do, so it can be counted and traced      *)
+Definition vectorised (i : item) : bool := if i is Cmp _ then false else true.
+
+Definition nvec (p : prog) : nat := count vectorised p.
 
 (* the comparisons of a program, as a network                                 *)
 Definition nsw (l : seq ('I_m * 'I_m)) : network m :=
@@ -53,12 +68,19 @@ Proof. by rewrite /nsw map_rcons. Qed.
 Lemma nsw_cons ab l : nsw (ab :: l) = cswap ab.1 ab.2 :: nsw l.
 Proof. by []. Qed.
 
+Lemma nsw_cat l1 l2 : nsw (l1 ++ l2) = nsw l1 ++ nsw l2.
+Proof. by rewrite /nsw map_cat. Qed.
+
 (* renaming the positions a list of comparisons speaks about                  *)
 Definition ren (s : 'S_m) (l : seq ('I_m * 'I_m)) : seq ('I_m * 'I_m) :=
   [seq (s ab.1, s ab.2) | ab <- l].
 
 Lemma ren_cons s ab l : ren s (ab :: l) = (s ab.1, s ab.2) :: ren s l.
 Proof. by []. Qed.
+
+Lemma renK s l : ren s^-1%g (ren s l) = l.
+Proof. by rewrite /ren -map_comp -[RHS]map_id; apply/eq_map => ab /=;
+       rewrite !permK; case: ab. Qed.
 
 Variable d : disp_t.
 Variable A : orderType d.
@@ -107,8 +129,9 @@ Qed.
 
 Definition ifun (i : item) t : m.-tuple A :=
   match i with
-  | inl ab => cfun (cswap ab.1 ab.2) t
-  | inr u => pmove u t
+  | Cmp ab => cfun (cswap ab.1 ab.2) t
+  | Vcmp l => nfun (nsw l) t
+  | Vshuf u => pmove u t
   end.
 
 Definition pfun (p : prog) t : m.-tuple A := foldl (fun x i => ifun i x) t p.
@@ -116,18 +139,26 @@ Definition pfun (p : prog) t : m.-tuple A := foldl (fun x i => ifun i x) t p.
 (* the comparisons, named as they stand when they happen, and the move so far *)
 Definition pstep (st : seq ('I_m * 'I_m) * 'S_m) (i : item) :=
   match i with
-  | inl ab => (rcons st.1 (st.2 ab.1, st.2 ab.2), st.2)
-  | inr u => (st.1, (u * st.2)%g)
+  | Cmp ab => (rcons st.1 (st.2 ab.1, st.2 ab.2), st.2)
+  | Vcmp l => (st.1 ++ ren st.2 l, st.2)
+  | Vshuf u => (st.1, (u * st.2)%g)
   end.
 
 Definition pflat (p : prog) := foldl pstep ([::], 1%g) p.
+
+(* the list form of cfun_pmove: a move goes past a whole vector comparison   *)
+Lemma nfun_pmove (s : 'S_m) l t :
+  nfun (nsw l) (pmove s t) = pmove s (nfun (nsw (ren s l)) t).
+Proof. by rewrite pmove_nfun renK. Qed.
 
 Lemma pfun_flat (p : prog) l s t :
   foldl (fun x i => ifun i x) (pmove s (nfun (nsw l) t)) p =
   pmove (foldl pstep (l, s) p).2 (nfun (nsw (foldl pstep (l, s) p).1) t).
 Proof.
-elim: p l s => //= [] [ab|u] p IH l s.
-  rewrite [ifun _ _]/= cfun_pmove -nfun_rcons -nsw_rcons.
+elim: p l s => //= [] [ab|c|u] p IH l s.
+- rewrite [ifun _ _]/= cfun_pmove -nfun_rcons -nsw_rcons.
+  by rewrite [pstep _ _]/= IH.
+- rewrite [ifun _ _]/= nfun_pmove -nfun_cat -nsw_cat.
   by rewrite [pstep _ _]/= IH.
 by rewrite [ifun _ _]/= pmoveM [pstep _ _]/= IH.
 Qed.
