@@ -205,3 +205,48 @@ Lemma bpermE (p : 'I_m) :
 Proof. by rewrite permE. Qed.
 
 End Block.
+(* -------------------------------------------------------------------------- *)
+(*  Reading the array by columns                                              *)
+(* -------------------------------------------------------------------------- *)
+
+(* Some shuffles work on positions spread evenly over the array rather than   *)
+(* on eight in a row.  Seen through [bycol], which reads the array of a rows  *)
+(* of q by columns instead, those positions become consecutive, so such a     *)
+(* shuffle is a block one with [bycol] on either side.                        *)
+
+Section ByCol.
+
+Variables a q : nat.
+Hypothesis a_gt0 : 0 < a.
+Hypothesis q_gt0 : 0 < q.
+
+Lemma bycol_proof (p : 'I_(a * q)) : p %% q * a + p %/ q < a * q.
+Proof.
+have H1 : p %% q < q by rewrite ltn_pmod.
+have H2 : p %/ q < a by rewrite ltn_divLR.
+rewrite mulnC.
+apply: leq_trans (_ : a * (p %% q).+1 <= _); last by rewrite leq_mul2l H1 orbT.
+by rewrite mulnSr ltn_add2l.
+Qed.
+
+Definition bycol_move (p : 'I_(a * q)) : 'I_(a * q) := Ordinal (bycol_proof p).
+
+Lemma bycol_inj : injective bycol_move.
+Proof.
+move=> p r /(congr1 val) /= pr.
+have Hp : p %/ q < a by rewrite ltn_divLR.
+have Hr : r %/ q < a by rewrite ltn_divLR.
+have dE : p %/ q = r %/ q.
+  move: pr => /(congr1 (fun x => x %% a)) /=.
+  by rewrite !modnMDl !modn_small.
+have mE : p %% q = r %% q.
+  by move: pr; rewrite dE => /eqP; rewrite eqn_add2r eqn_pmul2r // => /eqP.
+by apply: val_inj => /=; rewrite (divn_eq p q) (divn_eq r q) dE mE.
+Qed.
+
+Definition bycol : 'S_(a * q) := perm bycol_inj.
+
+Lemma bycolE (p : 'I_(a * q)) : bycol p = p %% q * a + p %/ q :> nat.
+Proof. by rewrite permE. Qed.
+
+End ByCol.
