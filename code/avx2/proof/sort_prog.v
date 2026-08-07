@@ -123,3 +123,115 @@ Definition sh_tr' : 'S_n :=
   @bperm n 64 isT n64 _ (@tabf_inj 64 tb_tr' tb_tr'P).
 
 End Shuffles.
+
+(* -------------------------------------------------------------------------- *)
+(*  The sign flips                                                            *)
+(* -------------------------------------------------------------------------- *)
+
+(* The code sorts some runs downwards by complementing them, so that the same *)
+(* instruction serves both directions.  At the level of the positions this is *)
+(* only bookkeeping: a comparison on complemented positions puts its minimum  *)
+(* on the other one.  So the flips are not part of the program; they are      *)
+(* carried while it is written, as the pattern of which positions are         *)
+(* currently complemented.                                                    *)
+
+Definition flips := seq bool.
+
+Definition noflip (n : nat) : flips := nseq n false.
+
+(* a shuffle carries the pattern with the data                                *)
+Definition fl_shuf (k : nat) (tb : seq nat) (fl : flips) : flips :=
+  [seq nth false fl (i %/ k * k + nth 0 tb (i %% k)) | i <- iota 0 (size fl)].
+
+(* the masks the code exclusive-ors in, given by which positions they hit     *)
+Definition fl_tog (P : nat -> bool) (fl : flips) : flips :=
+  [seq nth false fl i (+) P i | i <- iota 0 (size fl)].
+
+Section Program.
+
+Variable n : nat.
+Hypothesis n64 : 64 %| n.
+
+(* one vector compare-exchange between the registers at a and at b: eight     *)
+(* lanes, each put the other way round where the values are complemented      *)
+Definition vmm (fl : flips) (a b : nat) : item n :=
+  vcmpn n [seq (if nth false fl (a + l) then (b + l, a + l) else (a + l, b + l))
+          | l <- iota 0 8].
+
+(* a batch of comparisons between the registers at mutual distance q from i   *)
+Definition vnet (fl : flips) (i q : nat) (g : seq (nat * nat)) : prog n :=
+  [seq vmm fl (i + p.1 * q) (i + p.2 * q) | p <- g].
+
+(* one block: the batch, at every register start in a span                    *)
+Definition blockn (fl : flips) (base span q : nat) (g : seq (nat * nat)) :
+    prog n :=
+  flatten [seq vnet fl (base + t * 8) q g | t <- iota 0 (span %/ 8)].
+
+(* the whole array tiled with such blocks                                     *)
+Definition stage (fl : flips) (m cnt q : nat) (g : seq (nat * nat)) : prog n :=
+  flatten [seq blockn fl (t * (cnt * q)) q q g | t <- iota 0 (m %/ (cnt * q))].
+
+
+(* -------------------------------------------------------------------------- *)
+(*  The reversing passes                                                      *)
+(* -------------------------------------------------------------------------- *)
+
+(* the mask each pass exclusive-ors in, as the lanes it hits                  *)
+Definition mrevP (p : nat) (i : nat) : bool :=
+  if p == 4 then i %% 8 < 4
+  else if p == 2 then (2 <= i %% 8) && (i %% 8 < 6)
+  else (i %% 4 == 1) || (i %% 4 == 2).
+
+(* the comparison between the two registers of every group of sixteen        *)
+Definition adj16 (fl : flips) : prog n :=
+  [seq vmm fl (t * 16) (t * 16 + 8) | t <- iota 0 (n %/ 16)].
+
+Definition shp : item n := Vshuf (sh_perm n64).
+Definition shu : item n := Vshuf (sh_u64 n64).
+
+(* one pass: complement a pattern inside every sixteen lanes, bring the       *)
+(* positions to be compared into matching lanes, compare on the way back up   *)
+Definition rev_pass (fl : flips) (p : nat) : prog n * flips :=
+  let f1 := fl_tog (mrevP p) fl in
+  if p == 4 then ([::], f1) else
+  if p == 2 then
+    let f2 := fl_shuf 16 tb_perm f1 in
+    (shp :: adj16 f2 ++ [:: shp], fl_shuf 16 tb_perm f2)
+  else
+    let f2 := fl_shuf 16 tb_perm f1 in
+    let f3 := fl_shuf 16 tb_u64 f2 in
+    let f4 := fl_shuf 16 tb_u64 f3 in
+    (shp :: shu :: adj16 f3 ++ shu :: adj16 f4 ++ [:: shp],
+     fl_shuf 16 tb_perm f4).
+
+(* -------------------------------------------------------------------------- *)
+(*  The ladder of ever finer sweeps                                           *)
+(* -------------------------------------------------------------------------- *)
+
+Fixpoint ladder2 (fuel : nat) (fl : flips) (q : nat) : prog n :=
+  if fuel is f.+1 then
+    if 16 <= q then stage fl n 4 (q %/ 2) mrg4 ++ ladder2 f fl (q %/ 4)
+    else if q == 8 then stage fl n 2 8 mrg2 else [::]
+  else [::].
+
+Fixpoint ladder1 (fuel : nat) (fl : flips) (q : nat) : prog n :=
+  if fuel is f.+1 then
+    if (128 <= q) || (q == 32)
+    then stage fl n 8 (q %/ 4) mrg8 ++ ladder1 f fl (q %/ 8)
+    else ladder2 fuel fl q
+  else [::].
+
+Definition ladder (fl : flips) : prog n := ladder1 n fl (n %/ 16).
+
+(* a pass, its ladder, and the wide sweep that closes it                      *)
+Definition rev_step (fl : flips) (p : nat) : prog n * flips :=
+  let: (c, f1) := rev_pass fl p in
+  (c ++ ladder f1 ++ stage f1 n 8 (n %/ 8) mrg8r, f1).
+
+Definition revs (fl : flips) : prog n * flips :=
+  let: (c1, f1) := rev_step fl 4 in
+  let: (c2, f2) := rev_step f1 2 in
+  let: (c3, f3) := rev_step f2 1 in
+  (c1 ++ c2 ++ c3, f3).
+
+End Program.
