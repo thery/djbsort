@@ -281,3 +281,64 @@ Lemma bycolE (p : 'I_(a * q)) : bycol p = p %% q * a + p %/ q :> nat.
 Proof. by rewrite permE. Qed.
 
 End ByCol.
+(* -------------------------------------------------------------------------- *)
+(*  Writing a program with plain numbers                                      *)
+(* -------------------------------------------------------------------------- *)
+
+(* Index arithmetic is far easier on numbers than on bounded ones, so a       *)
+(* program is written with plain positions and the out-of-range ones are      *)
+(* dropped, exactly as pnet does.                                             *)
+
+Section OfNat.
+
+Variable m : nat.
+
+Definition oip (ab : nat * nat) : option ('I_m * 'I_m) :=
+  obind (fun i => omap (fun j => (i, j)) (insub ab.2)) (insub ab.1).
+
+(* one vector compare-exchange, from the list of its lanes                    *)
+Definition vcmpn (l : seq (nat * nat)) : item m := Vcmp (pmap oip l).
+
+(* one compare-exchange, dropped if out of range                              *)
+Definition cmpn (ab : nat * nat) : seq (item m) :=
+  if oip ab is Some x then [:: Cmp x] else [::].
+
+Lemma oipT (a b : nat) (aLm : a < m) (bLm : b < m) :
+  oip (a, b) = Some (Sub a aLm, Sub b bLm).
+Proof. by rewrite /oip /= insubT /= insubT. Qed.
+
+End OfNat.
+
+(* -------------------------------------------------------------------------- *)
+(*  A shuffle from a table                                                    *)
+(* -------------------------------------------------------------------------- *)
+
+(* The lane shuffles are given by a table: [tabf tb] reads position i to      *)
+(* position nth 0 tb i.  A table that lists 0, ..., k-1 once each is a        *)
+(* rearrangement, which is what bperm asks for.                               *)
+
+Section Table.
+
+Variable k : nat.
+Variable tb : seq nat.
+Hypothesis tbP : perm_eq tb (iota 0 k).
+
+Lemma tb_size : size tb = k.
+Proof. by rewrite (perm_size tbP) size_iota. Qed.
+
+Lemma tb_lt (i : 'I_k) : nth 0 tb i < k.
+Proof.
+have : nth 0 tb i \in tb by rewrite mem_nth // tb_size.
+by rewrite (perm_mem tbP) mem_iota.
+Qed.
+
+Definition tabf (i : 'I_k) : 'I_k := Ordinal (tb_lt i).
+
+Lemma tabf_inj : injective tabf.
+Proof.
+move=> i j /(congr1 val) /= ij; apply: val_inj => /=.
+have tbU : uniq tb by rewrite (perm_uniq tbP) iota_uniq.
+by apply/eqP; rewrite -(nth_uniq 0 _ _ tbU) ?tb_size ?ij.
+Qed.
+
+End Table.
