@@ -234,4 +234,118 @@ Definition revs (fl : flips) : prog n * flips :=
   let: (c3, f3) := rev_step f2 1 in
   (c1 ++ c2 ++ c3, f3).
 
+
+(* -------------------------------------------------------------------------- *)
+(*  The first reduction, across the eight rows                                *)
+(* -------------------------------------------------------------------------- *)
+
+Definition oe_reduce (fl : flips) : prog n :=
+  let p := n %/ 8 in
+  flatten [seq vnet fl (t * 8) p.*2 even4 ++ vnet fl (t * 8 + p) p.*2 odd4
+          | t <- iota 0 (p %/ 8)].
+
+(* -------------------------------------------------------------------------- *)
+(*  The merges of doubling size                                               *)
+(* -------------------------------------------------------------------------- *)
+
+(* two registers in every four are complemented before they start            *)
+Definition flipallP (i : nat) : bool :=
+  (i %% 32 < 8) || ((16 <= i %% 32) && (i %% 32 < 24)).
+
+(* the coarse-to-fine sweeps run for one merge size                          *)
+Fixpoint sweeps (fuel : nat) (fl : flips) (q : nat) : prog n :=
+  if fuel is f.+1 then
+    if 128 <= q then stage fl n 8 (q %/ 4) mrg8 ++ sweeps f fl (q %/ 8)
+    else if q == 64 then stage fl n 4 32 mrg4 ++ stage fl n 4 8 mrg4
+    else if q == 32 then stage fl n 8 8 mrg8
+    else if q == 16 then stage fl n 4 8 mrg4
+    else if q == 8 then stage fl n 2 8 mrg2
+    else [::]
+  else [::].
+
+(* which side of the merge a block is on, hence whether it is complemented   *)
+Definition fmflip (p q jj kk : nat) : bool :=
+  let f0 := p.*2 == q in f0 (+) odd kk (+) (~~ f0 && odd jj).
+
+Definition fmP (p : nat) (i : nat) : bool :=
+  let q := n %/ 8 in
+  let r := i %% q in
+  fmflip p q (r %/ p.*2) (r %% p.*2 %/ p).
+
+(* the merge itself: the same batch at every register start, then the        *)
+(* complements, which fall on blocks the batch has already passed            *)
+Definition flip_merge (fl : flips) (p : nat) : prog n * flips :=
+  let q := n %/ 8 in
+  (flatten [seq vnet fl (t * 8) q mrg8r | t <- iota 0 (q %/ 8)],
+   fl_tog (fmP p) fl).
+
+Fixpoint pdouble (fuel : nat) (fl : flips) (p : nat) : prog n * flips :=
+  if fuel is f.+1 then
+    let c1 := sweeps n fl (p %/ 2) in
+    let: (c2, f1) := flip_merge fl p in
+    if p * 16 == n then (c1 ++ c2, f1)
+    else let: (c3, f2) := pdouble f f1 p.*2 in (c1 ++ c2 ++ c3, f2)
+  else ([::], fl).
+
+(* -------------------------------------------------------------------------- *)
+(*  The transpose and its sort                                                *)
+(* -------------------------------------------------------------------------- *)
+
+(* the registers complemented between the two halves of the transpose       *)
+Definition t64P (i : nat) : bool :=
+  let r := i %% 64 %/ 8 in (r < 2) || ((4 <= r) && (r < 6)).
+
+Definition tsort64 (fl : flips) : prog n * flips :=
+  let f1 := fl_shuf 64 tb_trlo fl in
+  let f2 := fl_tog t64P f1 in
+  let f3 := fl_shuf 64 tb_trhi f2 in
+  (Vshuf (sh_trlo n64) :: Vshuf (sh_trhi n64)
+     :: flatten [seq vnet f3 (t * 64) 8 mrg8r | t <- iota 0 (n %/ 64)]
+     ++ [:: Vshuf (sh_tr n64)],
+   fl_shuf 64 tb_tr f3).
+
+(* -------------------------------------------------------------------------- *)
+(*  The final sort, and the transpose that writes it back out                 *)
+(* -------------------------------------------------------------------------- *)
+
+(* the eight registers here are a row apart, so the shuffle is a block one   *)
+(* read by columns; the table is the transpose with the registers reordered  *)
+Definition outp : seq nat := [:: 0; 4; 1; 5; 2; 6; 3; 7].
+
+Definition tb_out : seq nat :=
+  [seq nth 0 trc (i %/ 8) * 8 + nth 0 trr (nth 0 outp (i %% 8))
+  | i <- iota 0 64].
+
+Lemma tb_outP : perm_eq tb_out (iota 0 64).
+Proof. by []. Qed.
+
+Lemma n8 : 8 %| n.
+Proof. by apply: dvdn_trans n64. Qed.
+
+Definition sh_out : 'S_n :=
+  ((@bycol n 8 n8)^-1
+   * @bperm n 64 isT n64 _ (@tabf_inj 64 tb_out tb_outP)
+   * @bycol n 8 n8)%g.
+
+Definition tsort_out (fl : flips) : prog n :=
+  let q := n %/ 8 in
+  flatten [seq vnet fl (t * 8) q mrg8r | t <- iota 0 (q %/ 8)]
+  ++ [:: Vshuf sh_out].
+
+(* -------------------------------------------------------------------------- *)
+(*  The whole sort, for n a power of two, n at least 64                       *)
+(* -------------------------------------------------------------------------- *)
+
+Definition avx2_prog : prog n :=
+  let f0 := noflip n in
+  let c1 := oe_reduce f0 in
+  let: (c2, f2) :=
+     if 128 <= n then
+       let f1 := fl_tog flipallP f0 in
+       let: (c, f) := pdouble n f1 8 in (c, f)
+     else ([::], f0) in
+  let: (c3, f3) := revs f2 in
+  let: (c4, f4) := tsort64 f3 in
+  c1 ++ c2 ++ c3 ++ c4 ++ ladder f4 ++ tsort_out f4.
+
 End Program.
