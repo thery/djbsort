@@ -10,7 +10,7 @@
 (* algorithm read directly:                                                    *)
 (*                                                                            *)
 (*   - [net] / the [mrg*] lists : the fixed comparator batches                *)
-(*   - [blockn] / [stage] / [ladder] : the strided compare-exchange sweeps     *)
+(*   - [blockn] / [stage] / [ladder] : the evenly spaced compare-exchanges     *)
 (*   - [transpose8] / [transpose8'] : the 8x8 in-register lane transpose       *)
 (*   - [bmerge] : one bitonic merge, instantiated at width 16/32/64           *)
 (*   - sign-flip masks (xor with -1) : reverse a run for the bitonic merges    *)
@@ -172,7 +172,7 @@ let tr_hi (v : v array) : v array =
 let transpose8 (v : v array) : v array =
   Array.init 8 (fun r -> Array.init 8 (fun c -> v.(c).(r)))
 
-(* The variant sort.c uses in the final block: the input arrives strided and   *)
+(* The variant sort.c uses in the final block: the input arrives spread out    *)
 (* the output lands scrambled, so the transpose is composed with a fixed       *)
 (* permutation on each side.                                                   *)
 let tr'r = [| 0; 2; 1; 3; 4; 6; 5; 7 |]
@@ -418,7 +418,7 @@ let rec sort_2power (mem : int array) off n flagdown : unit =
     (* sort.c lines 742-804: the same finishing ladder as the reversing passes *)
     ladder mem off n;
 
-    (* sort.c lines 806-876: final 8-wide sort + strided transpose back out *)
+    (* sort.c lines 806-876: final 8-wide sort + transpose back out *)
     let q = n asr 3 in
     let i = ref 0 in
     while !i < q do
@@ -464,7 +464,7 @@ and int32_sort (mem : int array) off n : unit =
       sort_2power mem off !q true;
       int32_sort mem (off + !q) (n - !q);
 
-      (* peel the merge down through the large strides (lines 949-983) *)
+      (* peel the merge down from the widest spacing (lines 949-983) *)
       while !q >= 64 do
         q := !q asr 2;
         let j = ref (threestages mem off n !q) in

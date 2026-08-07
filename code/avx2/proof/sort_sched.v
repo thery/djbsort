@@ -399,7 +399,7 @@ Definition tsort64 (off n : nat) (fdown : bool) : step :=
     let t := rnet d mrg8r in
     (storen m i 8 (transpose8 d), t)).
 
-(* the final 8-wide sort, written back through a strided transpose           *)
+(* the final 8-wide sort, written back through a transpose                   *)
 Definition tsort_out (off n : nat) (fdown : bool) : step :=
   let q := n %/ 8 in
   loop (by8 off (q %/ 8)) (fun i m =>
@@ -444,7 +444,7 @@ Fixpoint qloop (fuel q n : nat) : nat :=
 
 Definition sq (n : nat) : nat := qloop n 8 n.
 
-(* the merge peel through the large strides                                  *)
+(* the merge peel, from the widest spacing down                              *)
 Fixpoint peel (fuel off n q : nat) : step :=
   if fuel is f.+1 then
     if 64 <= q then

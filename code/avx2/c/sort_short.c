@@ -135,7 +135,7 @@ static void transpose8p(int32x8 *v)
   for (int r = 0; r < 8; r++) v[r] = u[4*(r/4) + SW[r%4]];
 }
 
-/* ---- strided compare-exchange sweeps ------------------------------------- */
+/* ---- evenly spaced compare-exchange sweeps ------------------------------- */
 
 static inline __attribute__((always_inline)) void blockn(int32 *x, long long base, long long span, long long q,
                    int cnt, net_t g)
