@@ -324,9 +324,8 @@ Lemma n8 : 8 %| n.
 Proof. by apply: dvdn_trans n64. Qed.
 
 Definition sh_out : cperm n :=
-  ccomp (@bycoltab n 8 n8)
-        (ccomp (@btab n 64 isT n64 _ (@tabf_inj 64 tb_out tb_outP))
-               (cinv (@bycoltab n 8 n8))).
+  ccomp (@btab n 64 isT n64 _ (@tabf_inj 64 tb_out tb_outP))
+        (@bycoltab n 8 n8).
 
 Definition tsort_out (fl : flips) : prog n :=
   let q := n %/ 8 in
