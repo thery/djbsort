@@ -38,11 +38,62 @@ Definition net4 (b : bool) : network (`2^ 2) :=
           else [:: (0,1); (2,3); (0,2); (1,3); (1,2)]).
 
 Lemma size_net4 (b : bool) : size (net4 b) = 5.
-Proof. by case: b. Qed.
+Proof.
+rewrite /net4; case: b.
+  rewrite (pnet_cons _ (isT : 1 < `2^ 2) (isT : 0 < `2^ 2)).
+  rewrite (pnet_cons _ (isT : 3 < `2^ 2) (isT : 2 < `2^ 2)).
+  rewrite (pnet_cons _ (isT : 2 < `2^ 2) (isT : 0 < `2^ 2)).
+  rewrite (pnet_cons _ (isT : 3 < `2^ 2) (isT : 1 < `2^ 2)).
+  by rewrite (pnet_cons _ (isT : 2 < `2^ 2) (isT : 1 < `2^ 2)).
+rewrite (pnet_cons _ (isT : 0 < `2^ 2) (isT : 1 < `2^ 2)).
+rewrite (pnet_cons _ (isT : 2 < `2^ 2) (isT : 3 < `2^ 2)).
+rewrite (pnet_cons _ (isT : 0 < `2^ 2) (isT : 2 < `2^ 2)).
+rewrite (pnet_cons _ (isT : 1 < `2^ 2) (isT : 3 < `2^ 2)).
+by rewrite (pnet_cons _ (isT : 1 < `2^ 2) (isT : 2 < `2^ 2)).
+Qed.
 
 Lemma sorted_net4 (b : bool) (t : (`2^ 2).-tuple bool) :
   sorted (if b then (>=%O : rel _) else <=%O) (nfun (net4 b) t).
-Proof. Admitted.
+Proof.
+pose i0 : 'I_(`2^ 2) := Ordinal (isT : 0 < `2^ 2).
+pose i1 : 'I_(`2^ 2) := Ordinal (isT : 1 < `2^ 2).
+pose i2 : 'I_(`2^ 2) := Ordinal (isT : 2 < `2^ 2).
+pose i3 : 'I_(`2^ 2) := Ordinal (isT : 3 < `2^ 2).
+have F4 (r : rel bool) (u : (`2^ 2).-tuple bool) :
+    r (tnth u i0) (tnth u i1) -> r (tnth u i1) (tnth u i2) ->
+    r (tnth u i2) (tnth u i3) -> sorted r u.
+  rewrite !(tnth_nth false).
+  by case: u => [] [|x0 [|x1 [|x2 [|x3 []]]]] //= _ -> -> ->.
+have Et : nfun (net4 true) t =
+    cfun (cswap i2 i1) (cfun (cswap i3 i1) (cfun (cswap i2 i0)
+      (cfun (cswap i3 i2) (cfun (cswap i1 i0) t)))).
+  rewrite [net4 true](_ : _ =
+      pnet _ [:: (1, 0); (3, 2); (2, 0); (3, 1); (2, 1)]); last exact: erefl.
+  rewrite (nfun_pnet_cons _ (isT : 1 < `2^ 2) (isT : 0 < `2^ 2)).
+  rewrite (nfun_pnet_cons _ (isT : 3 < `2^ 2) (isT : 2 < `2^ 2)).
+  rewrite (nfun_pnet_cons _ (isT : 2 < `2^ 2) (isT : 0 < `2^ 2)).
+  rewrite (nfun_pnet_cons _ (isT : 3 < `2^ 2) (isT : 1 < `2^ 2)).
+  rewrite (nfun_pnet_cons _ (isT : 2 < `2^ 2) (isT : 1 < `2^ 2)).
+  exact: erefl.
+have Ef : nfun (net4 false) t =
+    cfun (cswap i1 i2) (cfun (cswap i1 i3) (cfun (cswap i0 i2)
+      (cfun (cswap i2 i3) (cfun (cswap i0 i1) t)))).
+  rewrite [net4 false](_ : _ =
+      pnet _ [:: (0, 1); (2, 3); (0, 2); (1, 3); (1, 2)]); last exact: erefl.
+  rewrite (nfun_pnet_cons _ (isT : 0 < `2^ 2) (isT : 1 < `2^ 2)).
+  rewrite (nfun_pnet_cons _ (isT : 2 < `2^ 2) (isT : 3 < `2^ 2)).
+  rewrite (nfun_pnet_cons _ (isT : 0 < `2^ 2) (isT : 2 < `2^ 2)).
+  rewrite (nfun_pnet_cons _ (isT : 1 < `2^ 2) (isT : 3 < `2^ 2)).
+  rewrite (nfun_pnet_cons _ (isT : 1 < `2^ 2) (isT : 2 < `2^ 2)).
+  exact: erefl.
+case: b.
+  apply: F4; rewrite Et; rewrite !(cswapE_min, cswapE_max, cswapE_neq) //;
+    by case: (tnth t i0); case: (tnth t i1); case: (tnth t i2);
+       case: (tnth t i3).
+apply: F4; rewrite Ef; rewrite !(cswapE_min, cswapE_max, cswapE_neq) //;
+  by case: (tnth t i0); case: (tnth t i1); case: (tnth t i2);
+     case: (tnth t i3).
+Qed.
 
 (* -------------------------------------------------------------------------- *)
 (*  The sort itself                                                           *)
@@ -58,7 +109,16 @@ Fixpoint dsort (b : bool) k : network (`2^ k.+2) :=
   else net4 b.
 
 Lemma size_dsort (b : bool) k : size (dsort b k) = 5 + (k * (k + 5))./2.
-Proof. Admitted.
+Proof.
+elim: k b => [b|k IH b]; first by rewrite size_net4.
+have -> : dsort b k.+1 =
+  nmerge (dsort true k) (dsort false k) ++ half_cleaner_rec b k.+3 by [].
+rewrite size_cat /nmerge size_map size_zip !IH minnn size_half_cleaner_rec.
+have -> : k.+1 * (k.+1 + 5) = k * (k + 5) + (k + 3) * 2.
+  rewrite addSn mulnS mulSn muln2 -addnn addnA addnC.
+  by congr (_ + _); rewrite -addn1 addnACA [in RHS]addnACA.
+by rewrite -!divn2 divnDMl // addnA addn3.
+Qed.
 
 Lemma sorted_dsort (b : bool) k (t : (`2^ k.+2).-tuple bool) :
   sorted (if b then (>=%O : rel _) else <=%O) (nfun (dsort b k) t).
