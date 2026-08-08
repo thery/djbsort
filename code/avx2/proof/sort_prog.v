@@ -13,8 +13,9 @@ Import Order POrderTheory TotalTheory.
 (*  and the transposes enter only through that permutation.                   *)
 (*                                                                            *)
 (*  This file holds the shuffles.  Each is a fixed rearrangement of 16 or 64  *)
-(*  positions repeated over the whole array, so each is a bperm of nprog.v,   *)
-(*  given by the table of where every position reads from.                    *)
+(*  positions repeated over the whole array, given by the table of where      *)
+(*  every position reads from, so each computes and cperm_of takes it to the  *)
+(*  permutation the algebra wants.                                            *)
 (*                                                                            *)
 (******************************************************************************)
 
@@ -107,20 +108,20 @@ Hypothesis n64 : 64 %| n.
 Lemma n16 : 16 %| n.
 Proof. by apply: dvdn_trans n64. Qed.
 
-Definition sh_perm : 'S_n :=
-  @bperm n 16 isT n16 _ (@tabf_inj 16 tb_perm tb_permP).
-Definition sh_u64 : 'S_n :=
-  @bperm n 16 isT n16 _ (@tabf_inj 16 tb_u64 tb_u64P).
-Definition sh_u32 : 'S_n :=
-  @bperm n 16 isT n16 _ (@tabf_inj 16 tb_u32 tb_u32P).
-Definition sh_trlo : 'S_n :=
-  @bperm n 64 isT n64 _ (@tabf_inj 64 tb_trlo tb_trloP).
-Definition sh_trhi : 'S_n :=
-  @bperm n 64 isT n64 _ (@tabf_inj 64 tb_trhi tb_trhiP).
-Definition sh_tr : 'S_n :=
-  @bperm n 64 isT n64 _ (@tabf_inj 64 tb_tr tb_trP).
-Definition sh_tr' : 'S_n :=
-  @bperm n 64 isT n64 _ (@tabf_inj 64 tb_tr' tb_tr'P).
+Definition sh_perm : cperm n :=
+  @btab n 16 isT n16 _ (@tabf_inj 16 tb_perm tb_permP).
+Definition sh_u64 : cperm n :=
+  @btab n 16 isT n16 _ (@tabf_inj 16 tb_u64 tb_u64P).
+Definition sh_u32 : cperm n :=
+  @btab n 16 isT n16 _ (@tabf_inj 16 tb_u32 tb_u32P).
+Definition sh_trlo : cperm n :=
+  @btab n 64 isT n64 _ (@tabf_inj 64 tb_trlo tb_trloP).
+Definition sh_trhi : cperm n :=
+  @btab n 64 isT n64 _ (@tabf_inj 64 tb_trhi tb_trhiP).
+Definition sh_tr : cperm n :=
+  @btab n 64 isT n64 _ (@tabf_inj 64 tb_tr tb_trP).
+Definition sh_tr' : cperm n :=
+  @btab n 64 isT n64 _ (@tabf_inj 64 tb_tr' tb_tr'P).
 
 End Shuffles.
 
@@ -155,8 +156,8 @@ Hypothesis n64 : 64 %| n.
 (* one vector compare-exchange between the registers at a and at b: eight     *)
 (* lanes, each put the other way round where the values are complemented      *)
 Definition vmm (fl : flips) (a b : nat) : item n :=
-  vcmpn n [seq (if nth false fl (a + l) then (b + l, a + l) else (a + l, b + l))
-          | l <- iota 0 8].
+  Vcmp n [seq (if nth false fl (a + l) then (b + l, a + l) else (a + l, b + l))
+         | l <- iota 0 8].
 
 (* a batch of comparisons between the registers at mutual distance q from i   *)
 Definition vnet (fl : flips) (i q : nat) (g : seq (nat * nat)) : prog n :=
@@ -322,10 +323,10 @@ Proof. by []. Qed.
 Lemma n8 : 8 %| n.
 Proof. by apply: dvdn_trans n64. Qed.
 
-Definition sh_out : 'S_n :=
-  ((@bycol n 8 n8)^-1
-   * @bperm n 64 isT n64 _ (@tabf_inj 64 tb_out tb_outP)
-   * @bycol n 8 n8)%g.
+Definition sh_out : cperm n :=
+  ccomp (@bycoltab n 8 n8)
+        (ccomp (@btab n 64 isT n64 _ (@tabf_inj 64 tb_out tb_outP))
+               (cinv (@bycoltab n 8 n8))).
 
 Definition tsort_out (fl : flips) : prog n :=
   let q := n %/ 8 in
