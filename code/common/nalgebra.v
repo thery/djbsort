@@ -573,6 +573,31 @@ rewrite (nfun_pnet_cat [:: b] (bs ++ qs ++ rs) t).
 by apply: IH.
 Qed.
 
+(* -------------------------------------------------------------------------- *)
+(*  Two orders of the same comparisons                                        *)
+(* -------------------------------------------------------------------------- *)
+
+(* Real code does not perform its comparisons in the order a network would    *)
+(* write them down: it interleaves whatever it can to fill an instruction.    *)
+(* That is harmless as long as it only ever moves comparisons past ones they  *)
+(* share no wire with, which is what [dequiv] records.                        *)
+
+Inductive dswap (n : nat) : seq (nat * nat) -> seq (nat * nat) -> Prop :=
+  dswap_step ps ab cd qs of
+    bnd n ab & bnd n cd & dpair ab cd :
+      dswap n (ps ++ ab :: cd :: qs) (ps ++ cd :: ab :: qs).
+
+Inductive dequiv (n : nat) : seq (nat * nat) -> seq (nat * nat) -> Prop :=
+| dequiv_refl l : dequiv n l l
+| dequiv_step l1 l2 l3 of dswap n l1 l2 & dequiv n l2 l3 : dequiv n l1 l3.
+
+Lemma nfun_dequiv n (l1 l2 : seq (nat * nat)) (t : n.-tuple A) :
+  dequiv n l1 l2 -> nfun (pnet n l1) t = nfun (pnet n l2) t.
+Proof.
+move=> H; elim: H t => // {l1 l2}l1 l2 l3 [ps ab cd qs abB cdB abcd] _ IH t.
+by rewrite nfun_pnet_swap2 // IH.
+Qed.
+
 (* Running, for each index, its first block and then its second block, is   *)
 (* the same as running all the first blocks and then all the second blocks, *)
 (* provided a later first block shares no wire with an earlier second one.  *)
