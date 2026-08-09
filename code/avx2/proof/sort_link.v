@@ -82,10 +82,49 @@ Definition avx2_list : seq (nat * nat) :=
 Lemma nsw_pnet (l : seq (nat * nat)) : nsw n l = pnet n l.
 Proof. Admitted.
 
-(* the program's list is the same one, region-major: the two nested loops the *)
-(* other way round.  nfun_pnet_heads_first is the step                        *)
-Lemma dequiv_avx2 : dequiv n avx2_list (dpairs n k).
+(* reordering respects concatenation, on either side                          *)
+Lemma dequiv_catl (l l1 l2 : seq (nat * nat)) :
+  dequiv n l1 l2 -> dequiv n (l ++ l1) (l ++ l2).
 Proof. Admitted.
+
+Lemma dequiv_catr (l l1 l2 : seq (nat * nat)) :
+  dequiv n l1 l2 -> dequiv n (l1 ++ l) (l2 ++ l).
+Proof. Admitted.
+
+Lemma dequiv_trans (l1 l2 l3 : seq (nat * nat)) :
+  dequiv n l1 l2 -> dequiv n l2 l3 -> dequiv n l1 l3.
+Proof. Admitted.
+
+Lemma dequiv_cat (l1 l1' l2 l2' : seq (nat * nat)) :
+  dequiv n l1 l1' -> dequiv n l2 l2' -> dequiv n (l1 ++ l2) (l1' ++ l2').
+Proof.
+by move=> H1 H2; apply: dequiv_trans (dequiv_catr _ H1) (dequiv_catl _ H2).
+Qed.
+
+(* -------------------------------------------------------------------------- *)
+(*  The reordering, part by part                                              *)
+(* -------------------------------------------------------------------------- *)
+
+(* The program is oe_reduce, then the merges of doubling size, then the three *)
+(* reversing passes with their ladders, then the two transposes with their    *)
+(* sorts.  Its list splits the same way, since renaming distributes over      *)
+(* concatenation.                                                             *)
+Variables abase amerges : seq (nat * nat).
+
+Hypothesis avx2_list_split : avx2_list = abase ++ amerges.
+
+(* the four-wire sorters: the program emits them eight lanes at a time, the   *)
+(* schedule one group of eight at a time                                      *)
+Hypothesis dequiv_base : dequiv n abase (dbase n).
+
+(* the merges: for each region the program descends the distances, where the  *)
+(* schedule takes each distance across the array -- the loop swap             *)
+Hypothesis dequiv_merges : dequiv n amerges (dmerges n k).
+
+Lemma dequiv_avx2 : dequiv n avx2_list (dpairs n k).
+Proof.
+by rewrite avx2_list_split; apply: dequiv_cat dequiv_base dequiv_merges.
+Qed.
 
 Section Sorting.
 
