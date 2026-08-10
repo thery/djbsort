@@ -716,6 +716,72 @@ Proof.
 by move=> H1 H2; apply: dequiv_trans (dequiv_catr _ H1) (dequiv_catl _ H2).
 Qed.
 
+(* a comparison may be moved forward past any run it shares no wire with      *)
+Lemma dequiv_move (ab : nat * nat) (ps qs rs : seq (nat * nat)) :
+  bnd n ab -> all (bnd n) qs -> all (dpair ab) qs ->
+  dequiv n (ps ++ ab :: qs ++ rs) (ps ++ qs ++ ab :: rs).
+Proof.
+move=> abB; elim: qs ps => [|cd qs IH] ps /=.
+  by move=> _ _; apply: dequiv_refl.
+move=> /andP[cdB qsB] /andP[abcd qsD].
+apply: dequiv_step (@dswap_step n ps ab cd (qs ++ rs) abB cdB abcd) _.
+by rewrite -cat_rcons -[in X in dequiv _ _ X]cat_rcons; apply: IH.
+Qed.
+
+(* comparisons that share no wire with the others may all be brought to the   *)
+(* front, in the order they already have                                      *)
+Lemma dequiv_part (p : nat * nat -> bool) (l : seq (nat * nat)) :
+  all (bnd n) l ->
+  all (fun ab => all (fun cd => (p ab != p cd) ==> dpair ab cd) l) l ->
+  dequiv n l ([seq ab <- l | p ab] ++ [seq ab <- l | ~~ p ab]).
+Proof.
+elim: l => [|a l IH] /=; first by move=> _ _; apply: dequiv_refl.
+move=> /andP[aB lB] /andP[/andP[_ aD] /allP lD].
+have lD' : all (fun ab => all (fun cd => (p ab != p cd) ==> dpair ab cd) l) l.
+  by apply/allP => ab abI; have /andP[_] := lD _ abI.
+case: (boolP (p a)) => pa /=; first by apply: (dequiv_catl [:: a]); apply: IH.
+apply: dequiv_trans (dequiv_catl [:: a] (IH lB lD')) _.
+apply: (@dequiv_move a [::] [seq ab <- l | p ab] [seq ab <- l | ~~ p ab]) => //=.
+  by apply/allP => cd; rewrite mem_filter => /andP[_ /(allP lB)].
+apply/allP => cd; rewrite mem_filter => /andP[pcd cdI].
+by have := allP aD _ cdI; rewrite (negbTE pa) pcd.
+Qed.
+
+(* so comparisons that share no wire unless they have the same name may be    *)
+(* gathered name by name, each group keeping the order it had                 *)
+Lemma dequiv_group (c : nat * nat -> nat) (cs : seq nat) (l : seq (nat * nat)) :
+  uniq cs -> all (bnd n) l ->
+  all (fun ab => all (fun cd => (c ab != c cd) ==> dpair ab cd) l) l ->
+  dequiv n l (flatten [seq [seq ab <- l | c ab == v] | v <- cs]
+              ++ [seq ab <- l | c ab \notin cs]).
+Proof.
+elim: cs l => [|v cs IH] l /=.
+  by move=> _ _ _; rewrite filter_predT; apply: dequiv_refl.
+move=> /andP[vNI csU] lB lD.
+apply: dequiv_trans (@dequiv_part (fun ab => c ab == v) l lB _) _.
+  apply/allP => ab abI; apply/allP => cd cdI; apply/implyP => H.
+  have /allP/(_ cd cdI)/implyP := allP lD _ abI; apply.
+  by apply: contra H => /eqP->.
+rewrite -catA; apply: dequiv_catl.
+have GB : all (bnd n) [seq ab <- l | c ab != v].
+  by apply/allP => x; rewrite mem_filter => /andP[_ /(allP lB)].
+have GD : all (fun ab => all (fun cd => (c ab != c cd) ==> dpair ab cd)
+                             [seq ab <- l | c ab != v])
+              [seq ab <- l | c ab != v].
+  apply/allP => ab; rewrite mem_filter => /andP[_ abI].
+  apply/allP => cd; rewrite mem_filter => /andP[_ cdI].
+  by have /allP/(_ cd cdI) := allP lD _ abI.
+have E1 : [seq [seq ab <- [seq ab <- l | c ab != v] | c ab == w] | w <- cs]
+          = [seq [seq ab <- l | c ab == w] | w <- cs].
+  apply/eq_in_map => w wI; rewrite -filter_predI; apply: eq_filter => ab /=.
+  have wv : w != v by apply/eqP => e; move: wI; rewrite e (negbTE vNI).
+  by case: (altP (c ab =P w)) => [cw|] //=; rewrite cw wv.
+have E2 : [seq ab <- [seq ab <- l | c ab != v] | c ab \notin cs]
+          = [seq ab <- l | c ab \notin v :: cs].
+  by rewrite -filter_predI; apply: eq_filter => ab /=; rewrite inE negb_or andbC.
+by have := IH _ csU GB GD; rewrite E1 E2.
+Qed.
+
 (* -------------------------------------------------------------------------- *)
 (*  The reordering, part by part                                              *)
 (* -------------------------------------------------------------------------- *)
