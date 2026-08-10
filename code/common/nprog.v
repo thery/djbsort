@@ -64,6 +64,15 @@ have tbU : uniq tb by rewrite (perm_uniq tbP) iota_uniq.
 by apply/eqP; rewrite -(nth_uniq 0 _ _ tbU) ?tb_size ?ij.
 Qed.
 
+(* a table that undoes itself, checked position by position                   *)
+Lemma tabf_invol :
+  all (fun j => nth 0 tb (nth 0 tb j) == j) (iota 0 k) ->
+  forall j, tabf (tabf j) = j.
+Proof.
+move=> tbI j; apply: val_inj => /=; apply/eqP.
+by apply: (allP tbI); rewrite mem_iota add0n /= ltn_ord.
+Qed.
+
 End Table.
 
 (* -------------------------------------------------------------------------- *)
@@ -458,6 +467,14 @@ rewrite [LHS]/pflat foldl_cat -[foldl pstep ([::], cid m) p1]/(pflat p1).
 by case: (pflat p1) => l s; rewrite pflat_foldl.
 Qed.
 
+(* the move of a whole program, piece by piece and for a single shuffle       *)
+Lemma pflat_cat2 (p1 p2 : prog) :
+  (pflat (p1 ++ p2)).2 = ccomp (pflat p1).2 (pflat p2).2.
+Proof. by rewrite pflat_cat. Qed.
+
+Lemma pflat_shuf (u : cperm m) : (pflat [:: Vshuf u]).2 = u.
+Proof. by rewrite /pflat /= ccomp_idl. Qed.
+
 (* a program that never shuffles leaves every value where it is               *)
 Lemma pflat_nomove (p : prog) :
   all (fun i => if i is Vshuf _ then false else true) p -> (pflat p).2 = cid m.
@@ -566,6 +583,23 @@ by move=> /(_ fI) /(congr1 val).
 Qed.
 
 Definition btab : cperm m := cperm_fun bfun_bound bfun_inj.
+
+Lemma capp_btab i : i < m -> capp btab i = bfun i.
+Proof.
+move=> iL; rewrite cappL // /btab /= (nth_map 0) ?size_iota //.
+by rewrite nth_iota // add0n.
+Qed.
+
+(* a block shuffle that undoes itself inside one block undoes itself          *)
+Lemma btab_invol : (forall j, f (f j) = j) -> ccomp btab btab = cid m.
+Proof.
+move=> ffI; apply: cperm_ext => i iL.
+rewrite cappM // !capp_btab ?bfun_bound // capp_id /bfun.
+set o := Ordinal (ltn_pmod i k_gt0).
+have E3 : Ordinal (ltn_pmod (i %/ k * k + f o) k_gt0) = f o.
+  by apply: val_inj; rewrite /= modnMDl modn_small.
+by rewrite divnMDl // (divn_small (ltn_ord (f o))) addn0 E3 ffI -divn_eq.
+Qed.
 
 Lemma cperm_of_btab : cperm_of btab = @bperm m k k_gt0 kDm f fI.
 Proof.
