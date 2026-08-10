@@ -309,12 +309,13 @@ Definition tsort64 (fl : flips) : prog n * flips :=
 (*  The final sort, and the transpose that writes it back out                 *)
 (* -------------------------------------------------------------------------- *)
 
-(* the eight registers here are a row apart, so the shuffle is a block one   *)
-(* read by columns; the table is the transpose with the registers reordered  *)
+(* the eight registers here are a row apart, so read by columns they are      *)
+(* one block of sixty-four; the table is the transpose, the registers         *)
+(* reordered                                                                  *)
 Definition outp : seq nat := [:: 0; 4; 1; 5; 2; 6; 3; 7].
 
 Definition tb_out : seq nat :=
-  [seq nth 0 trc (i %/ 8) * 8 + nth 0 trr (nth 0 outp (i %% 8))
+  [seq nth 0 trr (nth 0 outp (i %% 8)) * 8 + nth 0 trc (i %/ 8)
   | i <- iota 0 64].
 
 Lemma tb_outP : perm_eq tb_out (iota 0 64).
@@ -323,9 +324,13 @@ Proof. by []. Qed.
 Lemma n8 : 8 %| n.
 Proof. by apply: dvdn_trans n64. Qed.
 
+(* the block table is read through the column reading, so the shuffle has     *)
+(* that reading on both sides: into columns, the block of sixty-four,         *)
+(* back again                                                                 *)
 Definition sh_out : cperm n :=
-  ccomp (@btab n 64 isT n64 _ (@tabf_inj 64 tb_out tb_outP))
-        (@bycoltab n 8 n8).
+  ccomp (cinv (@bycoltab n 8 n8))
+        (ccomp (@btab n 64 isT n64 _ (@tabf_inj 64 tb_out tb_outP))
+               (@bycoltab n 8 n8)).
 
 Definition tsort_out (fl : flips) : prog n :=
   let q := n %/ 8 in
