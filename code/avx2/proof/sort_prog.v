@@ -130,7 +130,7 @@ End Shuffles.
 (* -------------------------------------------------------------------------- *)
 
 (* The code sorts some runs downwards by complementing them, so that the same *)
-(* instruction serves both directions.  At the level of the positions this is  *)
+(* instruction serves both directions.  At the level of the positions this is *)
 (* only bookkeeping: a comparison on complemented positions puts its minimum  *)
 (* on the other one.  So the flips are not part of the program; they are      *)
 (* carried while it is written, as the pattern of which positions are         *)
