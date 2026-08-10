@@ -369,11 +369,180 @@ rewrite /avx2_prog /avx2_head /avx2_tail.
 by case: (if _ then _ else _) => c2 f2; case: revs => c3 f3; case: tsort64.
 Qed.
 
+(* -------------------------------------------------------------------------- *)
+(*  Which parts of the sort move values, and which only compare               *)
+(* -------------------------------------------------------------------------- *)
+
+(* an instruction that leaves every value where it is                         *)
+Definition nomv (i : item n) : bool := if i is Vshuf _ then false else true.
+
+Lemma nomv_vnet fl i q g : all nomv (vnet fl i q g).
+Proof. by rewrite /vnet all_map; apply/allP => p _. Qed.
+
+Lemma nomv_flatten (ps : seq (prog n)) :
+  all (fun p => all nomv p) ps -> all nomv (flatten ps).
+Proof. by elim: ps => //= p ps IH /andP[pN psN]; rewrite all_cat pN IH. Qed.
+
+Lemma nomv_blockn fl base span q g : all nomv (blockn fl base span q g).
+Proof.
+by rewrite /blockn; elim: (iota _ _) => //= t l IH; rewrite all_cat nomv_vnet.
+Qed.
+
+Lemma nomv_stage fl m cnt q g : all nomv (stage fl m cnt q g).
+Proof.
+by rewrite /stage; elim: (iota _ _) => //= t l IH; rewrite all_cat nomv_blockn.
+Qed.
+
+Lemma nomv_adj16 fl : all nomv (adj16 fl).
+Proof. by rewrite /adj16 all_map; apply/allP => t _. Qed.
+
+Lemma nomv_ladder2 fuel fl q : all nomv (ladder2 fuel fl q).
+Proof.
+elim: fuel q => //= f IH q.
+by case: ifP => _;
+   [rewrite all_cat nomv_stage IH|case: ifP => _ //; apply: nomv_stage].
+Qed.
+
+Lemma nomv_ladder1 fuel fl q : all nomv (ladder1 fuel fl q).
+Proof.
+elim: fuel q => //= f IH q.
+case: ifP => _; first by rewrite all_cat nomv_stage IH.
+by case: ifP => _; [rewrite all_cat nomv_stage nomv_ladder2|
+                    case: ifP => _ //; apply: nomv_stage].
+Qed.
+
+Lemma nomv_ladder fl : all nomv (ladder fl).
+Proof. exact: nomv_ladder1. Qed.
+
+Lemma nomv_sweeps fuel fl q : all nomv (sweeps fuel fl q).
+Proof.
+elim: fuel q => //= f IH q.
+case: ifP => _; first by rewrite all_cat nomv_stage IH.
+case: ifP => _; first by rewrite all_cat !nomv_stage.
+by do 3 (case: ifP => _; first by apply: nomv_stage).
+Qed.
+
+Lemma nomv_flip_merge fl p : all nomv (flip_merge fl p).1.
+Proof.
+by rewrite /flip_merge /=;
+   elim: (iota _ _) => //= t l IH; rewrite all_cat nomv_vnet.
+Qed.
+
+Lemma nomv_oe_reduce fl : all nomv (oe_reduce fl).
+Proof.
+by rewrite /oe_reduce;
+   elim: (iota 0 _) => //= t l IH; rewrite !all_cat IH andbT !nomv_vnet.
+Qed.
+
+Lemma nomv_pdouble fuel fl p : all nomv (pdouble fuel fl p).1.
+Proof.
+elim: fuel fl p => //= f IH fl p.
+have Hc2 := nomv_flip_merge fl p.
+case E : (flip_merge fl p) Hc2 => [c2 f1] /= Hc2.
+case: ifP => _.
+  by rewrite /= all_cat nomv_sweeps /=; exact: nomv_flip_merge.
+case: (pdouble f (fl_tog (fmP p) fl) p.*2) (IH (fl_tog (fmP p) fl) p.*2)
+  => c3 f2 /= Hc3.
+rewrite !all_cat nomv_sweeps /=; apply/andP; split; last exact: Hc3.
+exact: nomv_flip_merge.
+Qed.
+
 (* the first reduction only compares, so it leaves every value where it is    *)
 Lemma pflat_avx2_head : (pflat avx2_head).2 = cid n.
+Proof. by apply: pflat_nomove; apply: nomv_oe_reduce. Qed.
+
+(* -------------------------------------------------------------------------- *)
+(*  Where the sort leaves its values                                          *)
+(* -------------------------------------------------------------------------- *)
+
+(* the two shuffles of the reversing passes each undo themselves              *)
+Lemma ccomp_shp : ccomp (sh_perm n64) (sh_perm n64) = cid n.
+Proof. by apply: btab_invol => j; apply: tabf_invol. Qed.
+
+Lemma ccomp_shu : ccomp (sh_u64 n64) (sh_u64 n64) = cid n.
+Proof. by apply: btab_invol => j; apply: tabf_invol. Qed.
+
+(* so a reversing pass shuffles and shuffles back: it moves nothing           *)
+Lemma pflat_rev_pass fl p : (pflat (rev_pass fl p).1).2 = cid n.
 Proof.
-apply: pflat_nomove; rewrite /avx2_head /oe_reduce.
-by elim: (iota 0 _) => //= t l IH; rewrite !all_cat IH andbT /vnet !all_map.
+rewrite /rev_pass; case: (p == 4) => //=.
+case: (p == 2) => /=.
+  rewrite -cat1s pflat_cat2 pflat_shuf -cat1s pflat_cat2 pflat_shuf.
+  by rewrite (pflat_nomove (nomv_adj16 _)) ccomp_idl ccomp_shp.
+rewrite -cat1s pflat_cat2 pflat_shuf -[Vshuf _ :: _]cat1s pflat_cat2 pflat_shuf.
+rewrite -cat1s pflat_cat2 -[Vshuf _ :: _]cat1s pflat_cat2 pflat_shuf.
+rewrite !(pflat_nomove (nomv_adj16 _)) !ccomp_idl.
+rewrite pflat_cat2 (pflat_nomove (nomv_adj16 _)) ccomp_idl pflat_shuf.
+have -> : ccomp (sh_u64 n64) (ccomp (sh_u64 n64) (sh_perm n64)) = sh_perm n64.
+  by rewrite -ccompA ccomp_shu ccomp_idl.
+by rewrite ccomp_shp.
+Qed.
+
+Lemma pflat_rev_step fl p : (pflat (rev_step fl p).1).2 = cid n.
+Proof.
+rewrite /rev_step; case: (rev_pass fl p) (pflat_rev_pass fl p) => c f1 /= Hc.
+by rewrite !pflat_cat2 Hc (pflat_nomove (nomv_ladder _))
+           (pflat_nomove (nomv_stage _ _ _ _ _)) !ccomp_idl.
+Qed.
+
+Lemma pflat_revs fl : (pflat (revs fl).1).2 = cid n.
+Proof.
+rewrite /revs; case: (rev_step fl 4) (pflat_rev_step fl 4) => c1 f1 H1.
+rewrite /= in H1; case: (rev_step f1 2) (pflat_rev_step f1 2) => c2 f2 H2.
+rewrite /= in H2; case: (rev_step f2 1) (pflat_rev_step f2 1) => c3 f3 H3.
+rewrite /= in H3.
+by rewrite /= !pflat_cat2 H1 H2 H3 !ccomp_idl.
+Qed.
+
+(* the transposes are the only instructions that move anything for good       *)
+Lemma pflat_tsort64 fl :
+  (pflat (tsort64 fl).1).2
+    = ccomp (sh_trlo n64) (ccomp (sh_trhi n64) (sh_tr n64)).
+Proof.
+rewrite /tsort64 /=.
+have Hf : all nomv (flatten [seq vnet (fl_shuf 64 tb_trhi
+                              (fl_tog t64P (fl_shuf 64 tb_trlo fl)))
+                              (t * 64) 8 mrg8r | t <- iota 0 (n %/ 64)]).
+  by apply: nomv_flatten; rewrite all_map; apply/allP => t _; exact: nomv_vnet.
+rewrite -cat1s pflat_cat2 pflat_shuf -cat1s pflat_cat2 pflat_shuf.
+by rewrite pflat_cat2 (pflat_nomove Hf) ccomp_idl pflat_shuf.
+Qed.
+
+Lemma pflat_tsort_out fl : (pflat (tsort_out fl)).2 = sh_out.
+Proof.
+rewrite /tsort_out.
+have Hf : all nomv (flatten [seq vnet fl (t * 8) (n %/ 8) mrg8r
+                            | t <- iota 0 ((n %/ 8) %/ 8)]).
+  by apply: nomv_flatten; rewrite all_map; apply/allP => t _; exact: nomv_vnet.
+by rewrite pflat_cat2 (pflat_nomove Hf) ccomp_idl pflat_shuf.
+Qed.
+
+(* where the sort leaves each value: the reversing passes cancel, so only the *)
+(* two transposes and the shuffle that writes the result out are left         *)
+Definition avx2_layout : cperm n :=
+  ccomp (sh_trlo n64) (ccomp (sh_trhi n64) (ccomp (sh_tr n64) sh_out)).
+
+Lemma pflat_avx2_prog : (pflat avx2_prog).2 = avx2_layout.
+Proof.
+rewrite /avx2_layout /avx2_prog.
+have Hc2 : (pflat (if 127 < n
+     then let '(c, f) := pdouble n (fl_tog flipallP (noflip n)) 8 in (c, f)
+     else ([::], noflip n)).1).2 = cid n.
+  case: ifP => _ //.
+  case: (pdouble n (fl_tog flipallP (noflip n)) 8)
+        (nomv_pdouble n (fl_tog flipallP (noflip n)) 8) => c f /= H.
+  exact: pflat_nomove H.
+case: (if 127 < n
+     then let '(c, f) := pdouble n (fl_tog flipallP (noflip n)) 8 in (c, f)
+     else ([::], noflip n)) Hc2 => c2 f2 Hc2; rewrite /= in Hc2.
+case: (revs f2) (pflat_revs f2) => c3 f3 H3; rewrite /= in H3.
+case: (tsort64 f3) (pflat_tsort64 f3) => c4 f4 H4; rewrite /= in H4.
+rewrite !pflat_cat2 (pflat_nomove (nomv_oe_reduce _)) Hc2 H3 H4.
+have Hf : all nomv (flatten [seq vnet f4 (t * 8) (n %/ 8) mrg8r
+                           | t <- iota 0 ((n %/ 8) %/ 8)]).
+  by apply: nomv_flatten; rewrite all_map; apply/allP => t _; exact: nomv_vnet.
+rewrite (pflat_nomove (nomv_ladder _)) (pflat_nomove Hf) pflat_shuf !ccomp_idl.
+by rewrite !ccompA.
 Qed.
 
 End Program.
