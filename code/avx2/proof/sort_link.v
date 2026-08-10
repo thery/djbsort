@@ -720,13 +720,23 @@ Qed.
 (*  The reordering, part by part                                              *)
 (* -------------------------------------------------------------------------- *)
 
-(* The program is oe_reduce, then the merges of doubling size, then the three *)
-(* reversing passes with their ladders, then the two transposes with their    *)
-(* sorts.  Its list splits the same way, since renaming distributes over      *)
-(* concatenation.                                                             *)
-Variables abase amerges : seq (nat * nat).
+(* what the first reduction compares, and what everything after it compares,  *)
+(* both named by the position each value ends in.  A program run after        *)
+(* another has its comparisons renamed by the move the first one made, and    *)
+(* the first one here only compares, so there is nothing to rename.           *)
+Definition abase : seq (nat * nat) :=
+  let p := @avx2_prog n dvdn_e2n64 in
+  cren (cinv (pflat p).2) (pflat (avx2_head n)).1.
 
-Hypothesis avx2_list_split : avx2_list = abase ++ amerges.
+Definition amerges : seq (nat * nat) :=
+  let p := @avx2_prog n dvdn_e2n64 in
+  cren (cinv (pflat p).2) (pflat (avx2_tail dvdn_e2n64)).1.
+
+Lemma avx2_list_split : avx2_list = abase ++ amerges.
+Proof.
+rewrite /avx2_list /abase /amerges avx2_progE pflat_cat /= cren_cat.
+by rewrite pflat_avx2_head cren_id.
+Qed.
 
 (* the four-wire sorters: the program emits them eight lanes at a time, the   *)
 (* schedule one group of eight at a time                                      *)

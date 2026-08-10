@@ -348,4 +348,32 @@ Definition avx2_prog : prog n :=
   let: (c4, f4) := tsort64 f3 in
   c1 ++ c2 ++ c3 ++ c4 ++ ladder f4 ++ tsort_out f4.
 
+(* the first reduction, which is what sorts each group of four                *)
+Definition avx2_head : prog n := oe_reduce (noflip n).
+
+(* everything the sort does after it                                          *)
+Definition avx2_tail : prog n :=
+  let f0 := noflip n in
+  let: (c2, f2) :=
+     if 128 <= n then
+       let f1 := fl_tog flipallP f0 in
+       let: (c, f) := pdouble n f1 8 in (c, f)
+     else ([::], f0) in
+  let: (c3, f3) := revs f2 in
+  let: (c4, f4) := tsort64 f3 in
+  c2 ++ c3 ++ c4 ++ ladder f4 ++ tsort_out f4.
+
+Lemma avx2_progE : avx2_prog = avx2_head ++ avx2_tail.
+Proof.
+rewrite /avx2_prog /avx2_head /avx2_tail.
+by case: (if _ then _ else _) => c2 f2; case: revs => c3 f3; case: tsort64.
+Qed.
+
+(* the first reduction only compares, so it leaves every value where it is    *)
+Lemma pflat_avx2_head : (pflat avx2_head).2 = cid n.
+Proof.
+apply: pflat_nomove; rewrite /avx2_head /oe_reduce.
+by elim: (iota 0 _) => //= t l IH; rewrite !all_cat IH andbT /vnet !all_map.
+Qed.
+
 End Program.
