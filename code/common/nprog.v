@@ -212,6 +212,26 @@ Proof.
 by apply/permP => i; apply: val_inj; rewrite !permE /capp /= nth_iota.
 Qed.
 
+(* two tables that send every position to the same place are the same table   *)
+Lemma cperm_ext (s u : cperm) :
+  (forall i, i < m -> capp s i = capp u i) -> s = u.
+Proof.
+move=> E; apply: cperm_eq; rewrite -[LHS]cappE -[RHS]cappE.
+by apply/eq_in_map => i; rewrite mem_iota add0n /=; apply: E.
+Qed.
+
+Lemma capp_id i : capp cid i = i.
+Proof. by rewrite /capp /=; case: ltnP => // iL; rewrite nth_iota. Qed.
+
+Lemma ccomp_idl (s : cperm) : ccomp cid s = s.
+Proof. by apply: cperm_ext => i iL; rewrite cappM // capp_id. Qed.
+
+Lemma ccomp_idr (s : cperm) : ccomp s cid = s.
+Proof. by apply: cperm_ext => i iL; rewrite cappM // capp_id. Qed.
+
+Lemma ccompA (s u v : cperm) : ccomp (ccomp s u) v = ccomp s (ccomp u v).
+Proof. by apply: cperm_ext => i iL; rewrite !cappM ?capp_lt // cappM. Qed.
+
 End CPerm.
 
 Section Prog.
@@ -412,10 +432,39 @@ Qed.
 
 Lemma cren_id l : cren (cid m) l = l.
 Proof.
-have cE i : capp (cid m) i = i.
-  by rewrite /capp /=; case: ltnP => // iL; rewrite nth_iota.
 rewrite /cren -[RHS]map_id; apply/eq_map => [] [a b] /=.
-by rewrite !cE.
+by rewrite !capp_id.
+Qed.
+
+(* running the flattening from an arbitrary state: the comparisons already    *)
+(* there are kept, the new ones are renamed by the move already made          *)
+Lemma pflat_foldl (p : prog) l (s : cperm m) :
+  foldl pstep (l, s) p = (l ++ cren s (pflat p).1, ccomp s (pflat p).2).
+Proof.
+elim: p l s => [|[ab|c|u] p IH] l s /=.
+- by rewrite cats0 ccomp_idr.
+- by rewrite /pflat /= !IH /= cren_id ccomp_idl !capp_id -catA.
+- by rewrite /pflat /= !IH /= !cren_id ccomp_idl cren_cat catA.
+by rewrite /pflat /= ccomp_idl !IH /= cren_comp ccompA.
+Qed.
+
+(* so a program run one after another flattens piece by piece                 *)
+Lemma pflat_cat (p1 p2 : prog) :
+  pflat (p1 ++ p2) =
+    ((pflat p1).1 ++ cren (pflat p1).2 (pflat p2).1,
+     ccomp (pflat p1).2 (pflat p2).2).
+Proof.
+rewrite [LHS]/pflat foldl_cat -[foldl pstep ([::], cid m) p1]/(pflat p1).
+by case: (pflat p1) => l s; rewrite pflat_foldl.
+Qed.
+
+(* a program that never shuffles leaves every value where it is               *)
+Lemma pflat_nomove (p : prog) :
+  all (fun i => if i is Vshuf _ then false else true) p -> (pflat p).2 = cid m.
+Proof.
+elim: p => // [] [ab|c|u] p IH //= pN.
+- by rewrite /pflat /= pflat_foldl /= ccomp_idl IH.
+by rewrite /pflat /= pflat_foldl /= ccomp_idl IH.
 Qed.
 
 (* name each comparison by the position its values end in                     *)
