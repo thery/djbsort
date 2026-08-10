@@ -609,6 +609,37 @@ Qed.
 
 End BlockTab.
 
+(* two block shuffles of the same block size make one                         *)
+Lemma btab_comp (m k : nat) (k_gt0 : 0 < k) (kDm : k %| m)
+    (f g : 'I_k -> 'I_k) (fI : injective f) (gI : injective g)
+    (fgI : injective (f \o g)) :
+  ccomp (@btab m k k_gt0 kDm f fI) (@btab m k k_gt0 kDm g gI)
+    = @btab m k k_gt0 kDm (f \o g) fgI.
+Proof.
+apply: cperm_ext => i iL.
+rewrite cappM // !capp_btab ?bfun_bound // /bfun.
+set o := Ordinal (ltn_pmod i k_gt0).
+have E3 : Ordinal (ltn_pmod (i %/ k * k + g o) k_gt0) = g o.
+  by apply: val_inj; rewrite /= modnMDl modn_small.
+by rewrite divnMDl // (divn_small (ltn_ord (g o))) addn0 E3.
+Qed.
+
+Lemma eq_btab (m k : nat) (k_gt0 : 0 < k) (kDm : k %| m)
+    (f g : 'I_k -> 'I_k) (fI : injective f) (gI : injective g) :
+  f =1 g -> @btab m k k_gt0 kDm f fI = @btab m k k_gt0 kDm g gI.
+Proof. by move=> fg; apply: cperm_ext => i iL; rewrite !capp_btab // /bfun fg. Qed.
+
+(* reading one table through another                                          *)
+Definition tcomp (t1 t2 : seq nat) : seq nat := [seq nth 0 t1 j | j <- t2].
+
+Lemma tabf_tcomp (k : nat) (t1 t2 : seq nat)
+    (p1 : perm_eq t1 (iota 0 k)) (p2 : perm_eq t2 (iota 0 k))
+    (p : perm_eq (tcomp t1 t2) (iota 0 k)) :
+  (@tabf k t1 p1 \o @tabf k t2 p2) =1 @tabf k (tcomp t1 t2) p.
+Proof.
+by move=> i; apply: val_inj; rewrite /= /tcomp (nth_map 0) // (tb_size p2).
+Qed.
+
 Section ByCol.
 
 Variables m a : nat.

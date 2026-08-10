@@ -130,7 +130,7 @@ End Shuffles.
 (* -------------------------------------------------------------------------- *)
 
 (* The code sorts some runs downwards by complementing them, so that the same *)
-(* instruction serves both directions.  At the level of the positions this is *)
+(* instruction serves both directions.  At the level of the positions this is  *)
 (* only bookkeeping: a comparison on complemented positions puts its minimum  *)
 (* on the other one.  So the flips are not part of the program; they are      *)
 (* carried while it is written, as the pattern of which positions are         *)
@@ -369,6 +369,30 @@ rewrite /avx2_prog /avx2_head /avx2_tail.
 by case: (if _ then _ else _) => c2 f2; case: revs => c3 f3; case: tsort64.
 Qed.
 
+(* the tail, piece by piece: the merges of doubling size, the reversing       *)
+(* passes, the transpose and its sort, the ladder after it, and the final     *)
+(* sort with the transpose that writes the result out                         *)
+Definition avx2_dbl : prog n * flips :=
+  if 128 <= n then pdouble n (fl_tog flipallP (noflip n)) 8
+  else ([::], noflip n).
+
+Definition avx2_rev : prog n * flips := revs avx2_dbl.2.
+
+Definition avx2_tr : prog n * flips := tsort64 avx2_rev.2.
+
+Definition avx2_lad : prog n := ladder avx2_tr.2.
+
+Definition avx2_out : prog n := tsort_out avx2_tr.2.
+
+Lemma avx2_tailE :
+  avx2_tail = avx2_dbl.1 ++ avx2_rev.1 ++ avx2_tr.1 ++ avx2_lad ++ avx2_out.
+Proof.
+rewrite /avx2_tail /avx2_out /avx2_lad /avx2_tr /avx2_rev /avx2_dbl.
+case: ifP => _; last by case: revs => c3 f3; case: tsort64.
+case: (pdouble n (fl_tog flipallP (noflip n)) 8) => c f.
+by case: revs => c3 f3; case: tsort64.
+Qed.
+
 (* -------------------------------------------------------------------------- *)
 (*  Which parts of the sort move values, and which only compare               *)
 (* -------------------------------------------------------------------------- *)
@@ -544,5 +568,24 @@ have Hf : all nomv (flatten [seq vnet f4 (t * 8) (n %/ 8) mrg8r
 rewrite (pflat_nomove (nomv_ladder _)) (pflat_nomove Hf) pflat_shuf !ccomp_idl.
 by rewrite !ccompA.
 Qed.
+
+(* what each piece of the tail moves                                          *)
+Lemma pflat_avx2_dbl : (pflat avx2_dbl.1).2 = cid n.
+Proof.
+by rewrite /avx2_dbl; case: ifP => _ //; apply/pflat_nomove/nomv_pdouble.
+Qed.
+
+Lemma pflat_avx2_rev : (pflat avx2_rev.1).2 = cid n.
+Proof. exact: pflat_revs. Qed.
+
+Lemma pflat_avx2_tr :
+  (pflat avx2_tr.1).2 = ccomp (sh_trlo n64) (ccomp (sh_trhi n64) (sh_tr n64)).
+Proof. exact: pflat_tsort64. Qed.
+
+Lemma pflat_avx2_lad : (pflat avx2_lad).2 = cid n.
+Proof. exact/pflat_nomove/nomv_ladder. Qed.
+
+Lemma pflat_avx2_out : (pflat avx2_out).2 = sh_out.
+Proof. exact: pflat_tsort_out. Qed.
 
 End Program.

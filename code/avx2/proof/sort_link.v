@@ -737,15 +737,119 @@ rewrite /avx2_list /abase /amerges pflat_avx2_prog avx2_progE.
 by rewrite pflat_cat /= cren_cat pflat_avx2_head cren_id.
 Qed.
 
+(* -------------------------------------------------------------------------- *)
+(*  Reading off what the program compares                                     *)
+(* -------------------------------------------------------------------------- *)
+
+(* a single vector compare-exchange contributes its lanes                     *)
+Lemma pflat_Vcmp (l : seq (nat * nat)) : (pflat [:: Vcmp n l]).1 = l.
+Proof. by rewrite /pflat /= cren_id. Qed.
+
+(* a first part that moves nothing leaves the second part's names alone       *)
+Lemma pflat_cat1 (p1 p2 : prog n) :
+  (pflat p1).2 = cid n -> (pflat (p1 ++ p2)).1 = (pflat p1).1 ++ (pflat p2).1.
+Proof. by move=> H; rewrite pflat_cat /= H cren_id. Qed.
+
+Lemma pflat_flatten (ps : seq (prog n)) :
+  all (fun p => all (@nomv n) p) ps ->
+  (pflat (flatten ps)).1 = flatten [seq (pflat p).1 | p <- ps].
+Proof.
+elim: ps => //= p ps IH /andP[pN psN].
+by rewrite pflat_cat1 ?(pflat_nomove pN) // IH.
+Qed.
+
+Lemma pflat_map_Vcmp (ls : seq (seq (nat * nat))) :
+  (pflat [seq Vcmp n l | l <- ls]).1 = flatten ls.
+Proof.
+elim: ls => //= l ls IH.
+by rewrite -cat1s pflat_cat1 ?pflat_Vcmp ?IH //
+           (pflat_nomove (p := [:: Vcmp n l])).
+Qed.
+
+(* nothing is complemented at the start, so every lane compares upwards       *)
+Lemma vmm_noflip (a b : nat) :
+  vmm n (noflip n) a b = Vcmp n [seq (a + l, b + l) | l <- iota 0 8].
+Proof.
+by rewrite /vmm; congr Vcmp; apply/eq_map => l; rewrite /noflip nth_nseq if_same.
+Qed.
+
+(* one batch: the same comparison in each of the eight lanes                  *)
+Lemma pflat_vnet (i q : nat) (g : seq (nat * nat)) :
+  (pflat (vnet n (noflip n) i q g)).1
+    = flatten [seq [seq (i + ab.1 * q + l, i + ab.2 * q + l) | l <- iota 0 8]
+              | ab <- g].
+Proof.
+by rewrite /vnet
+   (eq_map (fun ab : nat * nat => vmm_noflip (i + ab.1 * q) (i + ab.2 * q)))
+   map_comp pflat_map_Vcmp.
+Qed.
+
+(* the first reduction, batch by batch: for each group of eight lanes, the    *)
+(* five comparisons of even4 on the even rows and of odd4 on the odd ones     *)
+Lemma pflat_avx2_head1 :
+  (pflat (avx2_head n)).1
+   = flatten [seq (pflat (vnet n (noflip n) (t * 8) (n %/ 8).*2 even4)).1
+              ++ (pflat (vnet n (noflip n) (t * 8 + n %/ 8) (n %/ 8).*2 odd4)).1
+             | t <- iota 0 ((n %/ 8) %/ 8)].
+Proof.
+rewrite /avx2_head /oe_reduce pflat_flatten; last first.
+  by rewrite all_map; apply/allP => t _; rewrite /preim /=.
+congr flatten; rewrite -map_comp; apply/eq_map => t.
+by rewrite /comp pflat_cat1 // (pflat_nomove (nomv_vnet _ _ _ _)).
+Qed.
+
+(* a shuffle contributes no comparison                                        *)
+Lemma pflat_Vshuf1 (u : cperm n) : (pflat [:: Vshuf u]).1 = [::].
+Proof. by []. Qed.
+
+(* the last thing the sort does is one batch and the shuffle that writes the  *)
+(* result out, and only the batch compares                                    *)
+Lemma pflat_tsort_out1 (fl : flips) :
+  (pflat (tsort_out dvdn_e2n64 fl)).1
+   = flatten [seq (pflat (vnet n fl (t * 8) (n %/ 8) mrg8r)).1
+             | t <- iota 0 ((n %/ 8) %/ 8)].
+Proof.
+have Hf : all (@nomv n) (flatten [seq vnet n fl (t * 8) (n %/ 8) mrg8r
+                                 | t <- iota 0 ((n %/ 8) %/ 8)]).
+  by apply: nomv_flatten; rewrite all_map; apply/allP => t _; exact: nomv_vnet.
+rewrite /tsort_out pflat_cat1 ?(pflat_nomove Hf) // pflat_Vshuf1 cats0.
+rewrite pflat_flatten -?map_comp //.
+by rewrite all_map; apply/allP => t _; exact: nomv_vnet.
+Qed.
+
+Lemma pflat_cat1' (p1 p2 : prog n) :
+  (pflat (p1 ++ p2)).1 = (pflat p1).1 ++ cren (pflat p1).2 (pflat p2).1.
+Proof. by rewrite pflat_cat. Qed.
+
+(* everything the sort does after the first reduction, piece by piece.  Only  *)
+(* the two transposes move anything, so only what comes after them is         *)
+(* renamed.                                                                   *)
+Lemma pflat_avx2_tail1 :
+  (pflat (avx2_tail dvdn_e2n64)).1
+  = (pflat (avx2_dbl n).1).1
+    ++ (pflat (avx2_rev dvdn_e2n64).1).1
+    ++ (pflat (avx2_tr dvdn_e2n64).1).1
+    ++ cren (ccomp (sh_trlo dvdn_e2n64)
+                   (ccomp (sh_trhi dvdn_e2n64) (sh_tr dvdn_e2n64)))
+            ((pflat (avx2_lad dvdn_e2n64)).1 ++ (pflat (avx2_out dvdn_e2n64)).1).
+Proof.
+rewrite avx2_tailE pflat_cat1 ?pflat_avx2_dbl //.
+rewrite pflat_cat1 ?pflat_avx2_rev //.
+rewrite pflat_cat1' pflat_avx2_tr.
+by rewrite pflat_cat1 ?pflat_avx2_lad.
+Qed.
+
 (* the four-wire sorters: the program compares four rows of the array at      *)
 (* once, and the layout brings each of those four wires next to the other     *)
 (* three, so what it emits eight lanes at a time the schedule emits one       *)
 (* group of eight at a time                                                   *)
-Hypothesis dequiv_base : dequiv n abase (dbase n).
+Lemma dequiv_base : dequiv n abase (dbase n).
+Admitted.
 
 (* the merges: for each region the program descends the distances, where the  *)
 (* schedule takes each distance across the array -- the loop swap             *)
-Hypothesis dequiv_merges : dequiv n amerges (dmerges n k).
+Lemma dequiv_merges : dequiv n amerges (dmerges n k).
+Admitted.
 
 Lemma dequiv_avx2 : dequiv n avx2_list (dpairs n k).
 Proof.
