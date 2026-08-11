@@ -546,6 +546,55 @@ apply: capp_cinvE; first by nia.
 by rewrite avx2_layoutE capp_sh_out // !trc_inv.
 Qed.
 
+(* every wire read as its row, its batch of eight and its lane               *)
+Lemma modn_row8 (x : nat) : (x %% (n %/ 8)) %% 8 = x %% 8.
+Proof. by rewrite modn_dvdm // dvdn_row. Qed.
+
+Lemma wire_split (x : nat) :
+  x = (x %/ (n %/ 8)) * (n %/ 8) + (8 * ((x %% (n %/ 8)) %/ 8) + x %% 8).
+Proof. by rewrite -modn_row8 [8 * _]mulnC -!divn_eq. Qed.
+
+(* where any wire ends up: the lane becomes the row, the row becomes the      *)
+(* place inside a group of eight, and the batch stays where it is             *)
+Lemma capp_cinv_wire (i : nat) : i < n ->
+  capp (cinv (avx2_layout dvdn_e2n64)) i
+    = nth 0 trc (i %% 8) * (n %/ 8)
+      + (8 * ((i %% (n %/ 8)) %/ 8) + nth 0 trc (i %/ (n %/ 8))).
+Proof.
+have qq := row8E; have qE := rowE; have q_gt0 := row_gt0.
+move=> iL.
+have rL : i %/ (n %/ 8) < 8 by rewrite ltn_divLR // mulnC qE.
+have tL : (i %% (n %/ 8)) %/ 8 < (n %/ 8) %/ 8.
+  by rewrite ltn_divLR // qq ltn_pmod.
+by rewrite {1}(wire_split i) capp_cinv_layout ?ltn_mod.
+Qed.
+
+(* so two wires of one row keep their distance -- inside a row the layout     *)
+(* only renames, it does not move anything about                              *)
+Lemma cinv_same_row (i j : nat) : i < n -> j < n ->
+  i %/ (n %/ 8) = j %/ (n %/ 8) -> i %% 8 = j %% 8 ->
+  capp (cinv (avx2_layout dvdn_e2n64)) i + j
+    = capp (cinv (avx2_layout dvdn_e2n64)) j + i.
+Proof.
+move=> iL jL rE lE.
+have Ei := wire_split i; have Ej := wire_split j.
+by rewrite !capp_cinv_wire // rE lE; lia.
+Qed.
+
+(* while two wires of one column, a whole row apart, land in the same row of  *)
+(* the result, at the distance trc puts between their rows -- under eight.    *)
+(* That is the transposition: what the program does a row apart the schedule  *)
+(* does inside a group of eight                                               *)
+Lemma cinv_same_col (i j : nat) : i < n -> j < n ->
+  i %% (n %/ 8) = j %% (n %/ 8) ->
+  capp (cinv (avx2_layout dvdn_e2n64)) j + nth 0 trc (i %/ (n %/ 8))
+    = capp (cinv (avx2_layout dvdn_e2n64)) i + nth 0 trc (j %/ (n %/ 8)).
+Proof.
+move=> iL jL cE.
+have l8 : j %% 8 = i %% 8 by rewrite -(modn_row8 j) -(modn_row8 i) cE.
+by rewrite !capp_cinv_wire // cE l8; lia.
+Qed.
+
 (* the number of the group a lane lands in                                    *)
 Definition lgrp (x : nat) : nat := capp (cinv (avx2_layout dvdn_e2n64)) x %/ 8.
 
