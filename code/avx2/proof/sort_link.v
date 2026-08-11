@@ -595,6 +595,53 @@ have l8 : j %% 8 = i %% 8 by rewrite -(modn_row8 j) -(modn_row8 i) cE.
 by rewrite !capp_cinv_wire // cE l8; lia.
 Qed.
 
+(* the same, read inside one row: two positions of a row that share a lane   *)
+(* keep their distance                                                       *)
+Lemma cinv_narrow (r x y : nat) :
+  r < 8 -> x < n %/ 8 -> y < n %/ 8 -> x %% 8 = y %% 8 ->
+  capp (cinv (avx2_layout dvdn_e2n64)) (r * (n %/ 8) + x) + y
+    = capp (cinv (avx2_layout dvdn_e2n64)) (r * (n %/ 8) + y) + x.
+Proof.
+have qE := rowE; have q_gt0 := row_gt0.
+have rowEq (r' z : nat) : z < n %/ 8 -> (r' * (n %/ 8) + z) %/ (n %/ 8) = r'.
+  by move=> zL; rewrite divnMDl // divn_small ?addn0.
+have lanEq (r' z : nat) : (r' * (n %/ 8) + z) %% 8 = z %% 8.
+  by have [c cE] := dvdnP dvdn_row; rewrite cE mulnA modnMDl.
+move=> rL xL yL lE.
+have iL : r * (n %/ 8) + x < n by nia.
+have jL : r * (n %/ 8) + y < n by nia.
+have H := cinv_same_row iL jL.
+rewrite !rowEq // !lanEq lE in H.
+by have := H erefl erefl; lia.
+Qed.
+
+(* a block of c wires whose width divides a row stays inside one row         *)
+Lemma block_in_row (c o t : nat) : c %| (n %/ 8) -> 0 < c -> o < c ->
+  (t * c + o) %/ (n %/ 8) = (t * c) %/ (n %/ 8).
+Proof.
+move=> cD c_gt0 oL; have [d dE] := dvdnP cD.
+rewrite dE [d * c]mulnC !divnMA divnMDl // (divn_small oL) addn0.
+by rewrite mulnK.
+Qed.
+
+(* and a whole number of eights leaves the lane where it was                 *)
+Lemma block_lane (c o t : nat) : 8 %| c -> (t * c + o) %% 8 = o %% 8.
+Proof. by move=> cD; have [e ->] := dvdnP cD; rewrite mulnA modnMDl. Qed.
+
+(* so a stage whose blocks fit inside a row compares, in the final naming,   *)
+(* at exactly the distance it compares at in the array: for those stages the *)
+(* layout is a renaming of the rows and nothing more                         *)
+Lemma cinv_block (c t o1 o2 : nat) : c %| (n %/ 8) -> 8 %| c -> 0 < c ->
+  o1 < c -> o2 < c -> o1 %% 8 = o2 %% 8 ->
+  t * c + o1 < n -> t * c + o2 < n ->
+  capp (cinv (avx2_layout dvdn_e2n64)) (t * c + o1) + (t * c + o2)
+    = capp (cinv (avx2_layout dvdn_e2n64)) (t * c + o2) + (t * c + o1).
+Proof.
+move=> cD c8 c_gt0 o1L o2L lE i1L i2L.
+apply: cinv_same_row => //; first by rewrite !block_in_row.
+by rewrite !block_lane.
+Qed.
+
 (* the number of the group a lane lands in                                    *)
 Definition lgrp (x : nat) : nat := capp (cinv (avx2_layout dvdn_e2n64)) x %/ 8.
 
