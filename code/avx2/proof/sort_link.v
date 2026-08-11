@@ -1381,6 +1381,41 @@ rewrite pflat_avx2_tail1 -ccompA sh_trs_id cren_id.
 by rewrite catA.
 Qed.
 
+(* -------------------------------------------------------------------------- *)
+(*  Reading off what the merges compare                                       *)
+(* -------------------------------------------------------------------------- *)
+
+(* one batch once values are complemented: a lane whose first wire carries a  *)
+(* complemented value compares the other way round                            *)
+Lemma pflat_vnet_fl (fl : flips) (i q : nat) (g : seq (nat * nat)) :
+  (pflat (vnet n fl i q g)).1
+    = flatten [seq [seq (if nth false fl (i + ab.1 * q + l)
+                         then (i + ab.2 * q + l, i + ab.1 * q + l)
+                         else (i + ab.1 * q + l, i + ab.2 * q + l))
+                   | l <- iota 0 8]
+              | ab <- g].
+Proof. by rewrite /vnet /vmm map_comp pflat_map_Vcmp. Qed.
+
+(* one block: the batch at every register start of a span                     *)
+Lemma pflat_blockn (fl : flips) (base span q : nat) (g : seq (nat * nat)) :
+  (pflat (blockn n fl base span q g)).1
+    = flatten [seq (pflat (vnet n fl (base + t * 8) q g)).1
+              | t <- iota 0 (span %/ 8)].
+Proof.
+rewrite /blockn pflat_flatten -?map_comp //.
+by rewrite all_map; apply/allP => t _; exact: nomv_vnet.
+Qed.
+
+(* one stage: that block, at every block start of the array                   *)
+Lemma pflat_stage (fl : flips) (m cnt q : nat) (g : seq (nat * nat)) :
+  (pflat (stage n fl m cnt q g)).1
+    = flatten [seq (pflat (blockn n fl (t * (cnt * q)) q q g)).1
+              | t <- iota 0 (m %/ (cnt * q))].
+Proof.
+rewrite /stage pflat_flatten -?map_comp //.
+by rewrite all_map; apply/allP => t _; exact: nomv_blockn.
+Qed.
+
 (* The merges take the same shape, one stage of the program at a time: a      *)
 (* stage sweeps the array with blocks of cnt * q wires, descending the        *)
 (* distances inside a block before moving to the next, where the schedule     *)
