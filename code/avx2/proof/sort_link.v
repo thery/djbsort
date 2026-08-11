@@ -883,6 +883,56 @@ rewrite /stage pflat_flatten -?map_comp //.
 by rewrite all_map; apply/allP => t _; exact: nomv_blockn.
 Qed.
 
+(* the wide stages -- those that compare a whole row apart -- are the first   *)
+(* reduction's shape again: the eight rows of one lane are one group of eight *)
+Lemma cinv_wide (t l a : nat) : t < (n %/ 8) %/ 8 -> l < 8 -> a < 8 ->
+  capp (cinv (avx2_layout dvdn_e2n64)) (t * 8 + a * (n %/ 8) + l)
+    = lgrp (t * 8 + l) * 8 + nth 0 trc a.
+Proof.
+have qq := row8E.
+move=> tL lL aL.
+have xL : t * 8 + l < n %/ 8 by lia.
+have -> : t * 8 + a * (n %/ 8) + l = (t * 8 + l) + a * (n %/ 8) by lia.
+by rewrite layout_laneE.
+Qed.
+
+(* so both wires of every comparison of a wide batch land in one group        *)
+Lemma wide_grp (fl : flips) (t : nat) (gr : seq (nat * nat)) :
+  t < (n %/ 8) %/ 8 -> all (fun ab => (ab.1 < 8) && (ab.2 < 8)) gr ->
+  all (fun ab => ab.2 %/ 8 == ab.1 %/ 8)
+      (cren (cinv (avx2_layout dvdn_e2n64))
+            (pflat (vnet n fl (t * 8) (n %/ 8) gr)).1).
+Proof.
+move=> tL grB; apply/allP => x /mapP[ab].
+rewrite pflat_vnet_fl => /flattenP[l0 /mapP[cd cdI ->]].
+case/mapP => l; rewrite mem_iota add0n => /andP[_ lL] -> ->.
+have /andP[c1 c2] := allP grB _ cdI.
+by case: ifP => _ /=; rewrite !cinv_wide // !divnMDl // !(divn_small (trc_lt _)).
+Qed.
+
+(* and the batch, renamed, is that group's comparisons: the lane picks the    *)
+(* group, the row picks the place inside it                                   *)
+Lemma cren_wide (fl : flips) (t : nat) (gr : seq (nat * nat)) :
+  t < (n %/ 8) %/ 8 -> all (fun ab => (ab.1 < 8) && (ab.2 < 8)) gr ->
+  cren (cinv (avx2_layout dvdn_e2n64))
+       (pflat (vnet n fl (t * 8) (n %/ 8) gr)).1
+  = flatten [seq [seq (if nth false fl (t * 8 + ab.1 * (n %/ 8) + l)
+                       then (lgrp (t * 8 + l) * 8 + nth 0 trc ab.2,
+                             lgrp (t * 8 + l) * 8 + nth 0 trc ab.1)
+                       else (lgrp (t * 8 + l) * 8 + nth 0 trc ab.1,
+                             lgrp (t * 8 + l) * 8 + nth 0 trc ab.2))
+                 | l <- iota 0 8]
+            | ab <- gr].
+Proof.
+move=> tL grB.
+rewrite pflat_vnet_fl cren_flatten -map_comp.
+congr flatten; apply/eq_in_map => ab abI.
+have /andP[c1 c2] := allP grB _ abI.
+rewrite /comp /cren -map_comp; apply/eq_in_map => l.
+rewrite mem_iota add0n => /andP[_ lL].
+by rewrite /comp; case: ifP => _; rewrite !cinv_wide.
+Qed.
+
 (* a block never reaches outside itself: its wires are the cnt * q wires      *)
 (* from its base on                                                           *)
 Lemma blockn_shape (fl : flips) (base cnt q : nat) (gr : seq (nat * nat)) :
