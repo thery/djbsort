@@ -782,6 +782,42 @@ have E2 : [seq ab <- [seq ab <- l | c ab != v] | c ab \notin cs]
 by have := IH _ csU GB GD; rewrite E1 E2.
 Qed.
 
+(* when a comparison keeps to one region -- its two wires carry the same      *)
+(* region number -- comparisons of different regions share no wire            *)
+Lemma dpair_regions (w : nat -> nat) (l : seq (nat * nat)) :
+  all (fun ab => w ab.2 == w ab.1) l ->
+  all (fun ab => all (fun cd => (w ab.1 != w cd.1) ==> dpair ab cd) l) l.
+Proof.
+move=> lW; apply/allP => ab abI; apply/allP => cd cdI; apply/implyP => H.
+have /eqP abE := allP lW _ abI; have /eqP cdE := allP lW _ cdI.
+rewrite /dpair; apply/and4P; split; apply: contra H => /eqP E.
+- by rewrite E.
+- by rewrite E cdE.
+- by rewrite -abE E.
+by rewrite -abE E cdE.
+Qed.
+
+(* the shape both halves of the reordering take: give every comparison the    *)
+(* number of the region it belongs to, check that comparisons of different    *)
+(* regions share no wire, and read each region off                            *)
+Lemma dequiv_regroup (c : nat * nat -> nat) (m : nat) (l : seq (nat * nat))
+    (f : nat -> seq (nat * nat)) :
+  all (bnd n) l -> all (fun ab => c ab < m) l ->
+  all (fun ab => all (fun cd => (c ab != c cd) ==> dpair ab cd) l) l ->
+  (forall g, g < m -> [seq ab <- l | c ab == g] = f g) ->
+  dequiv n l (flatten [seq f g | g <- iota 0 m]).
+Proof.
+move=> lB lM lD lf.
+have := @dequiv_group c (iota 0 m) l (iota_uniq _ _) lB lD.
+have -> : [seq ab <- l | c ab \notin iota 0 m] = [::].
+  rewrite -(filter_pred0 l); apply: eq_in_filter => ab abI /=.
+  by rewrite mem_iota /= add0n (allP lM _ abI).
+rewrite cats0 => H; apply: dequiv_trans H _.
+rewrite (_ : [seq [seq ab <- l | c ab == g] | g <- iota 0 m]
+             = [seq f g | g <- iota 0 m]); first exact: dequiv_refl.
+by apply/eq_in_map => g; rewrite mem_iota /= add0n; apply: lf.
+Qed.
+
 (* -------------------------------------------------------------------------- *)
 (*  The reordering, part by part                                              *)
 (* -------------------------------------------------------------------------- *)
@@ -905,15 +941,56 @@ rewrite pflat_cat1' pflat_avx2_tr.
 by rewrite pflat_cat1 ?pflat_avx2_lad.
 Qed.
 
-(* the four-wire sorters: the program compares four rows of the array at      *)
-(* once, and the layout brings each of those four wires next to the other     *)
-(* three, so what it emits eight lanes at a time the schedule emits one       *)
-(* group of eight at a time                                                   *)
-Lemma dequiv_base : dequiv n abase (dbase n).
-Admitted.
+(* -------------------------------------------------------------------------- *)
+(*  The four-wire sorters                                                     *)
+(* -------------------------------------------------------------------------- *)
 
-(* the merges: for each region the program descends the distances, where the  *)
-(* schedule takes each distance across the array -- the loop swap             *)
+(* The program compares four rows of the array at once, and the layout brings *)
+(* each of those four wires next to the other three: the eight wires the      *)
+(* program holds in one lane are one group of eight in the final naming.  So  *)
+(* what the program emits eight lanes at a time the schedule emits one group  *)
+(* at a time, and the reordering is the regrouping by group number.           *)
+
+(* the group of eight numbered g, in the order the schedule takes it          *)
+Definition dblock (g : nat) : seq (nat * nat) :=
+  let b := g * 8 in
+  [:: (b + 1, b); (b + 3, b + 2); (b + 2, b); (b + 3, b + 1); (b + 2, b + 1);
+      (b + 4, b + 5); (b + 6, b + 7); (b + 4, b + 6); (b + 5, b + 7);
+      (b + 5, b + 6)].
+
+Lemma dbaseE : dbase n = flatten [seq dblock g | g <- iota 0 (n %/ 8)].
+Proof. by []. Qed.
+
+Lemma bnd_abase : all (bnd n) abase.
+Proof. Admitted.
+
+(* both wires of a comparison are in the same group of eight                  *)
+Lemma abase_grp : all (fun ab => ab.2 %/ 8 == ab.1 %/ 8) abase.
+Proof. Admitted.
+
+(* and each group holds exactly what the schedule does to it, in order        *)
+Lemma abase_block (g : nat) :
+  g < n %/ 8 -> [seq ab <- abase | ab.1 %/ 8 == g] = dblock g.
+Proof. Admitted.
+
+Lemma dequiv_base : dequiv n abase (dbase n).
+Proof.
+have n8' : 8 %| n by apply: (n8 dvdn_e2n64).
+have qE : (n %/ 8) * 8 = n by rewrite divnK.
+have D := dpair_regions (fun i => i %/ 8) abase_grp.
+have M : all (fun ab => ab.1 %/ 8 < n %/ 8) abase.
+  apply/allP => ab abI; rewrite ltn_divLR // qE.
+  by have /andP[->] := allP bnd_abase _ abI.
+by rewrite dbaseE; apply: dequiv_regroup bnd_abase M D abase_block.
+Qed.
+
+(* The merges take the same shape, one stage of the program at a time: a      *)
+(* stage sweeps the array with blocks of cnt * q wires, descending the        *)
+(* distances inside a block before moving to the next, where the schedule     *)
+(* takes each distance across the whole array.  Comparisons of different      *)
+(* blocks share no wire, so dequiv_regroup applies with the block number      *)
+(* i %/ (cnt * q) for the region, once each stage is matched with the run of  *)
+(* levels of dmerges it performs.                                             *)
 Lemma dequiv_merges : dequiv n amerges (dmerges n k).
 Admitted.
 
