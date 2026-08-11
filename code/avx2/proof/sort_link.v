@@ -1416,6 +1416,63 @@ rewrite /stage pflat_flatten -?map_comp //.
 by rewrite all_map; apply/allP => t _; exact: nomv_blockn.
 Qed.
 
+(* a block never reaches outside itself: its wires are the cnt * q wires      *)
+(* from its base on                                                           *)
+Lemma blockn_shape (fl : flips) (base cnt q : nat) (gr : seq (nat * nat)) :
+  (q %/ 8) * 8 = q -> all (fun ab => (ab.1 < cnt) && (ab.2 < cnt)) gr ->
+  all (fun ab => (base <= ab.1 < base + cnt * q)
+                 && (base <= ab.2 < base + cnt * q))
+      (pflat (blockn n fl base q q gr)).1.
+Proof.
+move=> qq grB; apply/allP => x.
+rewrite pflat_blockn => /flattenP[l0 /mapP[u]].
+rewrite mem_iota add0n => /andP[_ uL] ->.
+rewrite pflat_vnet_fl => /flattenP[l1 /mapP[ab abI ->]].
+case/mapP => l; rewrite mem_iota add0n => /andP[_ lL] ->.
+have /andP[c1 c2] := allP grB _ abI.
+have H1 : ab.1 * q + q <= cnt * q by rewrite -mulSnr leq_mul2r c1 orbT.
+have H2 : ab.2 * q + q <= cnt * q by rewrite -mulSnr leq_mul2r c2 orbT.
+have H3 : u * 8 + 8 <= q by rewrite -mulSnr -qq leq_mul2r uL orbT.
+by case: ifP => _ /=; apply/and3P; split; first (apply/andP; split); nia.
+Qed.
+
+(* so both wires of every comparison of a block carry its block number        *)
+Lemma blockn_grp (fl : flips) (t cnt q : nat) (gr : seq (nat * nat)) :
+  0 < cnt * q -> (q %/ 8) * 8 = q ->
+  all (fun ab => (ab.1 < cnt) && (ab.2 < cnt)) gr ->
+  all (fun ab => (ab.1 %/ (cnt * q) == t) && (ab.2 %/ (cnt * q) == t))
+      (pflat (blockn n fl (t * (cnt * q)) q q gr)).1.
+Proof.
+move=> cq_gt0 qq grB; apply/allP => ab abI.
+have /andP[/andP[b1 b2] /andP[b3 b4]] :=
+  allP (blockn_shape fl (t * (cnt * q)) cnt q gr qq grB) _ abI.
+have E (x : nat) : t * (cnt * q) <= x -> x < t * (cnt * q) + cnt * q ->
+    x %/ (cnt * q) = t.
+  move=> xG xL; rewrite -(subnKC xG) divnMDl // divn_small ?addn0 //.
+  by rewrite ltn_subLR.
+by rewrite (E _ b1 b2) (E _ b3 b4) !eqxx.
+Qed.
+
+(* a stage is already block-major: reading off one block number gives that    *)
+(* block, whole and in order                                                  *)
+Lemma stage_filter (fl : flips) (m cnt q g0 : nat) (gr : seq (nat * nat)) :
+  g0 < m %/ (cnt * q) -> 0 < cnt * q -> (q %/ 8) * 8 = q ->
+  all (fun ab => (ab.1 < cnt) && (ab.2 < cnt)) gr ->
+  [seq ab <- (pflat (stage n fl m cnt q gr)).1 | ab.1 %/ (cnt * q) == g0]
+    = (pflat (blockn n fl (g0 * (cnt * q)) q q gr)).1.
+Proof.
+move=> g0L cq_gt0 qq grB.
+rewrite pflat_stage filter_flatten -map_comp.
+apply: (flatten_pick (t0 := g0)) => // t tL.
+have H := blockn_grp fl t cnt q gr cq_gt0 qq grB.
+rewrite /comp; case: (eqVneq t g0) => [tE|tD].
+  rewrite tE in H *.
+  rewrite (eq_in_filter (a2 := predT)) ?filter_predT //.
+  by move=> ab abI /=; have /andP[/eqP-> _] := allP H _ abI; rewrite eqxx.
+rewrite (eq_in_filter (a2 := pred0)) ?filter_pred0 //.
+by move=> ab abI /=; have /andP[/eqP-> _] := allP H _ abI; rewrite (negbTE tD).
+Qed.
+
 (* The merges take the same shape, one stage of the program at a time: a      *)
 (* stage sweeps the array with blocks of cnt * q wires, descending the        *)
 (* distances inside a block before moving to the next, where the schedule     *)
