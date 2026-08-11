@@ -893,6 +893,35 @@ Lemma nth_fl_dbl (i : nat) : i < n ->
   nth false (fl_tog flipallP (noflip n)) i = flipallP i.
 Proof. by move=> iL; rewrite nth_fl_tog ?size_noflip // nth_noflip. Qed.
 
+(* the masks the merges of doubling size put in, all of them together: one    *)
+(* per doubling, and the doublings stop when the merge is the whole array     *)
+Fixpoint fmAll (fuel p i : nat) : bool :=
+  if fuel is f.+1 then
+    if p * 16 == n then fmP n p i else fmP n p i (+) fmAll f p.*2 i
+  else false.
+
+Lemma size_pdouble_fl (fuel p : nat) (fl : flips) :
+  size (pdouble n fuel fl p).2 = size fl.
+Proof.
+elim: fuel p fl => [|f IH] p fl //=.
+case: ifP => _ /=; first by rewrite size_fl_tog.
+have := IH p.*2 (fl_tog (fmP n p) fl).
+case: (pdouble n f (fl_tog (fmP n p) fl) p.*2) => c3 f2 /= ->.
+by rewrite size_fl_tog.
+Qed.
+
+(* so the pattern the doublings leave is the one they started from, with      *)
+(* those masks exclusive-ored in                                              *)
+Lemma nth_pdouble_fl (fuel p : nat) (fl : flips) (i : nat) : i < size fl ->
+  nth false (pdouble n fuel fl p).2 i = nth false fl i (+) fmAll fuel p i.
+Proof.
+elim: fuel p fl => [|f IH] p fl iL /=; first by rewrite addbF.
+case: ifP => _ /=; first by rewrite nth_fl_tog.
+have := IH p.*2 (fl_tog (fmP n p) fl).
+case: (pdouble n f (fl_tog (fmP n p) fl) p.*2) => c3 f2 /= H.
+by rewrite H ?size_fl_tog // nth_fl_tog // addbA.
+Qed.
+
 (* one batch once values are complemented: a lane whose first wire carries a  *)
 (* complemented value compares the other way round                            *)
 Lemma pflat_vnet_fl (fl : flips) (i q : nat) (g : seq (nat * nat)) :
