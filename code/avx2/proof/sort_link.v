@@ -852,6 +852,47 @@ Qed.
 (*  Reading off what the merges compare                                       *)
 (* -------------------------------------------------------------------------- *)
 
+(* -------------------------------------------------------------------------- *)
+(*  Reading a flip pattern                                                    *)
+(* -------------------------------------------------------------------------- *)
+
+(* nothing is complemented at the start; a mask exclusive-ors its own         *)
+(* positions in; a shuffle carries the pattern with the data                  *)
+Lemma size_noflip (m : nat) : size (noflip m) = m.
+Proof. by rewrite size_nseq. Qed.
+
+Lemma nth_noflip (m i : nat) : nth false (noflip m) i = false.
+Proof. by rewrite /noflip nth_nseq if_same. Qed.
+
+Lemma size_fl_tog (P : nat -> bool) (fl : flips) :
+  size (fl_tog P fl) = size fl.
+Proof. by rewrite /fl_tog size_map size_iota. Qed.
+
+Lemma nth_fl_tog (P : nat -> bool) (fl : flips) (i : nat) : i < size fl ->
+  nth false (fl_tog P fl) i = nth false fl i (+) P i.
+Proof. by move=> iL; rewrite /fl_tog (nth_map 0) ?size_iota // nth_iota. Qed.
+
+Lemma nth_fl_tog2 (P Q : nat -> bool) (fl : flips) (i : nat) : i < size fl ->
+  nth false (fl_tog P (fl_tog Q fl)) i = nth false fl i (+) Q i (+) P i.
+Proof. by move=> iL; rewrite !nth_fl_tog ?size_fl_tog. Qed.
+
+Lemma size_fl_shuf (c : nat) (tb : seq nat) (fl : flips) :
+  size (fl_shuf c tb fl) = size fl.
+Proof. by rewrite /fl_shuf size_map size_iota. Qed.
+
+Lemma nth_fl_shuf (c : nat) (tb : seq nat) (fl : flips) (i : nat) :
+  i < size fl ->
+  nth false (fl_shuf c tb fl) i = nth false fl (i %/ c * c + nth 0 tb (i %% c)).
+Proof. by move=> iL; rewrite /fl_shuf (nth_map 0) ?size_iota // nth_iota. Qed.
+
+(* so the merges of doubling size start from the mask itself                  *)
+Lemma size_fl_dbl : size (fl_tog flipallP (noflip n)) = n.
+Proof. by rewrite size_fl_tog size_noflip. Qed.
+
+Lemma nth_fl_dbl (i : nat) : i < n ->
+  nth false (fl_tog flipallP (noflip n)) i = flipallP i.
+Proof. by move=> iL; rewrite nth_fl_tog ?size_noflip // nth_noflip. Qed.
+
 (* one batch once values are complemented: a lane whose first wire carries a  *)
 (* complemented value compares the other way round                            *)
 Lemma pflat_vnet_fl (fl : flips) (i q : nat) (g : seq (nat * nat)) :
