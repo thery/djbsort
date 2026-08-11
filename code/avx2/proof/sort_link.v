@@ -427,8 +427,11 @@ Qed.
 Lemma capp_cinvE (s : cperm n) (i j : nat) :
   i < n -> j < n -> capp s j = i -> capp (cinv s) i = j.
 Proof.
-move=> iL jL sj; apply: (capp_inj s) (capp_lt _ iL) jL _.
-by rewrite -cappM // ccomp_inv capp_id.
+move=> iL jL sj.
+have E : capp s (capp (cinv s) i) = capp s j.
+  by rewrite -cappM // ccomp_inv capp_id.
+apply: (capp_inj (s := s) (a := capp (cinv s) i) (c := j)) => //.
+by apply: capp_lt; exact: iL.
 Qed.
 
 (* a block shuffle, read off its table                                        *)
@@ -715,7 +718,7 @@ have batchE (i e t : nat) (gr : seq (nat * nat)) :
   have /andP[b1 b2] := allP grB _ abI.
   by rewrite /comp (laneE i e t _ _ iE eL tL b1 b2).
 rewrite /abase pflat_avx2_head1 cren_flatten filter_flatten -!map_comp.
-apply: (flatten_pick _ _ _ (g %% m)) => // t tL.
+apply: (flatten_pick (t0 := g %% m)) => // t tL.
 rewrite /comp cren_cat filter_cat.
 have i0 : t * 8 = t * 8 + 0 * (n %/ 8) by rewrite mul0n addn0.
 have i1 : t * 8 + n %/ 8 = t * 8 + 1 * (n %/ 8) by rewrite mul1n.
@@ -727,7 +730,7 @@ Lemma dequiv_base : dequiv n abase (dbase n).
 Proof.
 have n8' : 8 %| n by apply: (n8 dvdn_e2n64).
 have qE : (n %/ 8) * 8 = n by rewrite divnK.
-have D := dpair_regions (fun i => i %/ 8) abase_grp.
+have D := dpair_regions (w := fun i => i %/ 8) abase_grp.
 have M : all (fun ab => ab.1 %/ 8 < n %/ 8) abase.
   apply/allP => ab abI; rewrite ltn_divLR // qE.
   by have /andP[->] := allP bnd_abase _ abI.
@@ -813,7 +816,7 @@ Lemma blockn_grp (fl : flips) (t cnt q : nat) (gr : seq (nat * nat)) :
 Proof.
 move=> cq_gt0 qq grB; apply/allP => ab abI.
 have /andP[/andP[b1 b2] /andP[b3 b4]] :=
-  allP (blockn_shape fl (t * (cnt * q)) cnt q gr qq grB) _ abI.
+  allP (blockn_shape fl (t * (cnt * q)) qq grB) _ abI.
 have E (x : nat) : t * (cnt * q) <= x -> x < t * (cnt * q) + cnt * q ->
     x %/ (cnt * q) = t.
   move=> xG xL; rewrite -(subnKC xG) divnMDl // divn_small ?addn0 //.
@@ -832,7 +835,7 @@ Proof.
 move=> g0L cq_gt0 qq grB.
 rewrite pflat_stage filter_flatten -map_comp.
 apply: (flatten_pick (t0 := g0)) => // t tL.
-have H := blockn_grp fl t cnt q gr cq_gt0 qq grB.
+have H := blockn_grp fl t cq_gt0 qq grB.
 rewrite /comp; case: (eqVneq t g0) => [tE|tD].
   rewrite tE in H *.
   rewrite (eq_in_filter (a2 := predT)) ?filter_predT //.
