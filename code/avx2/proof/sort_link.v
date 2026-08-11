@@ -1,4 +1,5 @@
 From mathcomp Require Import all_boot order perm.
+From mathcomp Require Import zify.
 Require Import more_tuple nsort nbitonic nalgebra nprog sort_generic sort_net.
 Require Import sort_prog.
 
@@ -961,17 +962,398 @@ Definition dblock (g : nat) : seq (nat * nat) :=
 Lemma dbaseE : dbase n = flatten [seq dblock g | g <- iota 0 (n %/ 8)].
 Proof. by []. Qed.
 
+(* renaming keeps every wire in range                                         *)
+Lemma bnd_cren (s : cperm n) (l : seq (nat * nat)) :
+  all (bnd n) l -> all (bnd n) (cren s l).
+Proof.
+move=> lB; apply/allP => x /mapP[ab abI ->].
+by have /andP[aL bL] := allP lB _ abI; rewrite /bnd /= !capp_lt.
+Qed.
+
+Lemma bnd_flatten (ls : seq (seq (nat * nat))) :
+  all (fun l => all (bnd n) l) ls -> all (bnd n) (flatten ls).
+Proof. by elim: ls => //= l ls IH /andP[lB lsB]; rewrite all_cat lB IH. Qed.
+
+(* a batch stays in range as soon as its topmost lane does                    *)
+Lemma bnd_pflat_vnet (i q : nat) (g : seq (nat * nat)) :
+  all (fun ab => (i + ab.1 * q + 7 < n) && (i + ab.2 * q + 7 < n)) g ->
+  all (bnd n) (pflat (vnet n (noflip n) i q g)).1.
+Proof.
+move=> gB; rewrite pflat_vnet; apply: bnd_flatten.
+apply/allP => x /mapP[ab abI ->]; apply/allP => y /mapP[l].
+rewrite mem_iota /= add0n => lL ->.
+have /andP[H1 H2] := allP gB _ abI.
+rewrite /bnd /=; apply/andP; split.
+  by apply: leq_ltn_trans H1; rewrite leq_add2l -ltnS.
+by apply: leq_ltn_trans H2; rewrite leq_add2l -ltnS.
+Qed.
+
+Lemma bnd_pflat_head : all (bnd n) (pflat (avx2_head n)).1.
+Proof.
+have [c cE] := dvdnP dvdn_e2n64.
+have pE : n %/ 8 = c * 8 by rewrite cE -[64]/(8 * 8) mulnA mulnK.
+rewrite pflat_avx2_head1; apply: bnd_flatten.
+apply/allP => x /mapP[t]; rewrite mem_iota => /andP[_ tL] ->.
+rewrite add0n pE mulnK // in tL.
+by rewrite all_cat; apply/andP; split; apply: bnd_pflat_vnet;
+   rewrite pE cE /even4 /odd4 /=; lia.
+Qed.
+
 Lemma bnd_abase : all (bnd n) abase.
-Proof. Admitted.
+Proof. by apply: bnd_cren bnd_pflat_head. Qed.
+
+(* a batch compares two rows of one lane, two rows being a whole number of    *)
+(* lane widths apart                                                          *)
+Lemma modn_pflat_vnet (i q : nat) (g : seq (nat * nat)) :
+  all (fun ab => ab.1 == ab.2 %[mod q]) (pflat (vnet n (noflip n) i q.*2 g)).1.
+Proof.
+rewrite pflat_vnet; apply/allP => x /flattenP[l0 /mapP[ab abI ->]].
+case/mapP => l lI ->.
+have E c : i + c * q.*2 + l = c * 2 * q + (i + l) by lia.
+by rewrite /= !E !modnMDl.
+Qed.
+
+(* the first reduction only ever compares two rows of one lane, so its two    *)
+(* wires are the same distance into the array                                 *)
+Lemma pflat_head_shape :
+  all (fun ab => [&& ab.1 %% (n %/ 8) == ab.2 %% (n %/ 8), ab.1 < n & ab.2 < n])
+      (pflat (avx2_head n)).1.
+Proof.
+apply/allP => x xI.
+have /andP[H1 H2] := allP bnd_pflat_head _ xI.
+rewrite H1 H2 !andbT.
+move: xI; rewrite pflat_avx2_head1 => /flattenP[l0 /mapP[t _ ->]].
+by rewrite mem_cat => /orP[] Hin; apply: (allP (modn_pflat_vnet _ _ _) _ Hin).
+Qed.
+
+(* -------------------------------------------------------------------------- *)
+(*  Where the layout sends each wire                                          *)
+(* -------------------------------------------------------------------------- *)
+
+(* the array is eight rows of n %/ 8 ...                                      *)
+Lemma rowE : (n %/ 8) * 8 = n.
+Proof. by rewrite divnK // (n8 dvdn_e2n64). Qed.
+
+Lemma row_gt0 : 0 < n %/ 8.
+Proof. by rewrite divn_gt0 // dvdn_leq ?e2n_gt0 // (n8 dvdn_e2n64). Qed.
+
+(* ... and a row holds a whole number of blocks of eight                      *)
+Lemma dvdn_row : 8 %| n %/ 8.
+Proof.
+have [c cE] := dvdnP dvdn_e2n64.
+by rewrite cE -[64]/(8 * 8) mulnA mulnK // dvdn_mull.
+Qed.
+
+Lemma row8E : (n %/ 8) %/ 8 * 8 = n %/ 8.
+Proof. by rewrite divnK // dvdn_row. Qed.
+
+(* a table sends different positions to different places, so it can be read   *)
+(* backwards: the inverse takes i to the j the table takes to i               *)
+Lemma capp_inj (s : cperm n) (a c : nat) :
+  a < n -> c < n -> capp s a = capp s c -> a = c.
+Proof.
+move=> aL cL; rewrite -(cperm_ofE s (Ordinal aL)) -(cperm_ofE s (Ordinal cL)).
+by move=> /val_inj /perm_inj [].
+Qed.
+
+Lemma capp_cinvE (s : cperm n) (i j : nat) :
+  i < n -> j < n -> capp s j = i -> capp (cinv s) i = j.
+Proof.
+move=> iL jL sj; apply: (capp_inj s) (capp_lt _ iL) jL _.
+by rewrite -cappM // ccomp_inv capp_id.
+Qed.
+
+(* a block shuffle, read off its table                                        *)
+Lemma bfun_tabE (tb : seq nat) (p : perm_eq tb (iota 0 64)) (j : nat) :
+  bfun (k := 64) isT (tabf p) j = j %/ 64 * 64 + nth 0 tb (j %% 64).
+Proof. by []. Qed.
+
+Lemma nth_tab_lt (tb : seq nat) (p : perm_eq tb (iota 0 64)) (j : nat) :
+  nth 0 tb j < 64.
+Proof.
+have [jL|jG] := ltnP j 64; first exact: (tb_lt p (Ordinal jL)).
+by rewrite nth_default ?(tb_size p).
+Qed.
+
+(* the column reading, position by position                                   *)
+Lemma capp_bycoltab (i : nat) :
+  i < n -> capp (bycoltab (n8 dvdn_e2n64)) i = i %% (n %/ 8) * 8 + i %/ (n %/ 8).
+Proof.
+by move=> iL; rewrite cappL //= (nth_map 0) ?size_iota // nth_iota // add0n.
+Qed.
+
+(* the three transposes undo one another                                      *)
+Lemma sh_trs_id :
+  ccomp (ccomp (sh_trlo dvdn_e2n64) (sh_trhi dvdn_e2n64)) (sh_tr dvdn_e2n64)
+    = cid n.
+Proof.
+have n64 : 64 %| n := dvdn_e2n64.
+apply: cperm_ext => i iL.
+rewrite capp_id !cappM ?capp_lt // !capp_btab ?bfun_bound ?capp_lt //.
+have HT0 : all (fun j => nth 0 tb_trlo (nth 0 tb_trhi (nth 0 tb_tr j)) == j)
+               (iota 0 64) by [].
+have HT (j : nat) : j < 64 -> nth 0 tb_trlo (nth 0 tb_trhi (nth 0 tb_tr j)) = j.
+  by move=> jL; apply/eqP; apply: (allP HT0); rewrite mem_iota.
+have Hd (tb : seq nat) (p : perm_eq tb (iota 0 64)) (j m : nat) :
+    (m * 64 + nth 0 tb j) %/ 64 = m.
+  by rewrite divnMDl // divn_small ?addn0 //; exact: nth_tab_lt p _.
+have Hm (tb : seq nat) (p : perm_eq tb (iota 0 64)) (j m : nat) :
+    (m * 64 + nth 0 tb j) %% 64 = nth 0 tb j.
+  by rewrite modnMDl modn_small //; exact: nth_tab_lt p _.
+by rewrite !bfun_tabE (Hd _ tb_trP) (Hm _ tb_trP) (Hd _ tb_trhiP)
+           (Hm _ tb_trhiP) HT ?ltn_pmod // -divn_eq.
+Qed.
+
+(* so all the sort moves in the end is the shuffle that writes it out         *)
+Lemma avx2_layoutE : avx2_layout dvdn_e2n64 = sh_out dvdn_e2n64.
+Proof. by rewrite /avx2_layout -2!ccompA sh_trs_id ccomp_idl. Qed.
+
+Lemma trc_lt (b : nat) : b < 8 -> nth 0 trc b < 8.
+Proof. by case: b => [|[|[|[|[|[|[|[|b]]]]]]]]. Qed.
+
+(* the rows the transpose reads and the ones it writes are named by the same  *)
+(* table, which reverses the three bits of a number below eight               *)
+Lemma trr_outp (r : nat) : r < 8 -> nth 0 trr (nth 0 outp r) = nth 0 trc r.
+Proof.
+have H : all (fun r => nth 0 trr (nth 0 outp r) == nth 0 trc r) (iota 0 8) by [].
+by move=> rL; apply/eqP; apply: (allP H); rewrite mem_iota.
+Qed.
+
+Lemma trc_inv (r : nat) : r < 8 -> nth 0 trc (nth 0 trc r) = r.
+Proof.
+have H : all (fun r => nth 0 trc (nth 0 trc r) == r) (iota 0 8) by [].
+by move=> rL; apply/eqP; apply: (allP H); rewrite mem_iota.
+Qed.
+
+Lemma nth_tb_out (i : nat) : i < 64 ->
+  nth 0 tb_out i = nth 0 trr (nth 0 outp (i %% 8)) * 8 + nth 0 trc (i %/ 8).
+Proof.
+by move=> iL; rewrite /tb_out (nth_map 0) ?size_iota // nth_iota // add0n.
+Qed.
+
+(* the shuffle that writes the result out takes row r, column 8 * t + c to    *)
+(* row trc c, column 8 * t + trc r: inside a block of eight columns it is the *)
+(* transpose, with rows and columns renamed by trc                            *)
+Lemma capp_sh_out (r t c : nat) : r < 8 -> t < (n %/ 8) %/ 8 -> c < 8 ->
+  capp (sh_out dvdn_e2n64) (r * (n %/ 8) + (8 * t + c))
+    = nth 0 trc c * (n %/ 8) + (8 * t + nth 0 trc r).
+Proof.
+have n64 : 64 %| n := dvdn_e2n64.
+have qE := rowE; have qq := row8E; have q_gt0 := row_gt0.
+move=> rL tL cL.
+have sL : 8 * t + c < n %/ 8 by lia.
+have iL : r * (n %/ 8) + (8 * t + c) < n by rewrite -qE; nia.
+rewrite /sh_out !cappM ?capp_lt // capp_bycoltab //.
+rewrite modnMDl (modn_small sL) divnMDl // (divn_small sL) addn0.
+have jE : (8 * t + c) * 8 + r = t * 64 + (8 * c + r) by lia.
+rewrite jE capp_btab // ?bfun_tabE; last by rewrite -qE; nia.
+rewrite divnMDl // (divn_small (_ : 8 * c + r < 64)) ?addn0; last by lia.
+rewrite modnMDl (modn_small (_ : 8 * c + r < 64)); last by lia.
+rewrite nth_tb_out; last by lia.
+rewrite (_ : (8 * c + r) %% 8 = r); last by lia.
+rewrite (_ : (8 * c + r) %/ 8 = c); last by lia.
+rewrite trr_outp //.
+have rL8 := trc_lt rL; have cL8 := trc_lt cL.
+have H1 : 8 * t + nth 0 trc r < n %/ 8 by lia.
+have H2 : nth 0 trc c * (n %/ 8) + (8 * t + nth 0 trc r) < n by nia.
+have H3 : t * 64 + (nth 0 trc r * 8 + nth 0 trc c) < n by lia.
+apply: capp_cinvE => //.
+rewrite capp_bycoltab // modnMDl (modn_small H1) divnMDl // (divn_small H1).
+by rewrite addn0; lia.
+Qed.
+
+(* and it is its own inverse, trc being one                                   *)
+Lemma capp_cinv_layout (r t c : nat) : r < 8 -> t < (n %/ 8) %/ 8 -> c < 8 ->
+  capp (cinv (avx2_layout dvdn_e2n64)) (r * (n %/ 8) + (8 * t + c))
+    = nth 0 trc c * (n %/ 8) + (8 * t + nth 0 trc r).
+Proof.
+have qE := rowE; have qq := row8E.
+move=> rL tL cL.
+have rL8 := trc_lt rL; have cL8 := trc_lt cL.
+apply: capp_cinvE; first by nia.
+  by nia.
+by rewrite avx2_layoutE capp_sh_out // !trc_inv.
+Qed.
+
+(* the number of the group a lane lands in                                    *)
+Definition lgrp (x : nat) : nat := capp (cinv (avx2_layout dvdn_e2n64)) x %/ 8.
+
+(* the layout keeps a lane together: the eight wires of the lane x, which the *)
+(* program holds one row apart, become the eight positions of the group lgrp  *)
+(* x, in the order the transposes leave the rows in                           *)
+Lemma layout_laneE (x b : nat) : x < n %/ 8 -> b < 8 ->
+  capp (cinv (avx2_layout dvdn_e2n64)) (x + b * (n %/ 8))
+    = lgrp x * 8 + nth 0 trc b.
+Proof.
+have qq := row8E.
+move=> xL bL.
+have tL : x %/ 8 < (n %/ 8) %/ 8 by lia.
+have xE : x + b * (n %/ 8) = b * (n %/ 8) + (8 * (x %/ 8) + x %% 8) by lia.
+have x0 : x = 0 * (n %/ 8) + (8 * (x %/ 8) + x %% 8) by lia.
+rewrite xE capp_cinv_layout ?ltn_pmod //.
+have lE : lgrp x = nth 0 trc (x %% 8) * ((n %/ 8) %/ 8) + x %/ 8.
+  rewrite /lgrp {1}x0 capp_cinv_layout ?ltn_pmod // [nth 0 trc 0]/= addn0.
+  by rewrite -{1}qq mulnA divnMDl ?row_gt0 // mulKn.
+by rewrite lE; lia.
+Qed.
+
+Lemma layout_lane_grp (u v : nat) :
+  u < n -> v < n -> u %% (n %/ 8) = v %% (n %/ 8) ->
+  capp (cinv (avx2_layout dvdn_e2n64)) u %/ 8
+    = capp (cinv (avx2_layout dvdn_e2n64)) v %/ 8.
+Proof.
+have [c cE] := dvdnP dvdn_e2n64.
+have pE : n %/ 8 = c * 8 by rewrite cE -[64]/(8 * 8) mulnA mulnK.
+have n_gt0 : 0 < n by rewrite e2n_gt0.
+have qP : 0 < n %/ 8 by rewrite divn_gt0 // dvdn_leq // (n8 dvdn_e2n64).
+have qE : (n %/ 8) * 8 = n by rewrite pE cE -mulnA.
+have Hb w : w < n -> w %/ (n %/ 8) < 8.
+  by move=> wL; rewrite ltn_divLR // mulnC qE.
+move=> uL vL uv.
+rewrite {1}(divn_eq u (n %/ 8)) addnC layout_laneE ?ltn_pmod ?Hb //.
+rewrite {1}(divn_eq v (n %/ 8)) [X in capp _ X]addnC
+        layout_laneE ?ltn_pmod ?Hb //.
+rewrite uv !divnMDl //.
+have Hu := trc_lt (Hb u uL); have Hv := trc_lt (Hb v vL).
+by rewrite (divn_small Hu) (divn_small Hv).
+Qed.
 
 (* both wires of a comparison are in the same group of eight                  *)
 Lemma abase_grp : all (fun ab => ab.2 %/ 8 == ab.1 %/ 8) abase.
-Proof. Admitted.
+Proof.
+apply/allP => x /mapP[ab abI ->] /=.
+have /and3P[/eqP Hm H1 H2] := allP pflat_head_shape _ abI.
+by apply/eqP; apply: layout_lane_grp H2 H1 _.
+Qed.
 
-(* and each group holds exactly what the schedule does to it, in order        *)
+(* the empty pieces of a flatten do not count                                 *)
+Lemma flat_nil (T : Type) (F : nat -> seq T) (l : seq nat) :
+  (forall t, t \in l -> F t = [::]) -> flatten [seq F t | t <- l] = [::].
+Proof.
+elim: l => //= a l IH H.
+by rewrite H ?mem_head // IH // => x xI; rewrite H // inE xI orbT.
+Qed.
+
+(* a flatten with one piece of its own picks that piece out                   *)
+Lemma flatten_pick (T : Type) (F : nat -> seq T) (v : seq T) (t0 M : nat) :
+  t0 < M -> (forall t, t < M -> F t = if t == t0 then v else [::]) ->
+  flatten [seq F t | t <- iota 0 M] = v.
+Proof.
+move=> t0L HF.
+have -> : iota 0 M = iota 0 t0 ++ t0 :: iota t0.+1 (M - t0.+1).
+  by rewrite -{1}[M](subnKC t0L) addSnnS iotaD add0n.
+rewrite map_cat flatten_cat /= HF // eqxx.
+rewrite flat_nil => [|x]; last first.
+  move=> xI; have xL : x < t0 by move: xI; rewrite mem_iota /= add0n.
+  by rewrite HF ?ltn_eqF // (ltn_trans xL t0L).
+rewrite cat0s flat_nil ?cats0 // => x.
+rewrite mem_iota => /andP[xG xL]; rewrite subnKC // in xL.
+by rewrite HF ?gtn_eqF.
+Qed.
+
+(* a flatten of pieces that are all one long, or all empty together           *)
+Lemma flatten_map_if (T : Type) (c : bool) (f : nat * nat -> T)
+    (F : nat * nat -> seq T) (l : seq (nat * nat)) :
+  (forall ab, ab \in l -> F ab = if c then [:: f ab] else [::]) ->
+  flatten [seq F ab | ab <- l] = if c then [seq f ab | ab <- l] else [::].
+Proof.
+elim: l => [_|ab l IH] /=; first by case: (c).
+move=> H; rewrite H ?mem_head // IH => [|x xI]; last by rewrite H // inE xI orbT.
+by case: (c).
+Qed.
+
+Lemma cren_flatten (s : cperm n) (ls : seq (seq (nat * nat))) :
+  cren s (flatten ls) = flatten [seq cren s l | l <- ls].
+Proof. by elim: ls => //= l ls IH; rewrite cren_cat IH. Qed.
+
+(* and each group holds exactly what the schedule does to it, in order.  The  *)
+(* group of the wire the program calls row r, column 8 * t + l is             *)
+(* trc l * ((n %/ 8) %/ 8) + t, so a group fixes both the batch t and the     *)
+(* lane l: one comparison of the batch survives the filter for each           *)
+(* comparison of even4 and of odd4, in the order the batch emits them.        *)
 Lemma abase_block (g : nat) :
   g < n %/ 8 -> [seq ab <- abase | ab.1 %/ 8 == g] = dblock g.
-Proof. Admitted.
+Proof.
+have qq := row8E.
+have key (r t l : nat) : r < 8 -> t < (n %/ 8) %/ 8 -> l < 8 ->
+    capp (cinv (avx2_layout dvdn_e2n64)) (r * (n %/ 8) + (8 * t + l))
+      = (nth 0 trc l * ((n %/ 8) %/ 8) + t) * 8 + nth 0 trc r.
+  move=> rL tL lL; rewrite capp_cinv_layout //.
+  by rewrite -{1}qq mulnA; lia.
+move=> gL.
+set m := (n %/ 8) %/ 8.
+have mE : m * 8 = n %/ 8 by [].
+have m_gt0 : 0 < m by move: gL; rewrite -mE; lia.
+have gmL : g %/ m < 8 by rewrite ltn_divLR // mulnC mE.
+have gmt : g %% m < m by rewrite ltn_mod.
+have gE : g %/ m * m + g %% m = g by rewrite -divn_eq.
+(* the lane a group asks for                                                  *)
+have condE (t l : nat) : t < m -> l < 8 ->
+    (nth 0 trc l * m + t == g) = (t == g %% m) && (l == nth 0 trc (g %/ m)).
+  move=> tL lL; apply/idP/idP.
+    move=> /eqP H.
+    have H1 : g %/ m = nth 0 trc l by rewrite -H divnMDl // divn_small // addn0.
+    have H2 : g %% m = t by rewrite -H modnMDl modn_small.
+    by rewrite H2 eqxx /= H1 trc_inv.
+  move=> /andP[/eqP-> /eqP->].
+  by rewrite trc_inv // gE.
+(* one comparison of a batch, over its eight lanes                            *)
+have laneE (i e t a1 a2 : nat) :
+    i = t * 8 + e * (n %/ 8) -> e < 2 -> t < m -> a1 < 4 -> a2 < 4 ->
+    [seq ab <- cren (cinv (avx2_layout dvdn_e2n64))
+         [seq (i + a1 * (n %/ 8).*2 + l, i + a2 * (n %/ 8).*2 + l)
+         | l <- iota 0 8]
+       | ab.1 %/ 8 == g]
+    = if t == g %% m then
+        [:: (g * 8 + nth 0 trc (a1.*2 + e), g * 8 + nth 0 trc (a2.*2 + e))]
+      else [::].
+  move=> iE eL tL a1L a2L.
+  rewrite !filter_map.
+  have wE (a l : nat) : a < 4 -> l < 8 ->
+      i + a * (n %/ 8).*2 + l = (a.*2 + e) * (n %/ 8) + (8 * t + l).
+    by move=> aL lL; rewrite iE; lia.
+  rewrite (eq_in_filter (a2 := fun l => (t == g %% m)
+                                        && (l == nth 0 trc (g %/ m))));
+      last first.
+    move=> l; rewrite mem_iota /= add0n => lL.
+    rewrite /preim /= wE // key ?trc_lt //; last by lia.
+    have aL8 : a1.*2 + e < 8 by lia.
+    rewrite divnMDl // (divn_small (trc_lt aL8)) addn0.
+    by apply: condE.
+  have [tE|tD] := eqVneq t (g %% m); last first.
+    by rewrite (eq_filter (a2 := pred0)) ?filter_pred0.
+  rewrite (eq_filter (a2 := pred1 (nth 0 trc (g %/ m)))); last by move=> l.
+  rewrite filter_pred1_uniq ?iota_uniq //; last by rewrite mem_iota /= trc_lt.
+  have aL1 : a1.*2 + e < 8 by lia.
+  have aL2 : a2.*2 + e < 8 by lia.
+  have l0L : nth 0 trc (g %/ m) < 8 by apply: trc_lt.
+  rewrite /= (wE _ _ a1L l0L) (wE _ _ a2L l0L).
+  rewrite (key _ _ _ aL1 tL l0L) (key _ _ _ aL2 tL l0L).
+  by rewrite trc_inv // tE gE.
+(* one batch                                                                  *)
+have batchE (i e t : nat) (gr : seq (nat * nat)) :
+    i = t * 8 + e * (n %/ 8) -> e < 2 -> t < m ->
+    all (fun ab => (ab.1 < 4) && (ab.2 < 4)) gr ->
+    [seq ab <- cren (cinv (avx2_layout dvdn_e2n64))
+                    (pflat (vnet n (noflip n) i (n %/ 8).*2 gr)).1
+       | ab.1 %/ 8 == g]
+    = if t == g %% m then
+        [seq (g * 8 + nth 0 trc (ab.1.*2 + e), g * 8 + nth 0 trc (ab.2.*2 + e))
+        | ab <- gr]
+      else [::].
+  move=> iE eL tL grB.
+  rewrite pflat_vnet cren_flatten filter_flatten -!map_comp.
+  apply: flatten_map_if => ab abI.
+  have /andP[b1 b2] := allP grB _ abI.
+  by rewrite /comp (laneE i e t _ _ iE eL tL b1 b2).
+rewrite /abase pflat_avx2_head1 cren_flatten filter_flatten -!map_comp.
+apply: (flatten_pick _ _ _ (g %% m)) => // t tL.
+rewrite /comp cren_cat filter_cat.
+have i0 : t * 8 = t * 8 + 0 * (n %/ 8) by rewrite mul0n addn0.
+have i1 : t * 8 + n %/ 8 = t * 8 + 1 * (n %/ 8) by rewrite mul1n.
+rewrite (batchE _ 0 t even4 i0) // (batchE _ 1 t odd4 i1) //.
+by case: eqP => // _; rewrite /dblock /= !addn0.
+Qed.
 
 Lemma dequiv_base : dequiv n abase (dbase n).
 Proof.
@@ -982,6 +1364,21 @@ have M : all (fun ab => ab.1 %/ 8 < n %/ 8) abase.
   apply/allP => ab abI; rewrite ltn_divLR // qE.
   by have /andP[->] := allP bnd_abase _ abI.
 by rewrite dbaseE; apply: dequiv_regroup bnd_abase M D abase_block.
+Qed.
+
+(* the three transposes cancel, so nothing in the tail is renamed at all:     *)
+(* what the sort does after the first reduction is the five pieces, one       *)
+(* after the other, named as the program names them                           *)
+Lemma pflat_avx2_tail2 :
+  (pflat (avx2_tail dvdn_e2n64)).1
+  = (pflat (avx2_dbl n).1).1
+    ++ (pflat (avx2_rev dvdn_e2n64).1).1
+    ++ (pflat (avx2_tr dvdn_e2n64).1).1
+    ++ (pflat (avx2_lad dvdn_e2n64)).1
+    ++ (pflat (avx2_out dvdn_e2n64)).1.
+Proof.
+rewrite pflat_avx2_tail1 -ccompA sh_trs_id cren_id.
+by rewrite catA.
 Qed.
 
 (* The merges take the same shape, one stage of the program at a time: a      *)
