@@ -1473,6 +1473,34 @@ rewrite (eq_in_filter (a2 := pred0)) ?filter_pred0 //.
 by move=> ab abI /=; have /andP[/eqP-> _] := allP H _ abI; rewrite (negbTE tD).
 Qed.
 
+(* reordering piece by piece                                                  *)
+Lemma dequiv_flatten (T : Type) (f f' : T -> seq (nat * nat)) (l : seq T) :
+  (forall x, dequiv n (f x) (f' x)) ->
+  dequiv n (flatten [seq f x | x <- l]) (flatten [seq f' x | x <- l]).
+Proof.
+move=> H; elim: l => /= [|x l IH]; first exact: dequiv_refl.
+by apply: dequiv_cat (H x) IH.
+Qed.
+
+(* inside a block the batches are independent too: a batch keeps to the       *)
+(* eight lanes it starts at, whatever row it reaches                          *)
+Lemma vnet_col (fl : flips) (base u q : nat) (gr : seq (nat * nat)) :
+  q %| base -> u * 8 + 8 <= q ->
+  all (fun ab => ((ab.1 %% q) %/ 8 == u) && ((ab.2 %% q) %/ 8 == u))
+      (pflat (vnet n fl (base + u * 8) q gr)).1.
+Proof.
+move=> qb uL; apply/allP => x.
+rewrite pflat_vnet_fl => /flattenP[l0 /mapP[ab abI ->]].
+case/mapP => l; rewrite mem_iota add0n => /andP[_ lL] ->.
+have E (a : nat) : (base + u * 8 + a * q + l) %% q %/ 8 = u.
+  have [c ->] := dvdnP qb.
+  have -> : c * q + u * 8 + a * q + l = (c + a) * q + (u * 8 + l)
+    by rewrite mulnDl; lia.
+  rewrite modnMDl modn_small; last by lia.
+  by rewrite divnMDl // divn_small ?addn0.
+by case: ifP => _ /=; rewrite !E eqxx.
+Qed.
+
 (* The merges take the same shape, one stage of the program at a time: a      *)
 (* stage sweeps the array with blocks of cnt * q wires, descending the        *)
 (* distances inside a block before moving to the next, where the schedule     *)
