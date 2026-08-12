@@ -1962,6 +1962,133 @@ rewrite add0n qE leqnn => /(_ isT).
 by under eq_map => g do rewrite add0n.
 Qed.
 
+(* -------------------------------------------------------------------------- *)
+(*  A level of a narrow distance                                              *)
+(* -------------------------------------------------------------------------- *)
+
+(* which half of its merge block a wire is in, read as a parity              *)
+Lemma cond_oddE (x q : nat) : 0 < q -> (x %% q.*2 < q) = ~~ odd (x %/ q).
+Proof.
+move=> q_gt0.
+have divE (z : nat) : (z < q) = (z %/ q == 0).
+  by rewrite ltnNge -divn_gt0 // lt0n negbK.
+by rewrite divE -mul2n -modn_divl modn2; case: odd.
+Qed.
+
+(* the layout does not change it, for any distance the stages compare at:    *)
+(* it renames the rows, and there are an even number of them in a block      *)
+Lemma cinv_odd (q x : nat) : 8 %| q -> q.*2 %| (n %/ 8) -> x < n ->
+  odd (capp (cinv (avx2_layout dvdn_e2n64)) x %/ q) = odd (x %/ q).
+Proof.
+have qq := row8E; have qE := rowE; have r_gt0 := row_gt0.
+move=> q8 q2r xL.
+have [d dE] := dvdnP q8.
+have [c cE] := dvdnP q2r.
+have q_gt0 : 0 < q by move: cE r_gt0 dE; lia.
+have d_gt0 : 0 < d by move: dE q_gt0; lia.
+have mE : n %/ 8 = (c.*2) * q by rewrite cE; lia.
+have E8 (a s : nat) : s < 8 -> (8 * a + s) %/ q = (8 * a) %/ q.
+  move=> sL; rewrite dE [d * 8]mulnC divnMA [8 * a]mulnC divnMDl //.
+  by rewrite (divn_small sL) addn0 mulnC divnMA mulKn.
+have Esplit (A B : nat) : (A * (n %/ 8) + B) %/ q = A * c.*2 + B %/ q.
+  by rewrite mE mulnA divnMDl.
+have rL : x %/ (n %/ 8) < 8 by rewrite ltn_divLR // mulnC qE.
+have lL : x %% 8 < 8 by rewrite ltn_mod.
+rewrite capp_cinv_wire // Esplit E8 ?trc_lt //.
+rewrite [in RHS](wire_split x) Esplit E8 //.
+by rewrite !oddD !oddM !odd_double !andbF.
+Qed.
+
+(* so the layout permutes the wires a level starts from                      *)
+Lemma cinv_perm_level (q : nat) : 0 < q -> 8 %| q -> q.*2 %| (n %/ 8) ->
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) i
+          | i <- [seq i <- iota 0 n | i %% q.*2 < q]]
+          [seq i <- iota 0 n | i %% q.*2 < q].
+Proof.
+move=> q_gt0 q8 q2r.
+set S := [seq i <- iota 0 n | i %% q.*2 < q].
+have SM (i : nat) : i \in S = (i < n) && (i %% q.*2 < q).
+  by rewrite mem_filter mem_iota add0n andbC.
+have SU : uniq S by apply/filter_uniq/iota_uniq.
+set M := [seq capp (cinv (avx2_layout dvdn_e2n64)) i | i <- S].
+have sub : {subset M <= S}.
+  move=> x /mapP[i]; rewrite SM => /andP[iL iC] ->.
+  rewrite SM capp_lt //= !cond_oddE // cinv_odd //.
+  by move: iC; rewrite cond_oddE.
+have MU : uniq M.
+  rewrite map_inj_in_uniq // => x y; rewrite !SM => /andP[xL _] /andP[yL _].
+  by apply: capp_inj.
+apply: uniq_perm => // x.
+have [] := uniq_min_size MU sub; first by rewrite size_map.
+by move=> _ H; rewrite H.
+Qed.
+
+(* hence a stage that compares at one narrow distance IS that level, whatever *)
+(* order it lists its wires in: they share no wire, so the order costs        *)
+(* nothing, and the flips give each of them the orientation the level asks    *)
+(* for                                                                        *)
+Lemma dequiv_level (K q : nat) (P : seq nat) :
+  0 < q -> 8 %| q -> q.*2 %| (n %/ 8) -> uniq P ->
+  P =i [seq i <- iota 0 n | i %% q.*2 < q] ->
+  dequiv n [seq (if (K == n)
+                    || odd (capp (cinv (avx2_layout dvdn_e2n64)) x %/ K)
+                 then (capp (cinv (avx2_layout dvdn_e2n64)) x,
+                       capp (cinv (avx2_layout dvdn_e2n64)) x + q)
+                 else (capp (cinv (avx2_layout dvdn_e2n64)) x + q,
+                       capp (cinv (avx2_layout dvdn_e2n64)) x))
+           | x <- P]
+           (dlevel n K q).
+Proof.
+have qE := rowE.
+move=> q_gt0 q8 q2r PU PS.
+have q2n : q.*2 %| n by apply: dvdn_trans q2r _; rewrite -{2}qE dvdn_mulr.
+set F := capp (cinv (avx2_layout dvdn_e2n64)).
+set f := fun i => if (K == n) || odd (i %/ K) then (i, i + q) else (i + q, i).
+set S := [seq i <- iota 0 n | i %% q.*2 < q].
+have SM (i : nat) : (i \in S) = (i < n) && (i %% q.*2 < q).
+  by rewrite mem_filter mem_iota add0n andbC.
+have SU : uniq S by apply/filter_uniq/iota_uniq.
+have PF : perm_eq [seq F x | x <- P] S.
+  apply: perm_trans (cinv_perm_level q_gt0 q8 q2r).
+  by rewrite perm_map // (uniq_perm PU SU).
+have fI : injective f.
+  move=> x y; rewrite /f.
+  by case: ifP => _; case: ifP => _ [E1 E2]; move: E1 E2; lia.
+rewrite (_ : [seq _ | x <- P] = [seq f i | i <- [seq F x | x <- P]]);
+  last by rewrite -map_comp.
+rewrite (_ : dlevel n K q = [seq f i | i <- S]) //.
+apply: dequiv_reorder; last 2 first.
+- by rewrite perm_map.
+- apply/allP => ab /mapP[i iI ->]; apply/allP => cd /mapP[j jI ->].
+  apply/implyP => fne.
+  have iS : i \in S by rewrite -(perm_mem PF).
+  have jS : j \in S by rewrite -(perm_mem PF).
+  have /andP[iL iC] : (i < n) && (i %% q.*2 < q) by rewrite -SM.
+  have /andP[jL jC] : (j < n) && (j %% q.*2 < q) by rewrite -SM.
+  have iDj : i != j by apply: contra fne => /eqP->.
+  have modq (b : nat) : b %% q.*2 < q -> (b + q) %% q.*2 = b %% q.*2 + q.
+    move=> bC; rewrite {1}(divn_eq b q.*2) -addnA modnMDl modn_small //.
+    by move: bC; lia.
+  have D1 : i != j + q.
+    by apply/eqP => E; move: iC; rewrite E modq //; move: jC; lia.
+  have D2 : i + q != j.
+    by apply/eqP => E; move: jC; rewrite -E modq //; move: iC; lia.
+  have D3 : i + q != j + q by rewrite eqn_add2r.
+  by rewrite /f /dpair; case: ifP => _; case: ifP => _ /=;
+     apply/and4P; split; rewrite // eq_sym.
+- apply/allP => ab /mapP[i iI ->].
+  have iS : i \in S by rewrite -(perm_mem PF).
+  have /andP[iL iC] : (i < n) && (i %% q.*2 < q) by rewrite -SM.
+  have iqL : i + q < n.
+    have [c cE] := dvdnP q2n.
+    have H1 : i %/ q.*2 < c by rewrite ltn_divLR ?double_gt0 // -cE.
+    have H2 : (i %/ q.*2).+1 * q.*2 <= c * q.*2 by rewrite leq_mul2r H1 orbT.
+    have H3 := divn_eq i q.*2.
+    by move: H2 H3 iC cE; rewrite mulSn; lia.
+  by rewrite /f /bnd; case: ifP => _; rewrite [(_, _).1]/= [(_, _).2]/= iL iqL.
+by rewrite map_inj_uniq // (perm_uniq PF).
+Qed.
+
 (* The merges take the same shape, one stage of the program at a time: a      *)
 (* stage sweeps the array with blocks of cnt * q wires, descending the        *)
 (* distances inside a block before moving to the next, where the schedule     *)
