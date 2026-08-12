@@ -2217,25 +2217,96 @@ by apply: dvdn_trans dvdn_e2n64; apply/dvdnP; exists 4.
 Qed.
 
 (* -------------------------------------------------------------------------- *)
-(*  What is left                                                              *)
+(*  The merges of doubling size                                               *)
 (* -------------------------------------------------------------------------- *)
 
-(* The merges of doubling size, whole: sweeps and wide sweep, one merge size  *)
-(* after the other.                                                           *)
+(* a run of merges, of sizes 2^e, 2^e.+1, ..., which is how the doublings     *)
+(* take them; the whole schedule is the run that starts at eight              *)
+Fixpoint dmseg (e j : nat) : seq (nat * nat) :=
+  if j is j1.+1 then dcascade n (`2^ e) e ++ dmseg e.+1 j1 else [::].
+
+Lemma dmsegE (e j : nat) : dmseg e j.+1 = dcascade n (`2^ e) e ++ dmseg e.+1 j.
+Proof. by []. Qed.
+
+Lemma dmsegS (e j : nat) :
+  dmseg e j.+1 = dmseg e j ++ dcascade n (`2^ (e + j)) (e + j).
+Proof.
+elim: j e => [|j IH] e; first by rewrite dmsegE cats0 addn0.
+by rewrite (dmsegE e j.+1) (IH e.+1) (dmsegE e j) -catA addSnnS.
+Qed.
+
+Lemma dmergesE (j : nat) : dmerges n j = dmseg 3 j.
+Proof.
+elim: j => // j IH.
+have dmergesEr (j' : nat) :
+    dmerges n j'.+1 = dmerges n j' ++ dcascade n (`2^ j'.+3) j'.+3 by [].
+by rewrite dmergesEr IH dmsegS.
+Qed.
+
+Lemma dcascade_hiS (K e j : nat) : j <= e ->
+  dcascade_hi n K e.+1 j = dlevel n K (`2^ e) ++ dcascade_hi n K e j.
+Proof. by move=> jL; rewrite [LHS]/= ltnNge jL. Qed.
+
+(* WHAT IS LEFT: the doublings, one merge size after the other -- the sweeps  *)
+(* of that size and the wide sweep that closes it, then the same again with   *)
+(* the size doubled and the pattern the merge left behind.                    *)
+Lemma dequiv_pdouble (fuel e j : nat) (fl : flips) :
+  3 <= e -> n %/ 8 = `2^ e * (`2^ j) -> 0 < j -> j <= fuel -> dflP (`2^ e) fl ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (pdouble n fuel fl (`2^ e)).1).1)
+           (dmseg e j).
+Admitted.
+
 Lemma merges_dbl :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64)) (pflat (avx2_dbl n).1).1)
            (dmerges n (k - 4)).
+Proof.
+rewrite /avx2_dbl dmergesE.
+case: leqP => [nL|nG].
+  have -> : k - 4 = 0.
+    have H7 : `2^ k.+2 < `2^ 7 by rewrite -[`2^ 7]/(128); move: nL; lia.
+    by move: H7; rewrite ltn_e2n; lia.
+  by apply: dequiv_refl.
+have k5 : 5 <= k.
+  have H7 : `2^ 7 <= `2^ k.+2 by rewrite -[`2^ 7]/(128); move: nG; lia.
+  by move: H7; rewrite leq_e2n; lia.
+apply: (dequiv_pdouble (e := 3) (j := k - 4)) => //.
+- by rewrite qE8 -e2nD; congr (`2^ _); lia.
+- by lia.
+- by have := ltn_ne2n k; have : `2^ k <= n; [rewrite leq_e2n; lia | lia].
+by apply: dflP_base; rewrite qE8 -[16]/(`2^ 4) dvdn_e2n; lia.
+Qed.
+
+(* -------------------------------------------------------------------------- *)
+(*  The four merges the tail still owes                                       *)
+(* -------------------------------------------------------------------------- *)
+
+(* WHAT IS LEFT: the ladder.  It is the same program in all four, and it      *)
+(* takes the same distances -- half a row down to eight -- whichever merge it *)
+(* is working for; only the pattern it carries says which.                    *)
+Lemma dequiv_ladder (K : nat) (fl : flips) : 0 < K -> 8 %| K -> dflP K fl ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64)) (pflat (ladder n fl)).1)
+           (dcascade_hi n K k.-1 3).
 Admitted.
 
-(* And, for each of the four merges the tail still owes, the levels above a   *)
-(* group of eight: what the reversing pass and the ladder after it do -- the  *)
-(* pass takes the distances of a row and more, through its shuffles, the      *)
-(* ladder the ones below a row.                                               *)
+(* the merge of a row: the pass compares nothing, the ladder does it all      *)
 Lemma merges_hi4 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              ((pflat (rev_pass dvdn_e2n64 (avx2_dbl n).2 4).1).1
               ++ (pflat (ladder n rfl4)).1))
            (dcascade_hi n (n %/ 8) k.-1 3).
+Proof.
+have -> : (pflat (rev_pass dvdn_e2n64 (avx2_dbl n).2 4).1).1 = [::] by [].
+rewrite cat0s.
+by apply: dequiv_ladder; rewrite ?row_gt0 ?dvdn_row //; exact: dflP_rfl4.
+Qed.
+
+(* WHAT IS LEFT: the pass of two, which compares a row apart -- it brings the *)
+(* two registers of every sixteen into matching lanes and compares there      *)
+Lemma merges_pass2 :
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (rev_pass dvdn_e2n64 rfl4 2).1).1)
+           (dlevel n (n %/ 4) (n %/ 8)).
 Admitted.
 
 Lemma merges_hi2 :
@@ -2243,6 +2314,23 @@ Lemma merges_hi2 :
              ((pflat (rev_pass dvdn_e2n64 rfl4 2).1).1
               ++ (pflat (ladder n rfl2)).1))
            (dcascade_hi n (n %/ 4) k 3).
+Proof.
+have q_gt0 := row_gt0.
+have kE : k.-1.+1 = k by lia.
+rewrite cren_cat -[X in dcascade_hi n (n %/ 4) X 3]kE dcascade_hiS; last by lia.
+rewrite -qE8.
+apply: dequiv_cat merges_pass2 _.
+apply: dequiv_ladder; last exact: dflP_rfl2.
+  by rewrite qE4 muln_gt0 q_gt0.
+by rewrite qE4 dvdn_mulr ?dvdn_row.
+Qed.
+
+(* WHAT IS LEFT: the pass of one, which compares two rows apart and then a    *)
+(* row apart, through its two shuffles                                        *)
+Lemma merges_pass1 :
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (rev_pass dvdn_e2n64 rfl2 1).1).1)
+           (dlevel n (n %/ 2) (n %/ 4) ++ dlevel n (n %/ 2) (n %/ 8)).
 Admitted.
 
 Lemma merges_hi1 :
@@ -2250,16 +2338,44 @@ Lemma merges_hi1 :
              ((pflat (rev_pass dvdn_e2n64 rfl2 1).1).1
               ++ (pflat (ladder n rfl1)).1))
            (dcascade_hi n (n %/ 2) k.+1 3).
+Proof.
+have q_gt0 := row_gt0.
+have kE : k.-1.+1 = k by lia.
+rewrite cren_cat dcascade_hiS; last by lia.
+rewrite -[X in _ ++ dcascade_hi n (n %/ 2) X 3]kE dcascade_hiS; last by lia.
+rewrite -qE8 -qE4b catA.
+apply: dequiv_cat merges_pass1 _.
+apply: dequiv_ladder; last exact: dflP_rfl1.
+  by rewrite qE2 muln_gt0 q_gt0.
+by rewrite qE2 dvdn_mulr ?dvdn_row.
+Qed.
+
+(* WHAT IS LEFT: the transpose sort, which does the three distances a row or  *)
+(* more apart by turning them into distances of eight and back                *)
+Lemma merges_tr :
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (avx2_tr dvdn_e2n64).1).1)
+           (dlevel n n (n %/ 2) ++ dlevel n n (n %/ 4) ++ dlevel n n (n %/ 8)).
 Admitted.
 
-(* the last merge: the transpose sorts what a row apart cannot reach, and the *)
-(* ladder after it comes back down                                            *)
 Lemma merges_hi_last :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              ((pflat (avx2_tr dvdn_e2n64).1).1
               ++ (pflat (avx2_lad dvdn_e2n64)).1))
            (dcascade_hi n n k.+2 3).
-Admitted.
+Proof.
+have n_gt0 : 0 < n by rewrite e2n_gt0.
+have kE : k.-1.+1 = k by lia.
+rewrite cren_cat dcascade_hiS; last by lia.
+rewrite dcascade_hiS; last by lia.
+rewrite -[X in _ ++ _ ++ dcascade_hi n n X 3]kE dcascade_hiS; last by lia.
+rewrite -qE8 -qE4b -qE2b !catA.
+apply: dequiv_cat.
+  by rewrite -!catA; exact: merges_tr.
+rewrite /avx2_lad; apply: dequiv_ladder => //.
+  by apply: dvdn_trans dvdn_e2n64; apply/dvdnP; exists 8.
+exact: dflP_avx2_tr.
+Qed.
 
 (* The merges take the same shape, one merge at a time: the doublings, then   *)
 (* one merge for each reversing pass, then the last one, which is what the    *)
