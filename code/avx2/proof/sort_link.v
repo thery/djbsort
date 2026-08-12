@@ -1640,6 +1640,328 @@ rewrite (_ : `2^ 2 = 4) // (_ : `2^ 1 = 2) // (_ : `2^ 0 = 1) //=.
 by rewrite -!addnA.
 Qed.
 
+(* -------------------------------------------------------------------------- *)
+(*  Reordering, piece by piece                                                *)
+(* -------------------------------------------------------------------------- *)
+
+(* the same list read through a map: what has to be checked is checked on the *)
+(* short list the map runs over                                               *)
+Lemma dequiv_reorder_map (f : nat * nat -> nat * nat) (L1 L2 : seq (nat * nat)) :
+  injective f -> (forall p q, dpair p q -> dpair (f p) (f q)) ->
+  all (fun p => bnd n (f p)) L1 -> uniq L1 -> perm_eq L1 L2 ->
+  all (fun p => all (fun q => (p != q) ==> dpair p q) L1) L1 ->
+  dequiv n [seq f p | p <- L1] [seq f p | p <- L2].
+Proof.
+move=> fI fD L1B L1U L1P L1D.
+apply: dequiv_reorder.
+- by apply/allP => ab /mapP[p pI ->]; apply: (allP L1B).
+- by rewrite map_inj_uniq.
+- by rewrite perm_map.
+apply/allP => ab /mapP[p pI ->]; apply/allP => cd /mapP[q qI ->].
+apply/implyP => fne.
+have pD : p != q by apply: contra fne => /eqP->.
+by apply: fD; have := allP (allP L1D _ pI) _ qI; rewrite pD.
+Qed.
+
+(* moving a whole group of eight leaves what it shares untouched, whichever   *)
+(* way round its comparisons are written                                      *)
+Lemma dpair_add (b : nat) (p q : nat * nat) : dpair p q ->
+  dpair (b + p.1, b + p.2) (b + q.1, b + q.2).
+Proof.
+by rewrite /dpair /= => /and4P[H1 H2 H3 H4]; apply/and4P; split;
+   rewrite eqn_add2l.
+Qed.
+
+Lemma inj_orient (b : nat) (d : bool) :
+  injective (fun p : nat * nat => if d then (b + p.1, b + p.2)
+                                  else (b + p.2, b + p.1)).
+Proof.
+by case: d => [] [x1 x2] [y1 y2] [E1 E2]; congr (_, _); move: E1 E2; lia.
+Qed.
+
+Lemma dpair_orient (b : nat) (d : bool) (p q : nat * nat) : dpair p q ->
+  dpair (if d then (b + p.1, b + p.2) else (b + p.2, b + p.1))
+        (if d then (b + q.1, b + q.2) else (b + q.2, b + q.1)).
+Proof.
+case: d => H; first exact: dpair_add.
+move: H; rewrite /dpair /= => /and4P[H1 H2 H3 H4].
+by apply/and4P; split; rewrite eqn_add2l.
+Qed.
+
+Lemma dequiv_flatten_in (T : eqType) (f f' : T -> seq (nat * nat)) (l : seq T) :
+  (forall x, x \in l -> dequiv n (f x) (f' x)) ->
+  dequiv n (flatten [seq f x | x <- l]) (flatten [seq f' x | x <- l]).
+Proof.
+elim: l => /= [_|x l IH H]; first exact: dequiv_refl.
+apply: dequiv_cat; first by apply: H; rewrite mem_head.
+by apply: IH => y yI; apply: H; rewrite inE yI orbT.
+Qed.
+
+(* -------------------------------------------------------------------------- *)
+(*  The wide stage: the three levels every merge ends with                    *)
+(* -------------------------------------------------------------------------- *)
+
+(* a group of eight lies inside one block of the merge, so the whole group    *)
+(* is oriented the same way                                                   *)
+Lemma divn_grp8 (K G r : nat) : 0 < K -> 8 %| K -> r < 8 ->
+  (G * 8 + r) %/ K = G * 8 %/ K.
+Proof.
+move=> K_gt0 K8 rL.
+have [c cE] := dvdnP K8.
+have c_gt0 : 0 < c by move: cE K_gt0; lia.
+by rewrite cE [c * 8]mulnC !divnMA divnMDl // (divn_small rL) addn0 mulnK.
+Qed.
+
+(* which group a lane of a batch lands in                                    *)
+Lemma lgrp8 (t l : nat) : t < (n %/ 8) %/ 8 -> l < 8 ->
+  lgrp (t * 8 + l) = nth 0 trc l * ((n %/ 8) %/ 8) + t.
+Proof.
+have qq := row8E.
+move=> tL lL.
+have -> : t * 8 + l = 0 * (n %/ 8) + (8 * t + l) by rewrite mul0n; lia.
+rewrite /lgrp capp_cinv_layout //.
+have -> : nth 0 trc 0 = 0 by [].
+rewrite addn0 -{1}qq.
+have -> : nth 0 trc l * ((n %/ 8) %/ 8 * 8) + 8 * t
+        = (nth 0 trc l * ((n %/ 8) %/ 8) + t) * 8 by lia.
+by rewrite mulnK.
+Qed.
+
+(* one wide batch, read at one group: the group is the one lane whose row is  *)
+(* the group's place, and the flips give it the schedule's own orientation    *)
+Lemma wide_lane (K : nat) (fl : flips) (t G : nat) (gr : seq (nat * nat)) :
+  0 < K -> 8 %| K -> dflP K fl ->
+  t < (n %/ 8) %/ 8 -> G < n %/ 8 ->
+  all (fun ab => (ab.1 < 8) && (ab.2 < 8)) gr ->
+  [seq ab <- cren (cinv (avx2_layout dvdn_e2n64))
+                  (pflat (vnet n fl (t * 8) (n %/ 8) gr)).1
+     | ab.1 %/ 8 == G]
+  = if t == G %% ((n %/ 8) %/ 8) then
+      [seq (if (K == n) || odd (G * 8 %/ K)
+            then (G * 8 + nth 0 trc ab.1, G * 8 + nth 0 trc ab.2)
+            else (G * 8 + nth 0 trc ab.2, G * 8 + nth 0 trc ab.1))
+      | ab <- gr]
+    else [::].
+Proof.
+have qq := row8E; have qE := rowE.
+move=> K_gt0 K8 [flS flN] tL GL grB.
+set m := (n %/ 8) %/ 8.
+have m_gt0 : 0 < m by move: tL; lia.
+have GmL : G %/ m < 8 by rewrite ltn_divLR // mulnC qq.
+have GmE : G %/ m * m + G %% m = G by rewrite -divn_eq.
+have condE (t' l : nat) : t' < m -> l < 8 ->
+    (nth 0 trc l * m + t' == G) = (t' == G %% m) && (l == nth 0 trc (G %/ m)).
+  move=> t'L lL; apply/idP/idP.
+    move=> /eqP H.
+    have H1 : G %/ m = nth 0 trc l by rewrite -H divnMDl // divn_small // addn0.
+    have H2 : G %% m = t' by rewrite -H modnMDl modn_small.
+    by rewrite H2 eqxx /= H1 trc_inv.
+  by move=> /andP[/eqP-> /eqP->]; rewrite trc_inv // GmE.
+rewrite cren_wide // filter_flatten -map_comp.
+apply: flatten_map_if => ab abI.
+have /andP[a1L a2L] := allP grB _ abI.
+rewrite filter_map.
+rewrite (eq_in_filter (a2 := fun l => (t == G %% m)
+                                      && (l == nth 0 trc (G %/ m)))); last first.
+  move=> l; rewrite mem_iota add0n => /andP[_ lL].
+  rewrite /preim /= lgrp8 //.
+  by case: ifP => _ /=; rewrite divnMDl // (divn_small (trc_lt _)) ?addn0 //;
+     apply: condE.
+have [tE|tD] := eqVneq t (G %% m); last first.
+  by rewrite (eq_filter (a2 := pred0)) ?filter_pred0.
+rewrite (eq_filter (a2 := pred1 (nth 0 trc (G %/ m)))); last by move=> l.
+rewrite filter_pred1_uniq ?iota_uniq ?mem_iota ?add0n ?trc_lt //=.
+have l0L : nth 0 trc (G %/ m) < 8 by apply: trc_lt.
+have lgE : lgrp (t * 8 + nth 0 trc (G %/ m)) = G.
+  by rewrite lgrp8 // trc_inv // tE GmE.
+have tlL : t * 8 + nth 0 trc (G %/ m) < n %/ 8 by move: tL l0L qq; lia.
+have xL : t * 8 + ab.1 * (n %/ 8) + nth 0 trc (G %/ m) < n.
+  have H8 : ab.1.+1 * (n %/ 8) <= 8 * (n %/ 8) by rewrite leq_mul2r a1L orbT.
+  rewrite mulSn in H8.
+  by move: tlL H8 qE; rewrite [8 * _]mulnC; lia.
+rewrite flN // /dfl cinv_wide // lgE divn_grp8 //.
+  by case: ((K == n) || odd (G * 8 %/ K)).
+by apply: trc_lt.
+Qed.
+
+(* every comparison of a wide batch keeps to its group                       *)
+Lemma wide_grp_shape (K G : nat) (ab : nat * nat) :
+  ab \in [seq (if (K == n) || odd (G * 8 %/ K)
+               then (G * 8 + nth 0 trc p.1, G * 8 + nth 0 trc p.2)
+               else (G * 8 + nth 0 trc p.2, G * 8 + nth 0 trc p.1))
+         | p <- mrg8r] ->
+  (ab.1 %/ 8 == G) && (ab.2 %/ 8 == G).
+Proof.
+case/mapP => p pI ->.
+have pB : (p.1 < 8) && (p.2 < 8).
+  have mB : all (fun p : nat * nat => (p.1 < 8) && (p.2 < 8)) mrg8r by [].
+  by have /andP[p1 p2] := allP mB _ pI; rewrite p1 p2.
+have /andP[p1 p2] := pB.
+by case: ifP => _ /=;
+   rewrite !divnMDl // !(divn_small (trc_lt _)) // !addn0 !eqxx.
+Qed.
+
+(* a batch stays in range whatever is complemented                           *)
+Lemma bnd_pflat_vnet_fl (fl : flips) (i q : nat) (g : seq (nat * nat)) :
+  all (fun ab => (i + ab.1 * q + 7 < n) && (i + ab.2 * q + 7 < n)) g ->
+  all (bnd n) (pflat (vnet n fl i q g)).1.
+Proof.
+move=> gB; apply/allP => x; rewrite pflat_vnet_fl.
+move=> /flattenP[l0 /mapP[ab abI ->]].
+case/mapP => l; rewrite mem_iota add0n => /andP[_ lL] ->.
+have /andP[H1 H2] := allP gB _ abI.
+by rewrite /bnd; case: ifP => _; rewrite [(_, _).1]/= [(_, _).2]/=;
+   apply/andP; split; lia.
+Qed.
+
+(* the whole stage, read at one group: that group's twelve comparisons        *)
+Lemma wide_block (K : nat) (fl : flips) (G : nat) (gr : seq (nat * nat)) :
+  0 < K -> 8 %| K -> dflP K fl -> G < n %/ 8 ->
+  all (fun ab => (ab.1 < 8) && (ab.2 < 8)) gr ->
+  [seq ab <- cren (cinv (avx2_layout dvdn_e2n64))
+      (flatten [seq (pflat (vnet n fl (t * 8) (n %/ 8) gr)).1
+               | t <- iota 0 ((n %/ 8) %/ 8)])
+     | ab.1 %/ 8 == G]
+  = [seq (if (K == n) || odd (G * 8 %/ K)
+          then (G * 8 + nth 0 trc ab.1, G * 8 + nth 0 trc ab.2)
+          else (G * 8 + nth 0 trc ab.2, G * 8 + nth 0 trc ab.1))
+    | ab <- gr].
+Proof.
+have qq := row8E.
+move=> K_gt0 K8 flP GL grB.
+have m_gt0 : 0 < (n %/ 8) %/ 8 by move: GL qq; lia.
+rewrite cren_flatten filter_flatten -!map_comp.
+apply: (flatten_pick (t0 := G %% ((n %/ 8) %/ 8))); first by rewrite ltn_mod.
+by move=> t tL; rewrite /comp (@wide_lane K).
+Qed.
+
+(* and those twelve are the group's three last levels: the batch takes the    *)
+(* distances in the same order, each level's four in another order, which     *)
+(* costs nothing since they share no wire                                     *)
+Lemma dequiv_wide_grp (K G : nat) : 0 < K -> 8 %| K -> G < n %/ 8 ->
+  dequiv n [seq (if (K == n) || odd (G * 8 %/ K)
+                 then (G * 8 + nth 0 trc ab.1, G * 8 + nth 0 trc ab.2)
+                 else (G * 8 + nth 0 trc ab.2, G * 8 + nth 0 trc ab.1))
+           | ab <- mrg8r]
+           (dcascade_at n K 3 (G * 8) 8).
+Proof.
+have qE := rowE.
+move=> K_gt0 K8 GL.
+have bL (r : nat) : r < 8 -> G * 8 + r < n.
+  move=> rL; have H : G.+1 * 8 <= n %/ 8 * 8 by rewrite leq_mul2r GL orbT.
+  by move: H qE; rewrite mulSn; lia.
+rewrite dcascade_at8 //.
+rewrite (_ : [seq (if (K == n) || odd (G * 8 %/ K)
+                   then (G * 8 + nth 0 trc ab.1, G * 8 + nth 0 trc ab.2)
+                   else (G * 8 + nth 0 trc ab.2, G * 8 + nth 0 trc ab.1))
+             | ab <- mrg8r]
+           = [seq (if (K == n) || odd (G * 8 %/ K)
+                   then (G * 8 + p.1, G * 8 + p.2)
+                   else (G * 8 + p.2, G * 8 + p.1))
+             | p <- [:: (0, 4); (2, 6); (1, 5); (3, 7); (0, 2); (4, 6); (1, 3);
+                        (5, 7); (0, 1); (4, 5); (2, 3); (6, 7)]]) //.
+set d := (K == n) || odd (G * 8 %/ K).
+have step (L1 L2 : seq (nat * nat)) :
+    all (fun p => (p.1 < 8) && (p.2 < 8)) L1 -> uniq L1 -> perm_eq L1 L2 ->
+    all (fun p => all (fun q => (p != q) ==> dpair p q) L1) L1 ->
+    dequiv n [seq (if d then (G * 8 + p.1, G * 8 + p.2)
+                   else (G * 8 + p.2, G * 8 + p.1)) | p <- L1]
+             [seq (if d then (G * 8 + p.1, G * 8 + p.2)
+                   else (G * 8 + p.2, G * 8 + p.1)) | p <- L2].
+  move=> L1B L1U L1P L1D.
+  apply: (dequiv_reorder_map
+            (f := fun p : nat * nat => if d then (G * 8 + p.1, G * 8 + p.2)
+                                       else (G * 8 + p.2, G * 8 + p.1))) => //.
+  - exact: inj_orient.
+  - by move=> p q; apply: dpair_orient.
+  apply/allP => p pI; have /andP[p1 p2] := allP L1B _ pI.
+  by rewrite /bnd; case: d => /=; rewrite !bL.
+rewrite (_ : [:: (0, 4); (2, 6); (1, 5); (3, 7); (0, 2); (4, 6); (1, 3);
+                 (5, 7); (0, 1); (4, 5); (2, 3); (6, 7)]
+           = [:: (0, 4); (2, 6); (1, 5); (3, 7)]
+             ++ [:: (0, 2); (4, 6); (1, 3); (5, 7)]
+             ++ [:: (0, 1); (4, 5); (2, 3); (6, 7)]) //.
+rewrite (_ : [:: (0, 4); (1, 5); (2, 6); (3, 7); (0, 2); (1, 3); (4, 6);
+                 (5, 7); (0, 1); (2, 3); (4, 5); (6, 7)]
+           = [:: (0, 4); (1, 5); (2, 6); (3, 7)]
+             ++ [:: (0, 2); (1, 3); (4, 6); (5, 7)]
+             ++ [:: (0, 1); (2, 3); (4, 5); (6, 7)]) //.
+rewrite !map_cat.
+by apply: dequiv_cat; [apply: step | apply: dequiv_cat; apply: step].
+Qed.
+
+(* hence the wide stage of a merge, whole: it is that merge's last three     *)
+(* levels, one group of eight after the other where the schedule takes each  *)
+(* distance across the whole array                                           *)
+Lemma dequiv_wide (K : nat) (fl : flips) : 0 < K -> 8 %| K -> dflP K fl ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (flatten [seq (pflat (vnet n fl (t * 8) (n %/ 8) mrg8r)).1
+                      | t <- iota 0 ((n %/ 8) %/ 8)]))
+           (dcascade n K 3).
+Proof.
+have qq := row8E; have qE := rowE; have q_gt0 := row_gt0.
+move=> K_gt0 K8 flP.
+have mB : all (fun p : nat * nat => (p.1 < 8) && (p.2 < 8)) mrg8r by [].
+have WB : all (bnd n) (cren (cinv (avx2_layout dvdn_e2n64))
+             (flatten [seq (pflat (vnet n fl (t * 8) (n %/ 8) mrg8r)).1
+                      | t <- iota 0 ((n %/ 8) %/ 8)])).
+  apply: bnd_cren; apply/allP => x /flattenP[l /mapP[t]].
+  rewrite mem_iota add0n => /andP[_ tL] -> xI.
+  have HB : all (fun ab : nat * nat => (t * 8 + ab.1 * (n %/ 8) + 7 < n)
+                                    && (t * 8 + ab.2 * (n %/ 8) + 7 < n)) mrg8r.
+    apply/allP => ab abI; have /andP[a1 a2] := allP mB _ abI.
+    have H1 : t * 8 + 8 <= n %/ 8 by move: tL qq; lia.
+    have a1' : ab.1 <= 7 := a1.
+    have a2' : ab.2 <= 7 := a2.
+    have H2 : ab.1 * (n %/ 8) <= 7 * (n %/ 8) by rewrite leq_mul2r a1' orbT.
+    have H3 : ab.2 * (n %/ 8) <= 7 * (n %/ 8) by rewrite leq_mul2r a2' orbT.
+    by move: H1 H2 H3 qE; nia.
+  by apply: (allP (bnd_pflat_vnet_fl fl HB) _ xI).
+have Hg (ab : nat * nat) :
+    ab \in cren (cinv (avx2_layout dvdn_e2n64))
+             (flatten [seq (pflat (vnet n fl (t * 8) (n %/ 8) mrg8r)).1
+                      | t <- iota 0 ((n %/ 8) %/ 8)]) ->
+    (ab.2 %/ 8 == ab.1 %/ 8) && (ab.1 %/ 8 < n %/ 8).
+  move=> abI.
+  have /andP[b1 _] := allP WB _ abI.
+  have GL : ab.1 %/ 8 < n %/ 8 by rewrite ltn_divLR // qE.
+  have abI2 : ab \in [seq x <- cren (cinv (avx2_layout dvdn_e2n64))
+             (flatten [seq (pflat (vnet n fl (t * 8) (n %/ 8) mrg8r)).1
+                      | t <- iota 0 ((n %/ 8) %/ 8)]) | x.1 %/ 8 == ab.1 %/ 8].
+    by rewrite mem_filter abI eqxx.
+  rewrite (@wide_block K) // in abI2.
+  by have /andP[_ ->] := wide_grp_shape abI2; rewrite GL.
+apply: dequiv_trans (_ : dequiv n _
+  (flatten [seq [seq (if (K == n) || odd (G * 8 %/ K)
+                      then (G * 8 + nth 0 trc ab.1, G * 8 + nth 0 trc ab.2)
+                      else (G * 8 + nth 0 trc ab.2, G * 8 + nth 0 trc ab.1))
+                | ab <- mrg8r]
+           | G <- iota 0 (n %/ 8)])) _.
+  apply: (@dequiv_regroup (fun ab => ab.1 %/ 8) (n %/ 8) _
+            (fun G => [seq (if (K == n) || odd (G * 8 %/ K)
+                            then (G * 8 + nth 0 trc ab.1, G * 8 + nth 0 trc ab.2)
+                            else (G * 8 + nth 0 trc ab.2, G * 8 + nth 0 trc ab.1))
+                      | ab <- mrg8r])) => //.
+  - by apply/allP => ab abI; have /andP[_ ->] := Hg _ abI.
+  - apply/allP => ab abI; apply/allP => cd cdI; apply/implyP => Hne.
+    have /andP[/eqP ab2 _] := Hg _ abI; have /andP[/eqP cd2 _] := Hg _ cdI.
+    apply/and4P; split; apply/eqP => E; move: Hne.
+    + by rewrite E eqxx.
+    + by rewrite E cd2 eqxx.
+    + by rewrite -ab2 E eqxx.
+    + by rewrite -ab2 E cd2 eqxx.
+  by move=> G GL; apply: (@wide_block K).
+apply: dequiv_trans (_ : dequiv n _
+   (flatten [seq dcascade_at n K 3 (G * 8) 8 | G <- iota 0 (n %/ 8)])) _.
+  apply: dequiv_flatten_in => G; rewrite mem_iota add0n => /andP[_ GL].
+  by apply: dequiv_wide_grp.
+apply: dequiv_sym.
+rewrite dcascadeE -{1}qE.
+have := @dequiv_dcascade_at K 3 0 (n %/ 8) 8 isT (dvdn0 _) (dvdnn _).
+rewrite add0n qE leqnn => /(_ isT).
+by under eq_map => g do rewrite add0n.
+Qed.
+
 (* The merges take the same shape, one stage of the program at a time: a      *)
 (* stage sweeps the array with blocks of cnt * q wires, descending the        *)
 (* distances inside a block before moving to the next, where the schedule     *)
