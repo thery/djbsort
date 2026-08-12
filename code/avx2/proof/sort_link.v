@@ -2089,18 +2089,229 @@ apply: dequiv_reorder; last 2 first.
 by rewrite map_inj_uniq // (perm_uniq PF).
 Qed.
 
-(* The merges take the same shape, one stage of the program at a time: a      *)
-(* stage sweeps the array with blocks of cnt * q wires, descending the        *)
-(* distances inside a block before moving to the next, where the schedule     *)
-(* takes each distance across the whole array.  Comparisons of different      *)
-(* blocks share no wire, so dequiv_regroup applies with the block number      *)
-(* i %/ (cnt * q) for the region, once each stage is matched with the run of  *)
-(* levels of dmerges it performs.  dmerges_split cuts the schedule where the  *)
-(* program is cut, and dflP_dbl, dflP_revs and dflP_avx2_tr say that each     *)
-(* part carries the pattern its merges ask for, so each comparison is         *)
-(* oriented as its level orients it.                                          *)
-Lemma dequiv_merges : dequiv n amerges (dmerges n k).
+(* -------------------------------------------------------------------------- *)
+(*  The merges, one at a time                                                 *)
+(* -------------------------------------------------------------------------- *)
+
+(* the wide sweep that closes a merge, as the program writes it              *)
+Lemma dequiv_wide_stage (K : nat) (fl : flips) : 0 < K -> 8 %| K -> dflP K fl ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (stage n fl n 8 (n %/ 8) mrg8r)).1)
+           (dcascade n K 3).
+Proof.
+have qE := rowE; have q_gt0 := row_gt0.
+move=> K_gt0 K8 flP.
+rewrite pflat_stage.
+have -> : 8 * (n %/ 8) = n by rewrite mulnC.
+rewrite divnn (_ : 0 < n = true); last by rewrite e2n_gt0.
+rewrite /= cats0 pflat_blockn.
+rewrite (eq_map (g := fun t => (pflat (vnet n fl (t * 8) (n %/ 8) mrg8r)).1));
+  last by move=> t; rewrite add0n.
+by apply: dequiv_wide.
+Qed.
+
+(* one reversing pass, piece by piece: the pass itself, the ladder it opens,  *)
+(* and the wide sweep that closes it                                          *)
+Lemma pflat_rev_step1 (fl : flips) (p : nat) : 16 %| size fl ->
+  (pflat (rev_step dvdn_e2n64 fl p).1).1
+  = (pflat (rev_pass dvdn_e2n64 fl p).1).1
+    ++ (pflat (ladder n (fl_tog (mrevP p) fl))).1
+    ++ (pflat (stage n (fl_tog (mrevP p) fl) n 8 (n %/ 8) mrg8r)).1.
+Proof.
+move=> flD.
+have f1E : (rev_pass dvdn_e2n64 fl p).2 = fl_tog (mrevP p) fl.
+  by apply: rev_pass_fl.
+rewrite /rev_step; case E : (rev_pass dvdn_e2n64 fl p) => [c f1] /=.
+have cE : (pflat c).2 = cid n by rewrite -[c]/((c, f1).1) -E pflat_rev_pass.
+have -> : f1 = fl_tog (mrevP p) fl by rewrite -f1E E.
+by rewrite pflat_cat1 // pflat_cat1 ?(pflat_nomove (nomv_ladder _ _)).
+Qed.
+
+Lemma pflat_avx2_rev1 :
+  (pflat (avx2_rev dvdn_e2n64).1).1
+  = (pflat (rev_step dvdn_e2n64 (avx2_dbl n).2 4).1).1
+    ++ (pflat (rev_step dvdn_e2n64
+                 (rev_step dvdn_e2n64 (avx2_dbl n).2 4).2 2).1).1
+    ++ (pflat (rev_step dvdn_e2n64
+                 (rev_step dvdn_e2n64
+                    (rev_step dvdn_e2n64 (avx2_dbl n).2 4).2 2).2 1).1).1.
+Proof.
+rewrite /avx2_rev /revs.
+case E1 : (rev_step dvdn_e2n64 (avx2_dbl n).2 4) => [c1 f1].
+case E2 : (rev_step dvdn_e2n64 f1 2) => [c2 f2].
+case E3 : (rev_step dvdn_e2n64 f2 1) => [c3 f3] /=.
+have c1E : (pflat c1).2 = cid n by rewrite -[c1]/((c1, f1).1) -E1 pflat_rev_step.
+have c2E : (pflat c2).2 = cid n by rewrite -[c2]/((c2, f2).1) -E2 pflat_rev_step.
+by rewrite !pflat_cat1 // -[c1]/((c1, f1).1) -E1 -[c2]/((c2, f2).1) -E2
+           -[c3]/((c3, f3).1) -E3 E1 E2.
+Qed.
+
+Lemma rev_step_fl (fl : flips) (p : nat) : 16 %| size fl ->
+  (rev_step dvdn_e2n64 fl p).2 = fl_tog (mrevP p) fl.
+Proof.
+move=> flD; rewrite /rev_step; case E : (rev_pass dvdn_e2n64 fl p) => [c f1] /=.
+by rewrite -[f1]/((c, f1).2) -E rev_pass_fl.
+Qed.
+
+(* so a reversing pass does its merge, once the pass and its ladder are known *)
+(* to do the levels above a group of eight                                    *)
+Lemma dequiv_rev_step (K e : nat) (fl : flips) (p : nat) :
+  0 < K -> 8 %| K -> 3 <= e -> 16 %| size fl ->
+  dflP K (fl_tog (mrevP p) fl) ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             ((pflat (rev_pass dvdn_e2n64 fl p).1).1
+              ++ (pflat (ladder n (fl_tog (mrevP p) fl))).1))
+           (dcascade_hi n K e 3) ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (rev_step dvdn_e2n64 fl p).1).1)
+           (dcascade n K e).
+Proof.
+move=> K_gt0 K8 eL flD flP Hhi.
+rewrite pflat_rev_step1 // !cren_cat catA (@dcascade_hiE n K e 3) //.
+apply: dequiv_cat; first by rewrite -cren_cat.
+exact: dequiv_wide_stage.
+Qed.
+
+(* the patterns the three reversing passes carry                             *)
+Definition rfl4 : flips := fl_tog (mrevP 4) (avx2_dbl n).2.
+Definition rfl2 : flips := fl_tog (mrevP 2) rfl4.
+Definition rfl1 : flips := fl_tog (mrevP 1) rfl2.
+
+Lemma dflP_rfl4 : dflP (n %/ 8) rfl4.
+Proof.
+by rewrite /rfl4; apply: (dflP_tog (K := n)) dflP_dbl => i iL;
+   rewrite dfl_nE dfl_mrev4.
+Qed.
+
+Lemma dflP_rfl2 : dflP (n %/ 4) rfl2.
+Proof.
+by rewrite /rfl2; apply: (dflP_tog (K := n %/ 8)) dflP_rfl4 => i iL;
+   rewrite dfl_mrev2.
+Qed.
+
+Lemma dflP_rfl1 : dflP (n %/ 2) rfl1.
+Proof.
+by rewrite /rfl1; apply: (dflP_tog (K := n %/ 4)) dflP_rfl2 => i iL;
+   rewrite dfl_mrev1.
+Qed.
+
+Lemma size_afl0 : size (avx2_dbl n).2 = n.
+Proof. by have [] := dflP_dbl. Qed.
+
+Lemma rfl4E : (rev_step dvdn_e2n64 (avx2_dbl n).2 4).2 = rfl4.
+Proof.
+by rewrite rev_step_fl // size_afl0; apply: dvdn_trans dvdn_e2n64; apply/dvdnP;
+   exists 4.
+Qed.
+
+Lemma rfl2E : (rev_step dvdn_e2n64 rfl4 2).2 = rfl2.
+Proof.
+rewrite rev_step_fl // /rfl4 size_fl_tog size_afl0.
+by apply: dvdn_trans dvdn_e2n64; apply/dvdnP; exists 4.
+Qed.
+
+Lemma rfl1E : (rev_step dvdn_e2n64 rfl2 1).2 = rfl1.
+Proof.
+rewrite rev_step_fl // /rfl2 /rfl4 !size_fl_tog size_afl0.
+by apply: dvdn_trans dvdn_e2n64; apply/dvdnP; exists 4.
+Qed.
+
+(* -------------------------------------------------------------------------- *)
+(*  What is left                                                              *)
+(* -------------------------------------------------------------------------- *)
+
+(* The merges of doubling size, whole: sweeps and wide sweep, one merge size  *)
+(* after the other.                                                           *)
+Lemma merges_dbl :
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64)) (pflat (avx2_dbl n).1).1)
+           (dmerges n (k - 4)).
 Admitted.
+
+(* And, for each of the four merges the tail still owes, the levels above a   *)
+(* group of eight: what the reversing pass and the ladder after it do -- the  *)
+(* pass takes the distances of a row and more, through its shuffles, the      *)
+(* ladder the ones below a row.                                               *)
+Lemma merges_hi4 :
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             ((pflat (rev_pass dvdn_e2n64 (avx2_dbl n).2 4).1).1
+              ++ (pflat (ladder n rfl4)).1))
+           (dcascade_hi n (n %/ 8) k.-1 3).
+Admitted.
+
+Lemma merges_hi2 :
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             ((pflat (rev_pass dvdn_e2n64 rfl4 2).1).1
+              ++ (pflat (ladder n rfl2)).1))
+           (dcascade_hi n (n %/ 4) k 3).
+Admitted.
+
+Lemma merges_hi1 :
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             ((pflat (rev_pass dvdn_e2n64 rfl2 1).1).1
+              ++ (pflat (ladder n rfl1)).1))
+           (dcascade_hi n (n %/ 2) k.+1 3).
+Admitted.
+
+(* the last merge: the transpose sorts what a row apart cannot reach, and the *)
+(* ladder after it comes back down                                            *)
+Lemma merges_hi_last :
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             ((pflat (avx2_tr dvdn_e2n64).1).1
+              ++ (pflat (avx2_lad dvdn_e2n64)).1))
+           (dcascade_hi n n k.+2 3).
+Admitted.
+
+(* The merges take the same shape, one merge at a time: the doublings, then   *)
+(* one merge for each reversing pass, then the last one, which is what the    *)
+(* transpose, the ladder after it and the sort that writes the result out do  *)
+(* together.  Each of them ends with the three levels inside a group of       *)
+(* eight, which is the program's wide sweep (dequiv_wide_stage).              *)
+Lemma dequiv_merges : dequiv n amerges (dmerges n k).
+Proof.
+have n_gt0 : 0 < n by rewrite e2n_gt0.
+have q_gt0 := row_gt0; have qE := rowE.
+have D16 : 16 %| n by apply: dvdn_trans dvdn_e2n64; apply/dvdnP; exists 4.
+rewrite /amerges pflat_avx2_tail2 !cren_cat pflat_avx2_rev1 !cren_cat.
+rewrite rfl4E rfl2E dmerges_split.
+apply: dequiv_cat merges_dbl _.
+set A1 := cren _ (pflat (rev_step dvdn_e2n64 (avx2_dbl n).2 4).1).1.
+set A2 := cren _ (pflat (rev_step dvdn_e2n64 rfl4 2).1).1.
+set A3 := cren _ (pflat (rev_step dvdn_e2n64 rfl2 1).1).1.
+set A4 := cren _ (pflat (avx2_tr dvdn_e2n64).1).1.
+set A5 := cren _ (pflat (avx2_lad dvdn_e2n64)).1.
+set A6 := cren _ (pflat (avx2_out dvdn_e2n64)).1.
+have -> : (A1 ++ A2 ++ A3) ++ (A4 ++ A5 ++ A6)
+        = A1 ++ A2 ++ A3 ++ (A4 ++ A5 ++ A6) by rewrite !catA.
+have Dq8 : 8 %| n %/ 8 := dvdn_row.
+have Dq4 : 8 %| n %/ 4 by rewrite qE4 dvdn_mulr.
+have Dq2 : 8 %| n %/ 2 by rewrite qE2 dvdn_mulr.
+have q4_gt0 : 0 < n %/ 4 by rewrite qE4 muln_gt0 q_gt0.
+have q2_gt0 : 0 < n %/ 2 by rewrite qE2 muln_gt0 q_gt0.
+apply: dequiv_cat.
+  rewrite /A1; apply: (dequiv_rev_step (K := n %/ 8) (e := k.-1) (p := 4)) => //.
+  - by lia.
+  - by rewrite size_afl0.
+  - exact: dflP_rfl4.
+  exact: merges_hi4.
+apply: dequiv_cat.
+  rewrite /A2; apply: (dequiv_rev_step (K := n %/ 4) (e := k) (p := 2)) => //.
+  - by lia.
+  - by rewrite /rfl4 size_fl_tog size_afl0.
+  - exact: dflP_rfl2.
+  exact: merges_hi2.
+apply: dequiv_cat.
+  rewrite /A3; apply: (dequiv_rev_step (K := n %/ 2) (e := k.+1) (p := 1)) => //.
+  - by lia.
+  - by rewrite /rfl2 /rfl4 !size_fl_tog size_afl0.
+  - exact: dflP_rfl1.
+  exact: merges_hi1.
+rewrite catA (@dcascade_hiE n n k.+2 3) //; last by lia.
+apply: dequiv_cat; first by rewrite /A4 /A5 -cren_cat; exact: merges_hi_last.
+rewrite /A6 /avx2_out pflat_tsort_out1.
+apply: dequiv_wide => //; first by apply: dvdn_trans dvdn_e2n64; apply/dvdnP;
+  exists 8.
+exact: dflP_avx2_tr.
+Qed.
 
 Lemma dequiv_avx2 : dequiv n avx2_list (dpairs n k).
 Proof.
