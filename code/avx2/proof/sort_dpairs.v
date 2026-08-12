@@ -126,6 +126,22 @@ have eD : `2^ e %| `2^ e.+1 by rewrite dvdn_e2n.
 by apply: IH; apply: dvdn_trans eD _.
 Qed.
 
+(* the levels of a cascade above the last j of them: what the program does    *)
+(* before it comes down to a group of eight                                   *)
+Fixpoint dcascade_hi (n k e j : nat) : seq (nat * nat) :=
+  if e is e1.+1 then
+    if e1 < j then [::] else dlevel n k (`2^ e1) ++ dcascade_hi n k e1 j
+  else [::].
+
+Lemma dcascade_hiE (n k e j : nat) : j <= e ->
+  dcascade n k e = dcascade_hi n k e j ++ dcascade n k j.
+Proof.
+elim: e => [|e IH] jL; first by rewrite (_ : j = 0) //; case: j jL.
+case: (leqP j e) => [jLe|eLj] /=.
+  by rewrite (ltnNge e j) jLe /= -catA -IH.
+by rewrite eLj (_ : j = e.+1) //; lia.
+Qed.
+
 (* -------------------------------------------------------------------------- *)
 (*  The same split, on the network side                                       *)
 (* -------------------------------------------------------------------------- *)
