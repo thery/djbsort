@@ -885,41 +885,421 @@ Lemma nth_fl_shuf (c : nat) (tb : seq nat) (fl : flips) (i : nat) :
   nth false (fl_shuf c tb fl) i = nth false fl (i %/ c * c + nth 0 tb (i %% c)).
 Proof. by move=> iL; rewrite /fl_shuf (nth_map 0) ?size_iota // nth_iota. Qed.
 
-(* so the merges of doubling size start from the mask itself                  *)
-Lemma size_fl_dbl : size (fl_tog flipallP (noflip n)) = n.
-Proof. by rewrite size_fl_tog size_noflip. Qed.
+(* -------------------------------------------------------------------------- *)
+(*  The orientation the schedule asks for                                     *)
+(* -------------------------------------------------------------------------- *)
 
-Lemma nth_fl_dbl (i : nat) : i < n ->
-  nth false (fl_tog flipallP (noflip n)) i = flipallP i.
-Proof. by move=> iL; rewrite nth_fl_tog ?size_noflip // nth_noflip. Qed.
+(* A merge of size K sorts its blocks alternately, and the schedule reads the *)
+(* direction off the block number: dlevel compares upwards when k = n or when *)
+(* the block number is odd.  The program does the same comparison both ways   *)
+(* round by complementing the values of the blocks that go downwards, so the  *)
+(* pattern it must carry during that merge is this one, read at the position  *)
+(* the wire ends in.                                                          *)
+Definition dfl (K i : nat) : bool :=
+  ~~ ((K == n) || odd (capp (cinv (avx2_layout dvdn_e2n64)) i %/ K)).
 
-(* the masks the merges of doubling size put in, all of them together: one    *)
-(* per doubling, and the doublings stop when the merge is the whole array     *)
-Fixpoint fmAll (fuel p i : nat) : bool :=
-  if fuel is f.+1 then
-    if p * 16 == n then fmP n p i else fmP n p i (+) fmAll f p.*2 i
-  else false.
-
-Lemma size_pdouble_fl (fuel p : nat) (fl : flips) :
-  size (pdouble n fuel fl p).2 = size fl.
+(* below a row the merge blocks are blocks of the array: the layout renames   *)
+(* the rows, so the block number is read inside a row                         *)
+Lemma dfl_narrow (p i : nat) : 8 %| p -> p.*2 %| (n %/ 8) -> i < n ->
+  dfl p i = ~~ odd ((i %% (n %/ 8)) %/ p).
 Proof.
-elim: fuel p fl => [|f IH] p fl //=.
-case: ifP => _ /=; first by rewrite size_fl_tog.
-have := IH p.*2 (fl_tog (fmP n p) fl).
-case: (pdouble n f (fl_tog (fmP n p) fl) p.*2) => c3 f2 /= ->.
-by rewrite size_fl_tog.
+have qq := row8E; have qE := rowE; have q_gt0 := row_gt0.
+move=> p8 p2q iL.
+have [d dE] := dvdnP p8.
+have [c cE] := dvdnP p2q.
+have p_gt0 : 0 < p by case: (posnP p) => // p0; move: cE; rewrite p0 doubleE; lia.
+have d_gt0 : 0 < d by lia.
+have pLq : p.*2 <= n %/ 8 by rewrite dvdn_leq.
+have pLn : p < n by lia.
+rewrite /dfl (ltn_eqF pLn) orFb capp_cinv_wire //.
+have E8 (a b : nat) : b < 8 -> (8 * a + b) %/ p = a %/ d.
+  move=> bL; rewrite dE [d * 8]mulnC divnMA [8 * a]mulnC divnMDl //.
+  by rewrite (divn_small bL) addn0.
+have rL : i %/ (n %/ 8) < 8 by rewrite ltn_divLR // mulnC qE.
+have lL : i %% 8 < 8 by rewrite ltn_mod.
+have R : nth 0 trc (i %% 8) * (n %/ 8)
+         + (8 * ((i %% (n %/ 8)) %/ 8) + nth 0 trc (i %/ (n %/ 8)))
+       = nth 0 trc (i %% 8) * c.*2 * p
+         + (8 * ((i %% (n %/ 8)) %/ 8) + nth 0 trc (i %/ (n %/ 8))).
+  by rewrite cE; lia.
+rewrite R divnMDl // E8 ?trc_lt // oddD.
+have -> : odd (nth 0 trc (i %% 8) * c.*2) = false by rewrite oddM odd_double andbF.
+by rewrite {2}(divn_eq (i %% (n %/ 8)) 8) [_ %/ 8 * 8]mulnC modn_row8 E8.
 Qed.
 
-(* so the pattern the doublings leave is the one they started from, with      *)
-(* those masks exclusive-ored in                                              *)
-Lemma nth_pdouble_fl (fuel p : nat) (fl : flips) (i : nat) : i < size fl ->
-  nth false (pdouble n fuel fl p).2 i = nth false fl i (+) fmAll fuel p i.
+(* from a row up the blocks are whole rows, and the layout puts the rows of a *)
+(* lane in the order trc: the block number is read off the lane               *)
+Lemma dfl_wide (c i : nat) : c %| 8 -> c < 8 -> i < n ->
+  dfl (n %/ 8 * c) i = ~~ odd (nth 0 trc (i %% 8) %/ c).
 Proof.
-elim: fuel p fl => [|f IH] p fl iL /=; first by rewrite addbF.
-case: ifP => _ /=; first by rewrite nth_fl_tog.
-have := IH p.*2 (fl_tog (fmP n p) fl).
-case: (pdouble n f (fl_tog (fmP n p) fl) p.*2) => c3 f2 /= H.
-by rewrite H ?size_fl_tog // nth_fl_tog // addbA.
+have qq := row8E; have qE := rowE; have q_gt0 := row_gt0.
+move=> c8 cL iL.
+have c_gt0 : 0 < c by case: (posnP c) => // c0; move: c8; rewrite c0 dvd0n.
+have cLn : n %/ 8 * c < n by nia.
+have rL : i %/ (n %/ 8) < 8 by rewrite ltn_divLR // mulnC qE.
+have lL : i %% 8 < 8 by rewrite ltn_mod.
+have bL : (i %% (n %/ 8)) %/ 8 < (n %/ 8) %/ 8.
+  by rewrite ltn_divLR // qq ltn_pmod.
+have tL := trc_lt lL; have tR := trc_lt rL.
+rewrite /dfl (ltn_eqF cLn) orFb capp_cinv_wire //.
+have H1 : nth 0 trc (i %% 8) %% c < c by rewrite ltn_mod.
+have H3 : 8 * ((i %% (n %/ 8)) %/ 8) + nth 0 trc (i %/ (n %/ 8)) < n %/ 8 by nia.
+have H4 : (nth 0 trc (i %% 8) %% c).+1 * (n %/ 8) <= c * (n %/ 8).
+  by rewrite leq_mul2r H1 orbT.
+rewrite mulSn in H4.
+have H2 : nth 0 trc (i %% 8) %% c * (n %/ 8)
+          + (8 * ((i %% (n %/ 8)) %/ 8) + nth 0 trc (i %/ (n %/ 8)))
+        < n %/ 8 * c by rewrite [n %/ 8 * c]mulnC; lia.
+have R : nth 0 trc (i %% 8) * (n %/ 8)
+         + (8 * ((i %% (n %/ 8)) %/ 8) + nth 0 trc (i %/ (n %/ 8)))
+       = nth 0 trc (i %% 8) %/ c * (n %/ 8 * c)
+         + (nth 0 trc (i %% 8) %% c * (n %/ 8)
+            + (8 * ((i %% (n %/ 8)) %/ 8) + nth 0 trc (i %/ (n %/ 8)))).
+  by rewrite {1}(divn_eq (nth 0 trc (i %% 8)) c); lia.
+rewrite R divnMDl; last by rewrite muln_gt0 q_gt0.
+by rewrite (divn_small H2) addn0.
+Qed.
+
+(* the last merge sorts every block upwards, so it complements nothing        *)
+Lemma dfl_nE (i : nat) : dfl n i = false.
+Proof. by rewrite /dfl eqxx. Qed.
+
+Lemma qE4 : n %/ 4 = n %/ 8 * 2.
+Proof. by rewrite -{1}rowE (_ : n %/ 8 * 8 = n %/ 8 * 2 * 4) ?mulnK //; lia. Qed.
+
+Lemma qE2 : n %/ 2 = n %/ 8 * 4.
+Proof. by rewrite -{1}rowE (_ : n %/ 8 * 8 = n %/ 8 * 4 * 2) ?mulnK //; lia. Qed.
+
+Lemma e2q : n = `2^ k.-1 * 8.
+Proof. by rewrite -[8]/(`2^ 3) -e2nD; congr (`2^ _); lia. Qed.
+
+Lemma qE8 : n %/ 8 = `2^ k.-1.
+Proof. by rewrite {1}e2q mulnK. Qed.
+
+Lemma qE4b : n %/ 4 = `2^ k.
+Proof.
+have E : n = `2^ k * 4 by rewrite -[4]/(`2^ 2) -e2nD; congr (`2^ _); lia.
+by rewrite {1}E mulnK.
+Qed.
+
+Lemma qE2b : n %/ 2 = `2^ k.+1.
+Proof.
+have E : n = `2^ k.+1 * 2 by rewrite -[2]/(`2^ 1) -e2nD; congr (`2^ _); lia.
+by rewrite {1}E mulnK.
+Qed.
+
+(* the mask the merges of doubling size start from is the pattern of the      *)
+(* merge of size eight                                                        *)
+Lemma dfl_base (i : nat) : 16 %| n %/ 8 -> i < n -> flipallP i = dfl 8 i.
+Proof.
+move=> q16 iL.
+rewrite dfl_narrow // divn_modl ?dvdn_row //.
+have oddmod (a b : nat) : odd b = false -> odd (a %% b) = odd a.
+  by move=> bE; rewrite {2}(divn_eq a b) oddD oddM bE andbF.
+have q8e : odd ((n %/ 8) %/ 8) = false.
+  have [c cE] := dvdnP q16.
+  by rewrite cE (_ : c * 16 %/ 8 = c.*2) ?odd_double //; lia.
+by rewrite oddmod // /flipallP; lia.
+Qed.
+
+(* and each merge of doubling size xors in exactly the difference between its *)
+(* own pattern and the next one                                               *)
+Lemma dfl_fmP (p i : nat) : 8 %| p -> p.*2.*2 %| (n %/ 8) -> i < n ->
+  dfl p i (+) fmP n p i = dfl p.*2 i.
+Proof.
+have q_gt0 := row_gt0.
+move=> p8 p4q iL.
+have p2q : p.*2 %| n %/ 8.
+  by apply: dvdn_trans p4q; rewrite -[in X in _ %| X]muln2 dvdn_mulr.
+have p82 : 8 %| p.*2 by rewrite -muln2 dvdn_mulr.
+have p4L : p.*2.*2 <= n %/ 8 by rewrite dvdn_leq.
+have p_gt0 : 0 < p.
+  by case: (posnP p) => // p0; move: p4q q_gt0; rewrite p0 dvd0n => /eqP ->.
+have pE : (p.*2 == n %/ 8) = false by apply/eqP; lia.
+rewrite !dfl_narrow // /fmP /fmflip pE.
+have Ep : p.*2 %/ p = 2 by rewrite -muln2 mulKn.
+have E : ((i %% (n %/ 8)) %% p.*2) %/ p = (i %% (n %/ 8)) %/ p %% 2.
+  by rewrite divn_modl ?Ep // -muln2 dvdn_mulr.
+rewrite E modn2 oddb.
+by case: odd; case: odd.
+Qed.
+
+(* the last of them leaves nothing complemented                              *)
+Lemma dfl_fmP_last (p i : nat) : 8 %| p -> p.*2 = n %/ 8 -> i < n ->
+  dfl p i (+) fmP n p i = false.
+Proof.
+have q_gt0 := row_gt0.
+move=> p8 pqE iL.
+have p2q : p.*2 %| n %/ 8 by rewrite pqE.
+have rL : i %% (n %/ 8) < p.*2 by rewrite pqE ltn_pmod.
+rewrite dfl_narrow // /fmP /fmflip pqE eqxx modn_mod.
+by case: odd.
+Qed.
+
+(* the masks of the three reversing passes are the three differences left:    *)
+(* from nothing complemented to the merge of a row, and on to two rows and    *)
+(* four                                                                       *)
+Lemma dfl_mrev4 (i : nat) : i < n -> mrevP 4 i = dfl (n %/ 8) i.
+Proof.
+move=> iL; rewrite -[n %/ 8]muln1 dfl_wide // divn1.
+have lL : i %% 8 < 8 by rewrite ltn_mod.
+by move: lL; rewrite /mrevP; case: (i %% 8) => [|[|[|[|[|[|[|[|m]]]]]]]].
+Qed.
+
+Lemma dfl_mrev2 (i : nat) : i < n ->
+  dfl (n %/ 8) i (+) mrevP 2 i = dfl (n %/ 4) i.
+Proof.
+move=> iL; rewrite qE4 -{1}[n %/ 8]muln1 !dfl_wide // divn1.
+have lL : i %% 8 < 8 by rewrite ltn_mod.
+by move: lL; rewrite /mrevP; case: (i %% 8) => [|[|[|[|[|[|[|[|m]]]]]]]].
+Qed.
+
+Lemma dfl_mrev1 (i : nat) : i < n ->
+  dfl (n %/ 4) i (+) mrevP 1 i = dfl (n %/ 2) i.
+Proof.
+move=> iL; rewrite qE4 qE2 !dfl_wide //.
+have lL : i %% 8 < 8 by rewrite ltn_mod.
+rewrite /mrevP /= (_ : i %% 4 = (i %% 8) %% 4); last by rewrite modn_dvdm.
+by move: lL; case: (i %% 8) => [|[|[|[|[|[|[|[|m]]]]]]]].
+Qed.
+
+(* before the last merge the pattern is the one of the lanes                 *)
+Lemma dfl_half (i : nat) : i < n -> dfl (n %/ 2) i = ~~ odd (i %% 8).
+Proof.
+move=> iL; rewrite qE2 dfl_wide //.
+have lL : i %% 8 < 8 by rewrite ltn_mod.
+by move: lL; case: (i %% 8) => [|[|[|[|[|[|[|[|m]]]]]]]].
+Qed.
+
+(* -------------------------------------------------------------------------- *)
+(*  The pattern each part of the program carries                              *)
+(* -------------------------------------------------------------------------- *)
+
+(* checking a property of every position under a bound is a computation      *)
+Lemma iota_allP (Q : nat -> bool) (c x : nat) : all Q (iota 0 c) -> x < c -> Q x.
+Proof. by move=> H xL; apply: (allP H); rewrite mem_iota add0n. Qed.
+
+(* a shuffle whose table is an involution carries a pattern back where it was *)
+Lemma fl_shufK (c : nat) (tb : seq nat) (fl : flips) :
+  0 < c -> c %| size fl ->
+  (forall x, x < c -> nth 0 tb x < c) ->
+  (forall x, x < c -> nth 0 tb (nth 0 tb x) = x) ->
+  fl_shuf c tb (fl_shuf c tb fl) = fl.
+Proof.
+move=> c_gt0 cD tbL tbK.
+apply: (@eq_from_nth _ false); first by rewrite !size_fl_shuf.
+move=> i; rewrite !size_fl_shuf => iL.
+have mL : i %% c < c by rewrite ltn_mod.
+have jL : i %/ c * c + nth 0 tb (i %% c) < size fl.
+  have [d dE] := dvdnP cD.
+  have H := tbL _ mL.
+  have : i %/ c < d by rewrite ltn_divLR // -dE.
+  by nia.
+rewrite !nth_fl_shuf ?size_fl_shuf //.
+rewrite divnMDl // (divn_small (tbL _ mL)) addn0 modnMDl (modn_small (tbL _ mL)).
+by rewrite tbK // -divn_eq.
+Qed.
+
+Lemma tb_permK (g : flips) : 16 %| size g ->
+  fl_shuf 16 tb_perm (fl_shuf 16 tb_perm g) = g.
+Proof.
+move=> gD; apply: fl_shufK => // x xL.
+  by apply: (iota_allP (Q := fun y => nth 0 tb_perm y < 16) _ xL).
+by apply/eqP;
+   apply: (iota_allP (Q := fun y => nth 0 tb_perm (nth 0 tb_perm y) == y) _ xL).
+Qed.
+
+Lemma tb_u64K (g : flips) : 16 %| size g ->
+  fl_shuf 16 tb_u64 (fl_shuf 16 tb_u64 g) = g.
+Proof.
+move=> gD; apply: fl_shufK => // x xL.
+  by apply: (iota_allP (Q := fun y => nth 0 tb_u64 y < 16) _ xL).
+by apply/eqP;
+   apply: (iota_allP (Q := fun y => nth 0 tb_u64 (nth 0 tb_u64 y) == y) _ xL).
+Qed.
+
+(* so a reversing pass leaves the pattern it toggled: its shuffles cancel     *)
+Lemma rev_pass_fl (fl : flips) (p : nat) : 16 %| size fl ->
+  (rev_pass dvdn_e2n64 fl p).2 = fl_tog (mrevP p) fl.
+Proof.
+move=> flD.
+have fD : 16 %| size (fl_tog (mrevP p) fl) by rewrite size_fl_tog.
+rewrite /rev_pass; case: (p == 4) => //.
+case: (p == 2) => /=.
+  by rewrite tb_permK.
+by rewrite tb_u64K ?size_fl_shuf // tb_permK.
+Qed.
+
+(* a pattern of the whole array is the one the merge of size K asks for      *)
+Definition dflP (K : nat) (fl : flips) : Prop :=
+  size fl = n /\ forall i, i < n -> nth false fl i = dfl K i.
+
+Lemma dflP_noflip : dflP n (noflip n).
+Proof. by split => [|i iL]; rewrite ?size_noflip // nth_noflip dfl_nE. Qed.
+
+Lemma dflP_tog (P : nat -> bool) (K K' : nat) (fl : flips) :
+  (forall i, i < n -> dfl K i (+) P i = dfl K' i) -> dflP K fl ->
+  dflP K' (fl_tog P fl).
+Proof.
+move=> H [flS flN]; split => [|i iL]; first by rewrite size_fl_tog.
+by rewrite nth_fl_tog ?flS ?flN ?H.
+Qed.
+
+Lemma dflP_base : 16 %| n %/ 8 -> dflP 8 (fl_tog flipallP (noflip n)).
+Proof.
+by move=> q16; apply: dflP_tog dflP_noflip => i iL; rewrite dfl_nE dfl_base.
+Qed.
+
+Lemma dflP_rev (p K K' : nat) (fl : flips) :
+  (forall i, i < n -> dfl K i (+) mrevP p i = dfl K' i) -> dflP K fl ->
+  dflP K' (rev_step dvdn_e2n64 fl p).2.
+Proof.
+move=> H flP.
+have flS := proj1 flP.
+rewrite /rev_step; case E : (rev_pass dvdn_e2n64 fl p) => [c f1].
+have -> : f1 = fl_tog (mrevP p) fl.
+  by rewrite -[f1]/((c, f1).2) -E rev_pass_fl // flS; apply: dvdn_trans dvdn_e2n64.
+exact: dflP_tog H flP.
+Qed.
+
+(* one step of the merges of doubling size, read on the pattern alone        *)
+Lemma pdoubleS_fl (m f p : nat) (fl : flips) :
+  (pdouble m f.+1 fl p).2 =
+    (if p * 16 == m then fl_tog (fmP m p) fl
+     else (pdouble m f (fl_tog (fmP m p) fl) p.*2).2).
+Proof.
+rewrite /=; case: ifP => // _.
+by case: (pdouble m f (fl_tog (fmP m p) fl) p.*2).
+Qed.
+
+(* starting from the pattern of the merge of size p, the doublings run       *)
+(* through the merges up to a row and end with nothing complemented          *)
+Lemma dflP_pdouble (fuel p j : nat) (fl : flips) :
+  8 %| p -> n %/ 8 = p * (`2^ j) -> 0 < j -> j <= fuel -> dflP p fl ->
+  dflP n (pdouble n fuel fl p).2.
+Proof.
+have qE8' := rowE.
+elim: fuel p j fl => [|f IH] p j fl p8 qE j_gt0 jL flP; first by exfalso; lia.
+have p_gt0 : 0 < p by move: row_gt0; rewrite qE muln_gt0 => /andP[].
+have p82 : 8 %| p.*2 by rewrite -muln2 dvdn_mulr.
+rewrite pdoubleS_fl.
+case: (boolP (p * 16 == n)) => [/eqP pE|pD].
+  apply: dflP_tog flP => i iL.
+  by rewrite dfl_nE; apply: dfl_fmP_last => //; lia.
+have j2 : 2 <= j.
+  case: (leqP 2 j) => // j1.
+  have jE : j = 1 by lia.
+  move: qE; rewrite jE (_ : `2^ 1 = 2) // => qE1.
+  have pnE : p * 16 = n by lia.
+  by move: pD; rewrite pnE eqxx.
+have [j' jE] : exists j', j = j'.+1 by exists j.-1; lia.
+have e2E : `2^ j = `2^ j' + `2^ j' by rewrite jE e2Sn.
+apply: (IH p.*2 j') => //; first by rewrite qE e2E -muln2; lia.
+- by lia.
+- by lia.
+apply: dflP_tog flP => i iL.
+apply: dfl_fmP => //.
+have [j'' jE'] : exists j'', j' = j''.+1 by exists j'.-1; lia.
+rewrite qE e2E jE' e2Sn -!muln2.
+by apply/dvdnP; exists (`2^ j''); lia.
+Qed.
+
+Lemma dflP_dbl : dflP n (avx2_dbl n).2.
+Proof.
+rewrite /avx2_dbl; case: leqP => [nG|nL]; first exact: dflP_noflip.
+have k5 : 5 <= k by move: nL; rewrite -[128]/(`2^ 7) leq_e2n; lia.
+have qjE : n %/ 8 = 8 * (`2^ (k - 4)).
+  by rewrite qE8 -[8]/(`2^ 3) -e2nD; congr (`2^ _); lia.
+apply: (dflP_pdouble (j := k - 4)) => //; first by lia.
+  by have := ltn_ne2n k; have : `2^ k <= n; [rewrite leq_e2n; lia | lia].
+by apply: dflP_base; rewrite qjE -[16]/(`2^ 4) -[8]/(`2^ 3) -e2nD dvdn_e2n; lia.
+Qed.
+
+Lemma avx2_rev_fl : (avx2_rev dvdn_e2n64).2
+  = (rev_step dvdn_e2n64
+       (rev_step dvdn_e2n64 (rev_step dvdn_e2n64 (avx2_dbl n).2 4).2 2).2 1).2.
+Proof.
+rewrite /avx2_rev /revs.
+case: (rev_step dvdn_e2n64 (avx2_dbl n).2 4) => c1 f1.
+case: (rev_step dvdn_e2n64 f1 2) => c2 f2.
+by case: (rev_step dvdn_e2n64 f2 1).
+Qed.
+
+(* the three reversing passes take it on, one merge each                     *)
+Lemma dflP_revs : dflP (n %/ 2) (avx2_rev dvdn_e2n64).2.
+Proof.
+rewrite avx2_rev_fl.
+apply: (dflP_rev (K := n %/ 4)); first by move=> i iL; rewrite dfl_mrev1.
+apply: (dflP_rev (K := n %/ 8)); first by move=> i iL; rewrite dfl_mrev2.
+by apply: (dflP_rev (K := n)) dflP_dbl => i iL; rewrite dfl_nE dfl_mrev4.
+Qed.
+
+Lemma tsort64_flE (fl : flips) :
+  (tsort64 dvdn_e2n64 fl).2
+   = fl_shuf 64 tb_tr (fl_shuf 64 tb_trhi (fl_tog t64P (fl_shuf 64 tb_trlo fl))).
+Proof. by []. Qed.
+
+(* and the transpose sort undoes the last of them: the mask it puts in       *)
+(* between its two halves is what its shuffles leave of the pattern, so what *)
+(* comes out is nothing complemented -- as the last merge asks               *)
+Lemma dflP_tsort64 (fl : flips) :
+  dflP (n %/ 2) fl -> dflP n (tsort64 dvdn_e2n64 fl).2.
+Proof.
+have n64 : 64 %| n := dvdn_e2n64.
+move=> [flS flN]; rewrite tsort64_flE; split.
+  by rewrite !size_fl_shuf size_fl_tog size_fl_shuf.
+move=> i iL.
+have jL : i %% 64 < 64 by rewrite ltn_mod.
+have bnd (t : nat) : t < 64 -> i %/ 64 * 64 + t < n.
+  move=> tL; have H : i %/ 64 < n %/ 64 by rewrite ltn_divLR // (divnK n64).
+  by have := divnK n64; nia.
+have trL (t : nat) : t < 64 -> nth 0 tb_tr t < 64
+  by apply: (iota_allP (Q := fun y => nth 0 tb_tr y < 64)).
+have trhiL (t : nat) : t < 64 -> nth 0 tb_trhi t < 64
+  by apply: (iota_allP (Q := fun y => nth 0 tb_trhi y < 64)).
+have trloL (t : nat) : t < 64 -> nth 0 tb_trlo t < 64
+  by apply: (iota_allP (Q := fun y => nth 0 tb_trlo y < 64)).
+rewrite nth_fl_shuf ?size_fl_shuf ?size_fl_tog ?flS //.
+rewrite nth_fl_shuf ?size_fl_tog ?size_fl_shuf ?flS; last by rewrite bnd ?trL.
+rewrite divnMDl // (divn_small (trL _ jL)) addn0.
+rewrite modnMDl (modn_small (trL _ jL)).
+rewrite nth_fl_tog ?size_fl_shuf ?flS; last by rewrite bnd ?trhiL ?trL.
+rewrite nth_fl_shuf ?flS; last by rewrite bnd ?trhiL ?trL.
+rewrite divnMDl // (divn_small (trhiL _ (trL _ jL))) addn0.
+rewrite modnMDl (modn_small (trhiL _ (trL _ jL))).
+rewrite flN ?bnd ?trloL ?trhiL ?trL // dfl_half ?bnd ?trloL ?trhiL ?trL //.
+rewrite dfl_nE /t64P modnMDl (modn_small (trhiL _ (trL _ jL))).
+rewrite (_ : (i %/ 64 * 64
+              + nth 0 tb_trlo (nth 0 tb_trhi (nth 0 tb_tr (i %% 64)))) %% 8
+             = nth 0 tb_trlo (nth 0 tb_trhi (nth 0 tb_tr (i %% 64))) %% 8);
+  last by rewrite -[64]/(8 * 8) mulnA modnMDl.
+have H64 : all (fun j =>
+  ~~ (~~ odd (nth 0 tb_trlo (nth 0 tb_trhi (nth 0 tb_tr j)) %% 8)
+      (+) ((nth 0 tb_trhi (nth 0 tb_tr j) %/ 8 < 2)
+           || (4 <= nth 0 tb_trhi (nth 0 tb_tr j) %/ 8 < 6)))) (iota 0 64).
+  by vm_compute.
+by apply/negbTE; apply: (iota_allP H64 jL).
+by rewrite size_fl_shuf flS.
+Qed.
+
+(* so the ladder after the transpose and the sort that writes the result out  *)
+(* run with nothing complemented at all                                       *)
+Lemma dflP_avx2_tr : dflP n (avx2_tr dvdn_e2n64).2.
+Proof. by rewrite /avx2_tr; apply: dflP_tsort64 dflP_revs. Qed.
+
+(* -------------------------------------------------------------------------- *)
+(*  The schedule, cut where the program is cut                                *)
+(* -------------------------------------------------------------------------- *)
+
+(* the merges of sizes 8 to a row, then one merge for each reversing pass,   *)
+(* then the last one, which is what the transpose and the ladder after it do *)
+Lemma dmerges_split : dmerges n k
+  = dmerges n (k - 4) ++ dcascade n (n %/ 8) k.-1
+    ++ dcascade n (n %/ 4) k ++ dcascade n (n %/ 2) k.+1 ++ dcascade n n k.+2.
+Proof.
+have [j jE] : exists j, k = j.+4 by exists (k - 4); lia.
+rewrite qE8 qE4b qE2b jE /=.
+by rewrite (_ : j.+4 - 4 = j) ?catA //; lia.
 Qed.
 
 (* one batch once values are complemented: a lane whose first wire carries a  *)
@@ -1094,7 +1474,10 @@ Qed.
 (* takes each distance across the whole array.  Comparisons of different      *)
 (* blocks share no wire, so dequiv_regroup applies with the block number      *)
 (* i %/ (cnt * q) for the region, once each stage is matched with the run of  *)
-(* levels of dmerges it performs.                                             *)
+(* levels of dmerges it performs.  dmerges_split cuts the schedule where the  *)
+(* program is cut, and dflP_dbl, dflP_revs and dflP_avx2_tr say that each     *)
+(* part carries the pattern its merges ask for, so each comparison is         *)
+(* oriented as its level orients it.                                          *)
 Lemma dequiv_merges : dequiv n amerges (dmerges n k).
 Admitted.
 
