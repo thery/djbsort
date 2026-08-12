@@ -20,6 +20,8 @@ Import Order POrderTheory TotalTheory.
 (*      dlevel n k j == one level: distance j inside merges of size k         *)
 (*      dbase n      == the four-wire sorters, five comparisons each          *)
 (*      dpairs n     == the whole schedule, distance-major                    *)
+(*      dlevel_at n k j b m   == that level, on the m wires from b on         *)
+(*      dcascade_at n k e b m == that cascade, on the m wires from b on       *)
 (*                                                                            *)
 (******************************************************************************)
 
@@ -55,6 +57,74 @@ Fixpoint dmerges (n e : nat) : seq (nat * nat) :=
   if e is e1.+1 then dmerges n e1 ++ dcascade n (`2^ e1.+3) e1.+3 else [::].
 
 Definition dpairs (n e : nat) : seq (nat * nat) := dbase n ++ dmerges n e.
+
+(* -------------------------------------------------------------------------- *)
+(*  The same, on part of the array                                            *)
+(* -------------------------------------------------------------------------- *)
+
+(* A merge of size k works on blocks of k wires, and everything a level of it *)
+(* does inside one block is done by the same level read on those wires only.  *)
+(* These are the levels and cascades of a stretch of m wires from b on; the   *)
+(* whole array is b = 0, m = n.                                               *)
+Definition dlevel_at (n k j b m : nat) : seq (nat * nat) :=
+  [seq (if (k == n) || odd (i %/ k) then (i, i + j) else (i + j, i))
+  | i <- [seq i <- iota b m | i %% j.*2 < j]].
+
+Lemma dlevelE (n k j : nat) : dlevel n k j = dlevel_at n k j 0 n.
+Proof. by []. Qed.
+
+Fixpoint dcascade_at (n k e b m : nat) : seq (nat * nat) :=
+  if e is e1.+1 then dlevel_at n k (`2^ e1) b m ++ dcascade_at n k e1 b m
+  else [::].
+
+Lemma dcascadeE (n k e : nat) : dcascade n k e = dcascade_at n k e 0 n.
+Proof. by elim: e => //= e ->. Qed.
+
+(* a stretch splits into stretches                                           *)
+Lemma dlevel_at_cat (n k j b m1 m2 : nat) :
+  dlevel_at n k j b (m1 + m2)
+    = dlevel_at n k j b m1 ++ dlevel_at n k j (b + m1) m2.
+Proof. by rewrite /dlevel_at iotaD filter_cat map_cat. Qed.
+
+Lemma dlevel_at_split (n k j b c m : nat) :
+  dlevel_at n k j b (c * m)
+    = flatten [seq dlevel_at n k j (b + u * m) m | u <- iota 0 c].
+Proof.
+elim: c b => [|c IH] b; first by rewrite /dlevel_at mul0n.
+rewrite mulSn dlevel_at_cat IH /= mul0n addn0.
+rewrite (_ : iota 1 c = [seq 1 + i | i <- iota 0 c]); last by rewrite -iotaDl.
+rewrite -map_comp; congr (_ ++ flatten _); apply/eq_map => u.
+by rewrite /comp mulnDl mul1n addnA.
+Qed.
+
+(* and a level of a stretch whose ends are aligned stays inside it           *)
+Lemma bnd_dlevel_at (n k j b m : nat) : 0 < j -> j.*2 %| b -> j.*2 %| m ->
+  all (fun ab => (b <= ab.1 < b + m) && (b <= ab.2 < b + m))
+      (dlevel_at n k j b m).
+Proof.
+move=> j_gt0 bD mD; apply/allP => ab /mapP[i].
+rewrite mem_filter mem_iota => /andP[iC /andP[bLi iL]] ->.
+have sD : j.*2 %| (b + m) by rewrite dvdn_add.
+have [c cE] := dvdnP sD.
+have aL : i %/ j.*2 < c by rewrite ltn_divLR ?double_gt0 // -cE.
+have aE := divn_eq i j.*2.
+have aS : (i %/ j.*2).+1 * j.*2 <= c * j.*2 by rewrite leq_mul2r aL orbT.
+have Hj : i + j < (i %/ j.*2).+1 * j.*2.
+  by rewrite mulSn; move: aE iC; lia.
+have Hj2 : i + j < b + m by rewrite cE; apply: leq_trans Hj aS.
+by case: ifP => _ /=; rewrite bLi iL Hj2 (leq_trans bLi (leq_addr _ _)).
+Qed.
+
+Lemma bnd_dcascade_at (n k e b m : nat) : `2^ e %| b -> `2^ e %| m ->
+  all (fun ab => (b <= ab.1 < b + m) && (b <= ab.2 < b + m))
+      (dcascade_at n k e b m).
+Proof.
+elim: e b m => [|e IH] b m bD mD //=.
+have dE : (`2^ e).*2 = `2^ e.+1 by rewrite -addnn e2Sn.
+rewrite all_cat (bnd_dlevel_at n k) ?e2n_gt0 ?dE //=.
+have eD : `2^ e %| `2^ e.+1 by rewrite dvdn_e2n.
+by apply: IH; apply: dvdn_trans eD _.
+Qed.
 
 (* -------------------------------------------------------------------------- *)
 (*  The same split, on the network side                                       *)

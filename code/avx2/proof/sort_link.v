@@ -1468,6 +1468,178 @@ have E (a : nat) : (base + u * 8 + a * q + l) %% q %/ 8 = u.
 by case: ifP => _ /=; rewrite !E eqxx.
 Qed.
 
+(* -------------------------------------------------------------------------- *)
+(*  The schedule, regrouped by block                                          *)
+(* -------------------------------------------------------------------------- *)
+
+(* a reordering may be undone                                                *)
+Lemma dswap_sym (l1 l2 : seq (nat * nat)) : dswap n l1 l2 -> dswap n l2 l1.
+Proof.
+by case=> ps ab cd qs H1 H2 H3; constructor => //; apply: dpair_sym.
+Qed.
+
+Lemma dequiv_sym (l1 l2 : seq (nat * nat)) : dequiv n l1 l2 -> dequiv n l2 l1.
+Proof.
+elim=> [l|{}l1 {}l2 l3 H _ IH]; first exact: dequiv_refl.
+apply: dequiv_trans IH _.
+by apply: dequiv_step; [exact: dswap_sym H | exact: dequiv_refl].
+Qed.
+
+(* comparisons that share no wire may be put in any order at all             *)
+Lemma dequiv_reorder (l1 l2 : seq (nat * nat)) :
+  all (bnd n) l1 -> uniq l1 -> perm_eq l1 l2 ->
+  all (fun ab => all (fun cd => (ab != cd) ==> dpair ab cd) l1) l1 ->
+  dequiv n l1 l2.
+Proof.
+elim: l2 l1 => [|cd l2 IH] l1 l1B l1U l1P l1D.
+  by rewrite (perm_nilP l1P); apply: dequiv_refl.
+have cdI : cd \in l1 by rewrite (perm_mem l1P) mem_head.
+case: (splitPr cdI) l1B l1U l1P l1D => ps rs.
+move=> l1B l1U l1P l1D.
+have memT (x : nat * nat) : x \in ps ++ rs -> x \in ps ++ cd :: rs.
+  by rewrite !mem_cat inE => /orP[-> //|->]; rewrite !orbT.
+move: l1B; rewrite all_cat [all _ (_ :: _)]/= => /andP[psB /andP[cdB rsB]].
+move: l1U; rewrite cat_uniq [uniq (_ :: _)]/= [has _ (_ :: _)]/= negb_or.
+move=> /and3P[psU /andP[cdps psrs] /andP[cdrs rsU]].
+have Hdp : all (dpair cd) ps.
+  apply/allP => ab abI.
+  have abIl : ab \in ps ++ cd :: rs by rewrite mem_cat abI.
+  have cdIl : cd \in ps ++ cd :: rs by rewrite mem_cat inE eqxx orbT.
+  have := allP (allP l1D _ cdIl) _ abIl.
+  by rewrite (_ : (cd != ab) = true) //; apply/eqP => cdE; rewrite cdE abI in cdps.
+have step1 : dequiv n (ps ++ cd :: rs) (cd :: (ps ++ rs)).
+  by apply/dequiv_sym/(@dequiv_move cd [::] ps rs).
+apply: dequiv_trans step1 _; apply: (dequiv_catl [:: cd]).
+apply: IH.
+- by rewrite all_cat psB.
+- by rewrite cat_uniq psU psrs.
+- move: l1P; rewrite (perm_catCA ps [:: cd] rs) => l1P'.
+  by rewrite -(perm_cons cd).
+apply/allP => ab abI; apply/allP => ef efI.
+by have := allP (allP l1D _ (memT _ abI)) _ (memT _ efI).
+Qed.
+
+(* reading one block off a level, and off a cascade: the comparisons of a    *)
+(* block are those of the level or cascade of that block alone               *)
+Lemma dlevel_at_filter (K j b c m g : nat) :
+  g < c -> 0 < j -> 0 < m -> j.*2 %| b -> j.*2 %| m ->
+  [seq ab <- dlevel_at n K j b (c * m) | (ab.1 - b) %/ m == g]
+    = dlevel_at n K j (b + g * m) m.
+Proof.
+move=> gL j_gt0 m_gt0 bD mD.
+rewrite dlevel_at_split filter_flatten -map_comp.
+apply: (flatten_pick (t0 := g)) => // u uL.
+have buD : j.*2 %| (b + u * m) by rewrite dvdn_add // dvdn_mull.
+have := bnd_dlevel_at n K j_gt0 buD mD.
+rewrite /comp => /allP H.
+have E (ab : nat * nat) : ab \in dlevel_at n K j (b + u * m) m ->
+    (ab.1 - b) %/ m = u.
+  move=> abI; have /andP[/andP[H1 H2] _] := H _ abI.
+  have -> : ab.1 - b = u * m + (ab.1 - (b + u * m)) by lia.
+  by rewrite divnMDl // divn_small ?addn0 //; lia.
+case: (eqVneq u g) => [uE|uD].
+  rewrite (eq_in_filter (a2 := predT)) ?filter_predT ?uE // => ab abI /=.
+  by rewrite -uE in abI *; rewrite E // eqxx.
+rewrite (eq_in_filter (a2 := pred0)) ?filter_pred0 // => ab abI /=.
+by rewrite E // (negPf uD).
+Qed.
+
+Lemma dcascade_at_filter (K e b c m g : nat) :
+  g < c -> 0 < m -> `2^ e %| b -> `2^ e %| m ->
+  [seq ab <- dcascade_at n K e b (c * m) | (ab.1 - b) %/ m == g]
+    = dcascade_at n K e (b + g * m) m.
+Proof.
+move=> gL m_gt0.
+elim: e b => [|e IH] b bD mD //=.
+have dE : (`2^ e).*2 = `2^ e.+1 by rewrite -addnn e2Sn.
+have eD : `2^ e %| `2^ e.+1 by rewrite dvdn_e2n.
+rewrite filter_cat dlevel_at_filter ?e2n_gt0 ?dE //.
+by rewrite IH //; apply: dvdn_trans eD _.
+Qed.
+
+(* so a cascade is its blocks' cascades, one block after the other: what the  *)
+(* schedule does distance by distance, it may do block by block               *)
+Lemma dequiv_dcascade_at (K e b c m : nat) :
+  0 < m -> `2^ e %| b -> `2^ e %| m -> b + c * m <= n ->
+  dequiv n (dcascade_at n K e b (c * m))
+           (flatten [seq dcascade_at n K e (b + g * m) m | g <- iota 0 c]).
+Proof.
+move=> m_gt0 bD mD bcL.
+have cmD : `2^ e %| c * m by rewrite dvdn_mull.
+have Hb := bnd_dcascade_at n K bD cmD.
+have Hg (ab : nat * nat) : ab \in dcascade_at n K e b (c * m) ->
+    [/\ (ab.1 - b) %/ m < c,
+        b + (ab.1 - b) %/ m * m <= ab.1 < b + (ab.1 - b) %/ m * m + m
+      & b + (ab.1 - b) %/ m * m <= ab.2 < b + (ab.1 - b) %/ m * m + m].
+  move=> abI; have /andP[/andP[H1 H2] /andP[H3 H4]] := allP Hb _ abI.
+  have gL : (ab.1 - b) %/ m < c by rewrite ltn_divLR //; lia.
+  have gbD : `2^ e %| b + (ab.1 - b) %/ m * m by rewrite dvdn_add ?dvdn_mull.
+  have abI2 : ab \in dcascade_at n K e (b + (ab.1 - b) %/ m * m) m.
+    have Ef := @dcascade_at_filter K e b c m ((ab.1 - b) %/ m) gL m_gt0 bD mD.
+    by rewrite -Ef mem_filter abI eqxx.
+  by have /andP[H5 H6] := allP (bnd_dcascade_at n K gbD mD) _ abI2; split.
+have Hsep (x y g1 g2 : nat) : g1 != g2 ->
+    b + g1 * m <= x < b + g1 * m + m -> b + g2 * m <= y < b + g2 * m + m ->
+    x != y.
+  move=> gD /andP[X1 X2] /andP[Y1 Y2]; apply/eqP => xyE.
+  case: (ltngtP g1 g2) gD => // [g12|g21] _.
+    by have : g1.+1 * m <= g2 * m;
+       [rewrite leq_mul2r g12 orbT | rewrite mulSn; lia].
+  by have : g2.+1 * m <= g1 * m;
+     [rewrite leq_mul2r g21 orbT | rewrite mulSn; lia].
+apply: (@dequiv_regroup (fun ab => (ab.1 - b) %/ m) c
+          (dcascade_at n K e b (c * m))
+          (fun g => dcascade_at n K e (b + g * m) m)).
+- apply/allP => ab abI; have /andP[/andP[H1 H2] /andP[H3 H4]] := allP Hb _ abI.
+  by rewrite /bnd; apply/andP; split; apply: leq_trans bcL.
+- by apply/allP => ab abI; have [H1 _ _] := Hg _ abI.
+- apply/allP => ab abI; apply/allP => cd cdI; apply/implyP => Hne.
+  have [_ A1 A2] := Hg _ abI; have [_ C1 C2] := Hg _ cdI.
+  by rewrite /dpair; apply/and4P; split; apply: Hsep Hne _ _.
+by move=> g gL; apply: dcascade_at_filter.
+Qed.
+
+(* a level of a group of eight, read off: the four comparisons at that       *)
+(* distance, all oriented by the block the group is in                       *)
+Lemma dlevel_at8 (K j G : nat) : 0 < K -> 8 %| K -> j.*2 %| 8 ->
+  dlevel_at n K j (G * 8) 8
+  = [seq (if (K == n) || odd (G * 8 %/ K)
+          then (G * 8 + r, G * 8 + r + j) else (G * 8 + r + j, G * 8 + r))
+    | r <- [seq r <- iota 0 8 | r %% j.*2 < j]].
+Proof.
+move=> K_gt0 K8 j8.
+have [c cE] := dvdnP K8.
+have c_gt0 : 0 < c by move: cE K_gt0; lia.
+have D (r : nat) : r < 8 -> (G * 8 + r) %/ K = G * 8 %/ K.
+  move=> rL.
+  by rewrite cE [c * 8]mulnC !divnMA divnMDl // (divn_small rL) addn0 mulnK.
+have M (r : nat) : (G * 8 + r) %% j.*2 = r %% j.*2.
+  by have [d dE] := dvdnP j8; rewrite {1}dE mulnA modnMDl.
+rewrite /dlevel_at (_ : iota (G * 8) 8 = [seq G * 8 + r | r <- iota 0 8]);
+  last by rewrite -iotaDl addn0.
+rewrite filter_map -map_comp.
+rewrite (eq_filter (a2 := fun r => r %% j.*2 < j)); last first.
+  by move=> r; rewrite /preim /= M.
+by apply/eq_in_map => r; rewrite mem_filter mem_iota add0n => /andP[_ rL];
+   rewrite /comp D // addnA.
+Qed.
+
+(* hence the three levels every merge ends with, on one group of eight: the  *)
+(* twelve comparisons the program's wide batch performs                      *)
+Lemma dcascade_at8 (K G : nat) : 0 < K -> 8 %| K ->
+  dcascade_at n K 3 (G * 8) 8
+  = [seq (if (K == n) || odd (G * 8 %/ K)
+          then (G * 8 + p.1, G * 8 + p.2) else (G * 8 + p.2, G * 8 + p.1))
+    | p <- [:: (0, 4); (1, 5); (2, 6); (3, 7); (0, 2); (1, 3); (4, 6); (5, 7);
+               (0, 1); (2, 3); (4, 5); (6, 7)]].
+Proof.
+move=> K_gt0 K8.
+rewrite [LHS]/dcascade_at !dlevel_at8 //.
+set d := ((K == n) || _).
+rewrite (_ : `2^ 2 = 4) // (_ : `2^ 1 = 2) // (_ : `2^ 0 = 1) //=.
+by rewrite -!addnA.
+Qed.
+
 (* The merges take the same shape, one stage of the program at a time: a      *)
 (* stage sweeps the array with blocks of cnt * q wires, descending the        *)
 (* distances inside a block before moving to the next, where the schedule     *)
