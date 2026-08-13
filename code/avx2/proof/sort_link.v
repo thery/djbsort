@@ -3130,6 +3130,64 @@ by move=> lL; apply/eqP; apply: (allP H0); rewrite mem_iota.
 Qed.
 
 
+(* -------------------------------------------------------------------------- *)
+(*  Which wires a nest of loops runs over                                     *)
+(* -------------------------------------------------------------------------- *)
+
+(* the array, block by block                                                  *)
+Lemma iota_blocks (m b : nat) :
+  iota 0 (m * b) = flatten [seq iota (t * b) b | t <- iota 0 m].
+Proof.
+elim: m => [|m IH]; first by rewrite mul0n.
+rewrite mulSnr iotaD IH -addn1 iotaD map_cat flatten_cat /=.
+by rewrite cats0 add0n.
+Qed.
+
+Lemma perm_flatten_map (T : eqType) (F G : nat -> seq T) (l : seq nat) :
+  (forall t, t \in l -> perm_eq (F t) (G t)) ->
+  perm_eq (flatten [seq F t | t <- l]) (flatten [seq G t | t <- l]).
+Proof.
+elim: l => [|t l IH] //= H.
+apply: perm_cat; first by apply: H; rewrite mem_head.
+by apply: IH => x xI; apply: H; rewrite inE xI orbT.
+Qed.
+
+(* a loop that takes the same offsets in every block runs over exactly the    *)
+(* wires those offsets pick out, whatever order it takes them in -- provided  *)
+(* the condition on a wire only depends on where it is inside its block       *)
+Lemma perm_block_offsets (b : nat) (cs : seq nat) (Q : nat -> bool) :
+  b %| n -> perm_eq cs [seq c <- iota 0 b | Q c] ->
+  (forall t c, c < b -> Q (t * b + c) = Q c) ->
+  perm_eq (flatten [seq [seq t * b + c | c <- cs] | t <- iota 0 (n %/ b)])
+          [seq x <- iota 0 n | Q x].
+Proof.
+move=> bD csP QI.
+have n_gt0 : 0 < n by rewrite e2n_gt0.
+have b_gt0 : 0 < b by case: (posnP b) bD => // ->; rewrite dvd0n => /eqP nE0;
+  move: n_gt0; rewrite nE0.
+have nE : n %/ b * b = n by have [c cE] := dvdnP bD; rewrite cE mulnK.
+rewrite -{2}nE iota_blocks filter_flatten -map_comp.
+apply: perm_flatten_map => t; rewrite mem_iota add0n => /andP[_ tL].
+rewrite /comp.
+have -> : iota (t * b) b = [seq t * b + c | c <- iota 0 b]
+  by rewrite -iotaDl addn0.
+rewrite filter_map.
+rewrite (_ : [seq c <- iota 0 b | preim (fun c => t * b + c) Q c]
+             = [seq c <- iota 0 b | Q c]); last first.
+  by apply: eq_in_filter => c; rewrite mem_iota add0n => /andP[_ cL];
+     rewrite /preim /= QI.
+by rewrite perm_map.
+Qed.
+
+Lemma dvdn16 : 16 %| n.
+Proof. by apply: dvdn_trans dvdn_e2n64; apply/dvdnP; exists 4. Qed.
+
+Lemma mod8_blk16 (t c : nat) : (t * 16 + c) %% 8 = c %% 8.
+Proof.
+have -> : t * 16 + c = (t * 2) * 8 + c by lia.
+by rewrite modnMDl.
+Qed.
+
 (* the wires the pass of two starts from, in the order it lists them: the     *)
 (* lanes under four of every register, named where the shuffle reads them     *)
 Definition adjw : seq nat :=
@@ -3152,9 +3210,16 @@ Lemma pflat_adj16_sh (K : nat) (fl : flips) : dflP K fl ->
     | x <- adjw].
 Admitted.
 
-(* WHAT IS LEFT: the pass starts from the lanes under four of every register *)
+(* the pass starts from the lanes under four of every register                *)
 Lemma adjw_lane4 : perm_eq adjw [seq x <- iota 0 n | x %% 8 < 4].
-Admitted.
+Proof.
+have -> : adjw = flatten [seq [seq t * 16 + c
+                              | c <- [seq nth 0 tb_perm l | l <- iota 0 8]]
+                         | t <- iota 0 (n %/ 16)].
+  by rewrite /adjw; congr flatten; apply/eq_map => t; rewrite -map_comp.
+apply: perm_block_offsets (dvdn16) _ _ => //.
+by move=> t c cL; rewrite mod8_blk16.
+Qed.
 
 (* the wires the level a row apart starts from --                             *)
 (* trc sends the lanes under four to the even rows                            *)
@@ -3353,9 +3418,19 @@ Lemma pflat_adj1a (K : nat) (fl : flips) : dflP K fl ->
     | x <- adjw1a].
 Admitted.
 
-(* WHAT IS LEFT: the first batch starts from the lanes trc keeps two apart    *)
+(* the first batch starts from the lanes trc keeps two apart                  *)
 Lemma adjw1a_lane2 : perm_eq adjw1a [seq x <- iota 0 n | x %% 8 %% 4 < 2].
-Admitted.
+Proof.
+rewrite adjw1aE.
+have -> : flatten [seq [seq t * 16 + nth 0 tb_pu l | l <- iota 0 8]
+                  | t <- iota 0 (n %/ 16)]
+        = flatten [seq [seq t * 16 + c
+                       | c <- [seq nth 0 tb_pu l | l <- iota 0 8]]
+                  | t <- iota 0 (n %/ 16)].
+  by congr flatten; apply/eq_map => t; rewrite -map_comp.
+apply: perm_block_offsets (dvdn16) _ _ => //.
+by move=> t c cL; rewrite mod8_blk16.
+Qed.
 
 (* the wires the level two rows apart starts from *)
 Lemma cinv_perm_lane2 :
@@ -3631,22 +3706,63 @@ rewrite /comp cinv_layout_trE; last by rewrite -addnA.
 by rewrite sh_tr_wire.
 Qed.
 
-(* WHAT IS LEFT: and each of the three sets of wires is the one its level     *)
-(* starts from -- through cinv_layout_tr, a claim about tb_tr and tb_out      *)
+(* the offsets a group of sixty-four is read at, register by register         *)
+Definition trcs (as' : seq nat) : seq nat :=
+  flatten [seq [seq l * 8 + a | l <- iota 0 8] | a <- as'].
+
+Lemma mod8_blk64 (t c : nat) : (t * 64 + c) %% 8 = c %% 8.
+Proof.
+have -> : t * 64 + c = (t * 8) * 8 + c by lia.
+by rewrite modnMDl.
+Qed.
+
+Lemma trwW (as' : seq nat) : all (fun a => a < 8) as' ->
+  [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- trw as']
+  = [seq capp (cinv (avx2_layout dvdn_e2n64)) x
+    | x <- flatten [seq [seq t * 64 + c | c <- trcs as']
+                   | t <- iota 0 (n %/ 64)]].
+Proof.
+move=> asB; rewrite trwE // map_flatten -map_comp.
+congr flatten; apply/eq_map => t.
+rewrite /comp /trcs map_flatten -!map_comp.
+rewrite map_flatten -map_comp; congr flatten; apply/eq_map => a.
+rewrite /comp -!map_comp; apply/eq_map => l.
+by rewrite /comp addnA.
+Qed.
+
+(* so each of the three sets of wires is the one its level starts from        *)
 Lemma perm_trwA :
   perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- trw [:: 0; 2; 4; 6]]
           [seq i <- iota 0 n | i %% (n %/ 2).*2 < n %/ 2].
-Admitted.
+Proof.
+rewrite trwW //.
+apply: perm_trans cinv_perm_lane1.
+rewrite perm_map //.
+apply: perm_block_offsets dvdn_e2n64 _ _ => //.
+by move=> t c cL; rewrite mod8_blk64.
+Qed.
 
 Lemma perm_trwB :
   perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- trw [:: 0; 1; 4; 5]]
           [seq i <- iota 0 n | i %% (n %/ 4).*2 < n %/ 4].
-Admitted.
+Proof.
+rewrite trwW //.
+apply: perm_trans cinv_perm_lane2.
+rewrite perm_map //.
+apply: perm_block_offsets dvdn_e2n64 _ _ => //.
+by move=> t c cL; rewrite mod8_blk64.
+Qed.
 
 Lemma perm_trwC :
   perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- trw [:: 0; 1; 2; 3]]
           [seq i <- iota 0 n | i %% (n %/ 8).*2 < n %/ 8].
-Admitted.
+Proof.
+rewrite trwW //.
+apply: perm_trans cinv_perm_lane4.
+rewrite perm_map //.
+apply: perm_block_offsets dvdn_e2n64 _ _ => //.
+by move=> t c cL; rewrite mod8_blk64.
+Qed.
 
 (* so that batch, renamed, is the three levels of a row or more               *)
 Lemma merges_tr64 :
