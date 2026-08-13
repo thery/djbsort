@@ -2247,44 +2247,237 @@ Lemma dcascade_hiS (K e j : nat) : j <= e ->
   dcascade_hi n K e.+1 j = dlevel n K (`2^ e) ++ dcascade_hi n K e j.
 Proof. by move=> jL; rewrite [LHS]/= ltnNge jL. Qed.
 
-(* WHAT IS LEFT: the doublings, one merge size after the other -- the sweeps  *)
-(* of that size and the wide sweep that closes it, then the same again with   *)
-(* the size doubled and the pattern the merge left behind.                    *)
-(* WHAT IS LEFT: what the sweeps of one merge size do -- the levels above a   *)
-(* group of eight                                                             *)
+(* WHAT IS LEFT: one stage, at a distance narrower than a row.  The batch     *)
+(* compares at three distances, the tiling puts it at every block, and the    *)
+(* whole stage is the three levels of those distances.                        *)
+Lemma dequiv_stage_mrg8 (K q : nat) (fl : flips) :
+  0 < K -> 8 %| K -> 8 %| q -> q * 8 %| n %/ 8 -> dflP K fl ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (stage n fl n 8 q mrg8)).1)
+           (dlevel n K (q * 4) ++ dlevel n K (q * 2) ++ dlevel n K q).
+Admitted.
+
+(* WHAT IS LEFT: the same, for the batch of four -- two levels               *)
+Lemma dequiv_stage_mrg4 (K q : nat) (fl : flips) :
+  0 < K -> 8 %| K -> 8 %| q -> q * 4 %| n %/ 8 -> dflP K fl ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (stage n fl n 4 q mrg4)).1)
+           (dlevel n K (q * 2) ++ dlevel n K q).
+Admitted.
+
+(* WHAT IS LEFT: the same, for the batch of two -- one level                 *)
+Lemma dequiv_stage_mrg2 (K q : nat) (fl : flips) :
+  0 < K -> 8 %| K -> 8 %| q -> q * 2 %| n %/ 8 -> dflP K fl ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (stage n fl n 2 q mrg2)).1)
+           (dlevel n K q).
+Admitted.
+
+(* one sweep step: the stage of the three coarsest distances left, then the   *)
+(* same eight times finer -- and, once under a hundred and twenty-eight, the  *)
+(* stages the code writes out                                                 *)
+Lemma sweepsS (m f q : nat) (fl : flips) :
+  sweeps m f.+1 fl q =
+    if 128 <= q then stage m fl m 8 (q %/ 4) mrg8 ++ sweeps m f fl (q %/ 8)
+    else if q == 64 then stage m fl m 4 32 mrg4 ++ stage m fl m 4 8 mrg4
+    else if q == 32 then stage m fl m 8 8 mrg8
+    else if q == 16 then stage m fl m 4 8 mrg4
+    else if q == 8 then stage m fl m 2 8 mrg2 else [::].
+Proof. by []. Qed.
+
+(* so the sweeps are the levels from their distance down to eight            *)
+Lemma dequiv_sweeps1 (fuel s K : nat) (fl : flips) :
+  s <= fuel -> 3 <= s -> 0 < K -> 8 %| K -> `2^ s.+1 %| n %/ 8 -> dflP K fl ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (sweeps n fuel fl (`2^ s))).1)
+           (dcascade_hi n K s.+1 3).
+Proof.
+elim: fuel s => [|f IH] s sL s3 K_gt0 K8 sD flP; first by exfalso; lia.
+have quart (a : nat) : `2^ a.+2 %/ 4 = `2^ a.
+  by rewrite !e2Sn !addnn -!muln2 -mulnA [2 * 2]/= mulnK.
+have eight (a : nat) : `2^ a.+3 %/ 8 = `2^ a.
+  by rewrite !e2Sn !addnn -!muln2 -!mulnA [2 * (2 * 2)]/= mulnK.
+have hnil : dcascade_hi n K 3 3 = [::] by [].
+rewrite sweepsS.
+case: (leqP 7 s) => [s7|s6]; last first.
+  have : s = 3 \/ s = 4 \/ s = 5 \/ s = 6 by lia.
+  case=> [sE|[sE|[sE|sE]]]; move: sD; rewrite sE => sD.
+  - have -> : `2^ 3 = 8 by [].
+    rewrite dcascade_hiS // hnil cats0.
+    by apply: dequiv_stage_mrg2 => //.
+  - have -> : `2^ 4 = 16 by [].
+    rewrite dcascade_hiS // [dcascade_hi n K 4 3]dcascade_hiS // hnil cats0.
+    have -> : `2^ 3 = 8 by [].
+    have -> : dlevel n K 16 = dlevel n K (8 * 2) by [].
+    by apply: dequiv_stage_mrg4 => //.
+  - have -> : `2^ 5 = 32 by [].
+    rewrite dcascade_hiS // [dcascade_hi n K 5 3]dcascade_hiS //.
+    rewrite [dcascade_hi n K 4 3]dcascade_hiS // hnil cats0.
+    have -> : `2^ 4 = 16 by [].
+    have -> : `2^ 3 = 8 by [].
+    have -> : dlevel n K 32 = dlevel n K (8 * 4) by [].
+    have -> : dlevel n K 16 = dlevel n K (8 * 2) by [].
+    by apply: dequiv_stage_mrg8 => //.
+  have -> : `2^ 6 = 64 by [].
+  rewrite dcascade_hiS // [dcascade_hi n K 6 3]dcascade_hiS //.
+  rewrite [dcascade_hi n K 5 3]dcascade_hiS //.
+  rewrite [dcascade_hi n K 4 3]dcascade_hiS //.
+  rewrite hnil cats0.
+  have -> : `2^ 5 = 32 by [].
+  have -> : `2^ 4 = 16 by [].
+  have -> : `2^ 3 = 8 by [].
+  rewrite pflat_cat1; last by apply: pflat_nomove; apply: nomv_stage.
+  rewrite cren_cat catA.
+  apply: dequiv_cat.
+    have -> : dlevel n K 64 = dlevel n K (32 * 2) by [].
+    by apply: dequiv_stage_mrg4 => //.
+  have -> : dlevel n K 16 = dlevel n K (8 * 2) by [].
+  apply: dequiv_stage_mrg4 => //.
+  by apply: dvdn_trans sD; rewrite (_ : 8 * 4 = 32) // (_ : `2^ 7 = 128) //.
+have hs : (128 <= `2^ s) = true by rewrite -[128]/(`2^ 7) leq_e2n; lia.
+rewrite hs.
+have [u sE] : exists u, s = u.+3.+2 by exists (s - 5); lia.
+move: sL sD; rewrite sE => sL sD.
+move: s3 s7; rewrite sE => _ s7; move: sE => _.
+rewrite quart eight.
+rewrite dcascade_hiS; last by lia.
+rewrite [dcascade_hi n K u.+3.+2 3]dcascade_hiS; last by lia.
+rewrite [dcascade_hi n K u.+3.+1 3]dcascade_hiS; last by lia.
+rewrite !catA.
+rewrite pflat_cat1; last by apply: pflat_nomove; apply: nomv_stage.
+rewrite cren_cat.
+apply: dequiv_cat.
+  have -> : dlevel n K (`2^ u.+3.+2) = dlevel n K (`2^ u.+3 * 4).
+    by rewrite [`2^ u.+3.+2]e2Sn addnn [`2^ u.+3.+1]e2Sn addnn -!muln2 -mulnA.
+  have -> : dlevel n K (`2^ u.+3.+1) = dlevel n K (`2^ u.+3 * 2).
+    by rewrite [`2^ u.+3.+1]e2Sn addnn -muln2.
+  rewrite -catA.
+  apply: dequiv_stage_mrg8 => //.
+    by rewrite -[8]/(`2^ 3) dvdn_e2n.
+  by move: sD; rewrite -[8]/(`2^ 3) -e2nD addn3.
+apply: IH => //; first by lia.
+- by lia.
+by apply: dvdn_trans sD; rewrite dvdn_e2n; lia.
+Qed.
+
+(* under eight the sweeps compare nothing: the merge of a group of eight is   *)
+(* the wide sweep alone                                                       *)
+Lemma sweeps_nil (m f q : nat) (fl : flips) : q < 8 -> sweeps m f fl q = [::].
+Proof.
+move=> qL; case: f => //= f.
+have -> : (127 < q) = false by apply/negbTE; rewrite -leqNgt; lia.
+have -> : (q == 64) = false by apply/negbTE; apply/eqP => qE; lia.
+have -> : (q == 32) = false by apply/negbTE; apply/eqP => qE; lia.
+have -> : (q == 16) = false by apply/negbTE; apply/eqP => qE; lia.
+by have -> : (q == 8) = false by apply/negbTE; apply/eqP => qE; lia.
+Qed.
+
+(* so the sweeps of one merge size do that merge's levels above a group of    *)
+(* eight                                                                      *)
 Lemma dequiv_sweeps (e : nat) (fl : flips) :
-  3 <= e -> dflP (`2^ e) fl ->
+  3 <= e -> `2^ e %| n %/ 8 -> dflP (`2^ e) fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (pflat (sweeps n n fl (`2^ e %/ 2))).1)
            (dcascade_hi n (`2^ e) e 3).
-Admitted.
+Proof.
+move=> eL eD flP.
+case: (leqP 4 e) => [e4|e3]; last first.
+  have eE3 : e = 3 by lia.
+  have -> : `2^ e %/ 2 = 4 by rewrite eE3.
+  have -> : sweeps n n fl 4 = [::] by apply: sweeps_nil.
+  have -> : dcascade_hi n (`2^ e) e 3 = [::] by rewrite eE3.
+  exact: dequiv_refl.
+have eE : e.-1.+1 = e by lia.
+have qE : `2^ e %/ 2 = `2^ e.-1 by rewrite -eE e2Sn addnn -muln2 mulnK.
+rewrite qE -[X in dcascade_hi _ _ X _]eE.
+apply: (dequiv_sweeps1 (fuel := n) (s := e.-1) (K := `2^ e)).
+- have := ltn_ne2n e; have := dvdn_leq row_gt0 eD.
+  have := leq_div2r 8 (leqnn n); lia.
+- by lia.
+- by rewrite e2n_gt0.
+- by rewrite -[8]/(`2^ 3) dvdn_e2n; lia.
+- by rewrite eE.
+by [].
+Qed.
 
 (* so one doubling is one merge: its sweeps and the wide sweep that closes it *)
 Lemma dequiv_dbl_level (e : nat) (fl : flips) :
-  3 <= e -> dflP (`2^ e) fl ->
+  3 <= e -> `2^ e %| n %/ 8 -> dflP (`2^ e) fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              ((pflat (sweeps n n fl (`2^ e %/ 2))).1
               ++ (pflat (flatten [seq vnet n fl (t * 8) (n %/ 8) mrg8r
                                  | t <- iota 0 ((n %/ 8) %/ 8)])).1))
            (dcascade n (`2^ e) e).
 Proof.
-move=> eL flP.
+move=> eL eD flP.
 rewrite cren_cat (@dcascade_hiE n (`2^ e) e 3) //.
-apply: dequiv_cat; first exact: dequiv_sweeps.
+apply: dequiv_cat; first exact: (dequiv_sweeps eL eD flP).
 rewrite pflat_flatten -?map_comp;
   last by rewrite all_map; apply/allP => t _; exact: nomv_vnet.
 apply: dequiv_wide => //; first by rewrite e2n_gt0.
 by rewrite -[8]/(`2^ 3) dvdn_e2n.
 Qed.
 
-(* WHAT IS LEFT: the doublings themselves -- one merge size after the other,  *)
-(* each with the pattern the one before it left                               *)
+(* one doubling, as a program: the sweeps of the size, the merge itself, and  *)
+(* the doublings that follow unless the size is already a row                 *)
+Lemma pdoubleS_prog (m f p : nat) (fl : flips) :
+  (pdouble m f.+1 fl p).1 =
+    sweeps m m fl (p %/ 2) ++ (flip_merge m fl p).1
+    ++ (if p * 16 == m then [::]
+        else (pdouble m f (flip_merge m fl p).2 p.*2).1).
+Proof.
+rewrite /=; case: ifP => [_|_]; first by rewrite cats0.
+by case: (pdouble m f _ p.*2).
+Qed.
+
+(* the doublings themselves: one merge size after the other, each with the    *)
+(* pattern the one before it left                                             *)
 Lemma dequiv_pdouble (fuel e j : nat) (fl : flips) :
   3 <= e -> n %/ 8 = `2^ e * (`2^ j) -> 0 < j -> j <= fuel -> dflP (`2^ e) fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (pflat (pdouble n fuel fl (`2^ e)).1).1)
            (dmseg e j).
-Admitted.
+Proof.
+elim: fuel e j fl => [|f IH] e j fl eL qE j_gt0 jL flP; first by exfalso; lia.
+have p8 : 8 %| `2^ e by rewrite -[8]/(`2^ 3) dvdn_e2n.
+have e0 : 0 < `2^ e := e2n_gt0 e.
+have qq := rowE.
+have e21 : `2^ 1 = 2 by [].
+have dE : (`2^ e).*2 = `2^ e.+1 by rewrite e2Sn addnn.
+have E0 : cren (cinv (avx2_layout dvdn_e2n64)) (pflat ([::] : prog n)).1 = [::]
+  by [].
+have eD : `2^ e %| n %/ 8 by rewrite qE dvdn_mulr.
+have Hdbl := dequiv_dbl_level eL eD flP.
+rewrite pdoubleS_prog.
+rewrite pflat_cat1; last by apply: pflat_nomove; apply: nomv_sweeps.
+rewrite pflat_cat1; last by apply: pflat_nomove; apply: nomv_flip_merge.
+rewrite catA cren_cat.
+case: (boolP (`2^ e * 16 == n)) => [/eqP pE|pD].
+  have qE2 : n %/ 8 = `2^ e * 2.
+    by apply/eqP; rewrite -(eqn_pmul2r (isT : 0 < 8)) qq -pE -mulnA.
+  have H2 : `2^ j = 2 by apply/eqP; rewrite -(eqn_pmul2l e0) -qE qE2.
+  have jE : j = 1 by have := ltn_ne2n j; rewrite H2; lia.
+  rewrite jE dmsegE [dmseg _ 0]/= cats0 E0 cats0.
+  exact: Hdbl.
+have j2 : 2 <= j.
+  case: (leqP 2 j) => // j1.
+  have jE : j = 1 by lia.
+  move: qE; rewrite jE e21 => qE1.
+  by case/eqP: pD; move: qq qE1; lia.
+have [j' jE] : exists j', j = j'.+1 by exists j.-1; lia.
+rewrite jE dmsegE dE.
+apply: dequiv_cat Hdbl _.
+apply: (IH e.+1 j') => //.
+- by lia.
+- by rewrite qE jE !e2Sn mulnDr mulnDl.
+- by lia.
+- by lia.
+have -> : (flip_merge n fl (`2^ e)).2 = fl_tog (fmP n (`2^ e)) fl by [].
+apply: dflP_tog flP => i iL.
+rewrite -dE; apply: dfl_fmP => //.
+have E2 : (`2^ e).*2.*2 = `2^ e.+2 by rewrite !e2Sn !addnn.
+by rewrite E2 qE jE -e2nD dvdn_e2n; lia.
+Qed.
 
 Lemma merges_dbl :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64)) (pflat (avx2_dbl n).1).1)
@@ -2320,14 +2513,137 @@ have E : n = `2^ (k - 2) * 16.
 by rewrite {1}E mulnK.
 Qed.
 
-(* WHAT IS LEFT: the ladder's own recursion -- a stage of three distances,    *)
-(* then the same again eight times finer                                      *)
-Lemma dequiv_ladder1 (fuel e K : nat) (fl : flips) :
-  e <= fuel -> 0 < K -> 8 %| K -> dflP K fl ->
+(* the finer half of the ladder, one step: a stage of two distances, then the *)
+(* same again four times finer                                                *)
+Lemma ladder2S (m f q : nat) (fl : flips) :
+  ladder2 m f.+1 fl q =
+    if 16 <= q then stage m fl m 4 (q %/ 2) mrg4 ++ ladder2 m f fl (q %/ 4)
+    else if q == 8 then stage m fl m 2 8 mrg2 else [::].
+Proof. by []. Qed.
+
+(* below eight it compares nothing                                           *)
+Lemma ladder2_nil (m f q : nat) (fl : flips) :
+  q < 16 -> q != 8 -> ladder2 m f fl q = [::].
+Proof.
+move=> qL q8; case: f => //= f.
+have -> : (15 < q) = false by apply/negbTE; rewrite -leqNgt.
+by rewrite (negPf q8).
+Qed.
+
+(* so that half is the levels from its distance down to eight                *)
+Lemma dequiv_ladder2 (fuel s K : nat) (fl : flips) :
+  s <= fuel -> 3 <= s -> 0 < K -> 8 %| K -> `2^ s.+1 %| n %/ 8 -> dflP K fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
-             (pflat (ladder1 n fuel fl (`2^ e))).1)
-           (dcascade_hi n K e.+1 3).
-Admitted.
+             (pflat (ladder2 n fuel fl (`2^ s))).1)
+           (dcascade_hi n K s.+1 3).
+Proof.
+elim: fuel s => [|f IH] s sL s3 K_gt0 K8 sD flP; first by exfalso; lia.
+have half (a : nat) : `2^ a.+1 %/ 2 = `2^ a by rewrite e2Sn addnn -muln2 mulnK.
+have quart (a : nat) : `2^ a.+2 %/ 4 = `2^ a.
+  by rewrite !e2Sn !addnn -!muln2 -mulnA [2 * 2]/= mulnK.
+have [u sE] : exists u, s = u.+3 by exists (s - 3); lia.
+move: sL sD; rewrite sE => sL sD.
+rewrite ladder2S.
+move: s3 => _; move: sE => _.
+case: u sL sD => [|u] sL sD.
+  have -> : (16 <= `2^ 3) = false by [].
+  have -> : (`2^ 3 == 8) = true by [].
+  have hnil : dcascade_hi n K 3 3 = [::] by [].
+  rewrite dcascade_hiS // hnil cats0.
+  have -> : `2^ 3 = 8 by [].
+  by apply: dequiv_stage_mrg2 => //.
+have hs : (16 <= `2^ u.+4) = true by rewrite -[16]/(`2^ 4) leq_e2n.
+rewrite hs half.
+rewrite dcascade_hiS; last by lia.
+rewrite [dcascade_hi n K u.+4 3]dcascade_hiS; last by lia.
+rewrite catA.
+rewrite pflat_cat1; last by apply: pflat_nomove; apply: nomv_stage.
+rewrite cren_cat.
+apply: dequiv_cat.
+  have -> : dlevel n K (`2^ u.+4) = dlevel n K (`2^ u.+3 * 2).
+    by rewrite [`2^ u.+4]e2Sn addnn -muln2.
+  apply: dequiv_stage_mrg4 => //.
+    by rewrite -[8]/(`2^ 3) dvdn_e2n.
+  by move: sD; rewrite -[4]/(`2^ 2) -e2nD addn2.
+rewrite quart.
+case: u sL sD hs => [|u] sL sD hs.
+  have -> : ladder2 n f fl (`2^ 2) = [::] by apply: ladder2_nil.
+  have -> : dcascade_hi n K 3 3 = [::] by [].
+  exact: dequiv_refl.
+apply: IH => //; first by lia.
+by apply: dvdn_trans sD; rewrite dvdn_e2n; lia.
+Qed.
+
+(* the coarser half, one step: a stage of three distances, then the same      *)
+(* eight times finer                                                          *)
+Lemma ladder1S (m f q : nat) (fl : flips) :
+  ladder1 m f.+1 fl q =
+    if (128 <= q) || (q == 32)
+    then stage m fl m 8 (q %/ 4) mrg8 ++ ladder1 m f fl (q %/ 8)
+    else ladder2 m f.+1 fl q.
+Proof. by []. Qed.
+
+Lemma ladder1_nil (m f q : nat) (fl : flips) :
+  q < 16 -> q != 8 -> ladder1 m f fl q = [::].
+Proof.
+move=> qL q8; case: f => //= f.
+have -> : (127 < q) = false by apply/negbTE; rewrite -leqNgt; lia.
+have -> : (q == 32) = false by apply/negbTE; apply/eqP => qE; lia.
+rewrite orbb; have -> : (15 < q) = false; first by apply/negbTE; rewrite -leqNgt.
+by rewrite (negPf q8).
+Qed.
+
+(* the ladder's own recursion: the levels from its distance down to eight    *)
+Lemma dequiv_ladder1 (fuel s K : nat) (fl : flips) :
+  s <= fuel -> 3 <= s -> 0 < K -> 8 %| K -> `2^ s.+1 %| n %/ 8 -> dflP K fl ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (ladder1 n fuel fl (`2^ s))).1)
+           (dcascade_hi n K s.+1 3).
+Proof.
+elim: fuel s => [|f IH] s sL s3 K_gt0 K8 sD flP; first by exfalso; lia.
+have quart (a : nat) : `2^ a.+2 %/ 4 = `2^ a.
+  by rewrite !e2Sn !addnn -!muln2 -mulnA [2 * 2]/= mulnK.
+have eight (a : nat) : `2^ a.+3 %/ 8 = `2^ a.
+  by rewrite !e2Sn !addnn -!muln2 -!mulnA [2 * (2 * 2)]/= mulnK.
+have e25 : `2^ 5 = 32 by [].
+have e26 : `2^ 6 = 64 by [].
+rewrite ladder1S.
+case: (boolP ((128 <= `2^ s) || (`2^ s == 32))) => [cond|cond]; last first.
+  by apply: dequiv_ladder2.
+have s5 : 5 <= s.
+  case/orP: cond => [h|/eqP h].
+    have e27 : `2^ 7 = 128 by [].
+    have h7 : `2^ 7 <= `2^ s by rewrite e27.
+    by move: h7; rewrite leq_e2n; lia.
+  have h5 : `2^ 5 <= `2^ s by rewrite h e25.
+  by move: h5; rewrite leq_e2n; lia.
+have [u sE] : exists u, s = u.+3.+2 by exists (s - 5); lia.
+move: sL sD cond; rewrite sE => sL sD cond.
+move: s3 s5 => _ _; move: sE => _.
+rewrite quart eight.
+rewrite dcascade_hiS; last by lia.
+rewrite [dcascade_hi n K u.+3.+2 3]dcascade_hiS; last by lia.
+rewrite [dcascade_hi n K u.+3.+1 3]dcascade_hiS; last by lia.
+rewrite !catA.
+rewrite pflat_cat1; last by apply: pflat_nomove; apply: nomv_stage.
+rewrite cren_cat.
+apply: dequiv_cat.
+  have -> : dlevel n K (`2^ u.+3.+2) = dlevel n K (`2^ u.+3 * 4).
+    by rewrite [`2^ u.+3.+2]e2Sn addnn [`2^ u.+3.+1]e2Sn addnn -!muln2 -mulnA.
+  have -> : dlevel n K (`2^ u.+3.+1) = dlevel n K (`2^ u.+3 * 2).
+    by rewrite [`2^ u.+3.+1]e2Sn addnn -muln2.
+  rewrite -catA.
+  apply: dequiv_stage_mrg8 => //.
+    by rewrite -[8]/(`2^ 3) dvdn_e2n.
+  by move: sD; rewrite -[8]/(`2^ 3) -e2nD addn3.
+case: u sL sD cond => [|[|u]] sL sD cond.
+- have -> : ladder1 n f fl (`2^ 2) = [::] by apply: ladder1_nil.
+  have -> : dcascade_hi n K 3 3 = [::] by [].
+  exact: dequiv_refl.
+- by move: cond; rewrite e26.
+apply: IH => //; first by lia.
+by apply: dvdn_trans sD; rewrite dvdn_e2n; lia.
+Qed.
 
 (* so the ladder, for any merge: half a row down to eight                    *)
 Lemma dequiv_ladder (K : nat) (fl : flips) : 0 < K -> 8 %| K -> dflP K fl ->
@@ -2336,9 +2652,18 @@ Lemma dequiv_ladder (K : nat) (fl : flips) : 0 < K -> 8 %| K -> dflP K fl ->
 Proof.
 move=> K_gt0 K8 flP.
 rewrite /ladder qE16.
+case: (leqP 5 k) => [k5|k4]; last first.
+  have kE : k = 4 by lia.
+  have -> : `2^ (k - 2) = 4 by rewrite kE.
+  have -> : ladder1 n n fl 4 = [::] by apply: ladder1_nil.
+  have -> : dcascade_hi n K k.-1 3 = [::] by rewrite kE.
+  exact: dequiv_refl.
 have -> : k.-1 = (k - 2).+1 by lia.
 apply: dequiv_ladder1 => //.
-by have := ltn_ne2n k; have : `2^ k <= n; [rewrite leq_e2n; lia | lia].
+- by have := ltn_ne2n k; have : `2^ k <= n; [rewrite leq_e2n; lia | lia].
+- by lia.
+have -> : (k - 2).+1 = k.-1 by lia.
+by rewrite -qE8.
 Qed.
 
 (* the merge of a row: the pass compares nothing, the ladder does it all      *)
