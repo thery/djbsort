@@ -3313,7 +3313,21 @@ Lemma cinv_layout_tr (x : nat) : x < n ->
   capp (cinv (avx2_layout dvdn_e2n64))
        (capp (sh_trlo dvdn_e2n64) (capp (sh_trhi dvdn_e2n64) x))
   = capp (cinv (ccomp (sh_tr dvdn_e2n64) (sh_out dvdn_e2n64))) x.
-Admitted.
+Proof.
+move=> xL.
+set S := ccomp (sh_tr dvdn_e2n64) (sh_out dvdn_e2n64).
+set z := capp (cinv S) x.
+have zL : z < n by apply: capp_lt.
+have E1 : capp S z = x by rewrite /z -cappM // ccomp_inv capp_id.
+have E2 : capp (sh_tr dvdn_e2n64) (capp (sh_out dvdn_e2n64) z) = x
+  by rewrite -cappM.
+apply: capp_cinvE => //.
+- by apply: capp_lt; apply: capp_lt.
+rewrite avx2_layoutE -E2.
+have := sh_trs_id.
+move=> /(congr1 (fun s => capp s (capp (sh_out dvdn_e2n64) z))).
+by rewrite capp_id !cappM ?capp_lt // => ->.
+Qed.
 
 (* WHAT IS LEFT: and each of the three sets of wires is the one its level     *)
 (* starts from -- through cinv_layout_tr, a claim about tb_tr and tb_out      *)
