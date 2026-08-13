@@ -2338,6 +2338,64 @@ Lemma dcascade_hiS (K e j : nat) : j <= e ->
   dcascade_hi n K e.+1 j = dlevel n K (`2^ e) ++ dcascade_hi n K e j.
 Proof. by move=> jL; rewrite [LHS]/= ltnNge jL. Qed.
 
+(* -------------------------------------------------------------------------- *)
+(*  Which wires a nest of loops runs over                                     *)
+(* -------------------------------------------------------------------------- *)
+
+(* the array, block by block                                                  *)
+Lemma iota_blocks (m b : nat) :
+  iota 0 (m * b) = flatten [seq iota (t * b) b | t <- iota 0 m].
+Proof.
+elim: m => [|m IH]; first by rewrite mul0n.
+rewrite mulSnr iotaD IH -addn1 iotaD map_cat flatten_cat /=.
+by rewrite cats0 add0n.
+Qed.
+
+Lemma perm_flatten_map (T : eqType) (F G : nat -> seq T) (l : seq nat) :
+  (forall t, t \in l -> perm_eq (F t) (G t)) ->
+  perm_eq (flatten [seq F t | t <- l]) (flatten [seq G t | t <- l]).
+Proof.
+elim: l => [|t l IH] //= H.
+apply: perm_cat; first by apply: H; rewrite mem_head.
+by apply: IH => x xI; apply: H; rewrite inE xI orbT.
+Qed.
+
+(* a loop that takes the same offsets in every block runs over exactly the    *)
+(* wires those offsets pick out, whatever order it takes them in -- provided  *)
+(* the condition on a wire only depends on where it is inside its block       *)
+Lemma perm_block_offsets (b : nat) (cs : seq nat) (Q : nat -> bool) :
+  b %| n -> perm_eq cs [seq c <- iota 0 b | Q c] ->
+  (forall t c, c < b -> Q (t * b + c) = Q c) ->
+  perm_eq (flatten [seq [seq t * b + c | c <- cs] | t <- iota 0 (n %/ b)])
+          [seq x <- iota 0 n | Q x].
+Proof.
+move=> bD csP QI.
+have n_gt0 : 0 < n by rewrite e2n_gt0.
+have b_gt0 : 0 < b by case: (posnP b) bD => // ->; rewrite dvd0n => /eqP nE0;
+  move: n_gt0; rewrite nE0.
+have nE : n %/ b * b = n by have [c cE] := dvdnP bD; rewrite cE mulnK.
+rewrite -{2}nE iota_blocks filter_flatten -map_comp.
+apply: perm_flatten_map => t; rewrite mem_iota add0n => /andP[_ tL].
+rewrite /comp.
+have -> : iota (t * b) b = [seq t * b + c | c <- iota 0 b]
+  by rewrite -iotaDl addn0.
+rewrite filter_map.
+rewrite (_ : [seq c <- iota 0 b | preim (fun c => t * b + c) Q c]
+             = [seq c <- iota 0 b | Q c]); last first.
+  by apply: eq_in_filter => c; rewrite mem_iota add0n => /andP[_ cL];
+     rewrite /preim /= QI.
+by rewrite perm_map.
+Qed.
+
+Lemma dvdn16 : 16 %| n.
+Proof. by apply: dvdn_trans dvdn_e2n64; apply/dvdnP; exists 4. Qed.
+
+Lemma mod8_blk16 (t c : nat) : (t * 16 + c) %% 8 = c %% 8.
+Proof.
+have -> : t * 16 + c = (t * 2) * 8 + c by lia.
+by rewrite modnMDl.
+Qed.
+
 (* reading a nest of two loops as one: the eight lanes of every group of      *)
 (* eight, up to a span, are that span read straight through                   *)
 Lemma flatten_iota_split (T : Type) (f : nat -> T) (m s : nat) :
@@ -2461,17 +2519,74 @@ Lemma pflat_stage_sh (K cnt q d : nat) (fl : flips) (g : seq (nat * nat)) :
     | x <- stagew cnt q g].
 Admitted.
 
-(* WHAT IS LEFT: it starts from each of them once                             *)
-Lemma stagew_uniq (cnt q : nat) (g : seq (nat * nat)) : uniq (stagew cnt q g).
+(* the offsets a stage takes inside one block                                 *)
+Definition stcs (q : nat) (g : seq (nat * nat)) : seq nat :=
+  flatten [seq flatten [seq [seq u * 8 + ab.1 * q + l | l <- iota 0 8]
+                       | ab <- g]
+          | u <- iota 0 (q %/ 8)].
+
+Lemma stagewW (cnt q : nat) (g : seq (nat * nat)) :
+  stagew cnt q g
+  = flatten [seq [seq t * (cnt * q) + c | c <- stcs q g]
+            | t <- iota 0 (n %/ (cnt * q))].
+Proof.
+rewrite /stagew /stcs.
+congr flatten; apply/eq_map => t.
+rewrite map_flatten -map_comp; congr flatten; apply/eq_map => u.
+rewrite /comp map_flatten -map_comp; congr flatten; apply/eq_map => ab.
+by rewrite /comp -map_comp; apply/eq_map => l; rewrite /comp !addnA.
+Qed.
+
+(* WHAT IS LEFT: inside one block, the batch takes the offsets the level      *)
+(* starts from: the batch gives the register, the eight lanes of every group  *)
+(* of eight give the rest                                                     *)
+Lemma perm_stcs (cnt q d : nat) (g : seq (nat * nat)) :
+  0 < q -> 8 %| q -> d.*2 %| cnt ->
+  perm_eq [seq ab.1 | ab <- g] [seq a <- iota 0 cnt | a %% d.*2 < d] ->
+  perm_eq (stcs q g) [seq c <- iota 0 (cnt * q) | c %% (d * q).*2 < d * q].
 Admitted.
 
-(* WHAT IS LEFT: and they are the wires the level starts from -- the two list *)
-(* identities above read the nest of loops as the blocks of that level        *)
+(* so a stage starts from the wires its level starts from                     *)
 Lemma stagew_mem (cnt q d : nat) (g : seq (nat * nat)) :
   0 < q -> 8 %| q -> d.*2 %| cnt -> cnt * q %| n %/ 8 ->
   perm_eq [seq ab.1 | ab <- g] [seq a <- iota 0 cnt | a %% d.*2 < d] ->
   stagew cnt q g =i [seq i <- iota 0 n | i %% (d * q).*2 < d * q].
-Admitted.
+Proof.
+move=> q_gt0 q8 d2 cq gP.
+have qE := rowE.
+have cqn : cnt * q %| n by apply: dvdn_trans cq _; rewrite -{2}qE dvdn_mulr.
+apply: perm_mem.
+rewrite stagewW.
+apply: perm_block_offsets cqn _ _; first by apply: perm_stcs gP.
+move=> t c cL.
+have [e eE] : exists e, cnt = d.*2 * e by have [e eE] := dvdnP d2; exists e; lia.
+have -> : t * (cnt * q) + c = (t * e) * ((d * q).*2) + c
+  by rewrite eE -!muln2; lia.
+by rewrite modnMDl.
+Qed.
+
+(* and it starts from each of them once                                       *)
+Lemma stagew_uniq (cnt q d : nat) (g : seq (nat * nat)) :
+  0 < q -> 8 %| q -> d.*2 %| cnt -> cnt * q %| n %/ 8 ->
+  perm_eq [seq ab.1 | ab <- g] [seq a <- iota 0 cnt | a %% d.*2 < d] ->
+  uniq (stagew cnt q g).
+Proof.
+move=> q_gt0 q8 d2 cq gP.
+have qE := rowE.
+have cqn : cnt * q %| n by apply: dvdn_trans cq _; rewrite -{2}qE dvdn_mulr.
+rewrite stagewW.
+have H : perm_eq (flatten [seq [seq t * (cnt * q) + c | c <- stcs q g]
+                          | t <- iota 0 (n %/ (cnt * q))])
+                 [seq i <- iota 0 n | i %% (d * q).*2 < d * q].
+  apply: perm_block_offsets cqn _ _; first by apply: perm_stcs gP.
+  move=> t c cL.
+  have [e eE] : exists e, cnt = d.*2 * e
+    by have [e eE] := dvdnP d2; exists e; lia.
+  have -> : t * (cnt * q) + c = (t * e) * ((d * q).*2) + c
+    by rewrite eE -!muln2; lia.
+  by rewrite modnMDl.
+by rewrite (perm_uniq H) filter_uniq ?iota_uniq.
+Qed.
 
 (* so a stage at one register distance IS the level of that distance          *)
 Lemma dequiv_stage_g (K cnt q d : nat) (fl : flips) (g : seq (nat * nat)) :
@@ -2495,7 +2610,7 @@ apply: dequiv_level => //.
   have [e eE] := dvdnP cq.
   by apply/dvdnP; exists (e * c); rewrite eE cE -!mulnA; congr (_ * _);
      rewrite mulnCA -!muln2; lia.
-- exact: stagew_uniq.
+- by apply: (stagew_uniq (d := d)).
 by apply: (stagew_mem (d := d)).
 Qed.
 
@@ -3129,64 +3244,6 @@ have H0 : all (fun l => nth 0 tb_u64 (nth 0 tb_u64 l) == l) (iota 0 16) by [].
 by move=> lL; apply/eqP; apply: (allP H0); rewrite mem_iota.
 Qed.
 
-
-(* -------------------------------------------------------------------------- *)
-(*  Which wires a nest of loops runs over                                     *)
-(* -------------------------------------------------------------------------- *)
-
-(* the array, block by block                                                  *)
-Lemma iota_blocks (m b : nat) :
-  iota 0 (m * b) = flatten [seq iota (t * b) b | t <- iota 0 m].
-Proof.
-elim: m => [|m IH]; first by rewrite mul0n.
-rewrite mulSnr iotaD IH -addn1 iotaD map_cat flatten_cat /=.
-by rewrite cats0 add0n.
-Qed.
-
-Lemma perm_flatten_map (T : eqType) (F G : nat -> seq T) (l : seq nat) :
-  (forall t, t \in l -> perm_eq (F t) (G t)) ->
-  perm_eq (flatten [seq F t | t <- l]) (flatten [seq G t | t <- l]).
-Proof.
-elim: l => [|t l IH] //= H.
-apply: perm_cat; first by apply: H; rewrite mem_head.
-by apply: IH => x xI; apply: H; rewrite inE xI orbT.
-Qed.
-
-(* a loop that takes the same offsets in every block runs over exactly the    *)
-(* wires those offsets pick out, whatever order it takes them in -- provided  *)
-(* the condition on a wire only depends on where it is inside its block       *)
-Lemma perm_block_offsets (b : nat) (cs : seq nat) (Q : nat -> bool) :
-  b %| n -> perm_eq cs [seq c <- iota 0 b | Q c] ->
-  (forall t c, c < b -> Q (t * b + c) = Q c) ->
-  perm_eq (flatten [seq [seq t * b + c | c <- cs] | t <- iota 0 (n %/ b)])
-          [seq x <- iota 0 n | Q x].
-Proof.
-move=> bD csP QI.
-have n_gt0 : 0 < n by rewrite e2n_gt0.
-have b_gt0 : 0 < b by case: (posnP b) bD => // ->; rewrite dvd0n => /eqP nE0;
-  move: n_gt0; rewrite nE0.
-have nE : n %/ b * b = n by have [c cE] := dvdnP bD; rewrite cE mulnK.
-rewrite -{2}nE iota_blocks filter_flatten -map_comp.
-apply: perm_flatten_map => t; rewrite mem_iota add0n => /andP[_ tL].
-rewrite /comp.
-have -> : iota (t * b) b = [seq t * b + c | c <- iota 0 b]
-  by rewrite -iotaDl addn0.
-rewrite filter_map.
-rewrite (_ : [seq c <- iota 0 b | preim (fun c => t * b + c) Q c]
-             = [seq c <- iota 0 b | Q c]); last first.
-  by apply: eq_in_filter => c; rewrite mem_iota add0n => /andP[_ cL];
-     rewrite /preim /= QI.
-by rewrite perm_map.
-Qed.
-
-Lemma dvdn16 : 16 %| n.
-Proof. by apply: dvdn_trans dvdn_e2n64; apply/dvdnP; exists 4. Qed.
-
-Lemma mod8_blk16 (t c : nat) : (t * 16 + c) %% 8 = c %% 8.
-Proof.
-have -> : t * 16 + c = (t * 2) * 8 + c by lia.
-by rewrite modnMDl.
-Qed.
 
 (* the wires the pass of two starts from, in the order it lists them: the     *)
 (* lanes under four of every register, named where the shuffle reads them     *)
