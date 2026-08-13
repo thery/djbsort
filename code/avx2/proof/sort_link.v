@@ -2287,31 +2287,116 @@ Lemma dcascade_hiS (K e j : nat) : j <= e ->
   dcascade_hi n K e.+1 j = dlevel n K (`2^ e) ++ dcascade_hi n K e j.
 Proof. by move=> jL; rewrite [LHS]/= ltnNge jL. Qed.
 
-(* WHAT IS LEFT: one stage, at a distance narrower than a row.  The batch     *)
-(* compares at three distances, the tiling puts it at every block, and the    *)
-(* whole stage is the three levels of those distances.                        *)
+(* WHAT IS LEFT: reading a nest of two loops as one -- the eight lanes of     *)
+(* every group of eight, up to a span, are that span read straight through    *)
+Lemma flatten_iota_split (T : Type) (f : nat -> T) (m s : nat) :
+  flatten [seq [seq f (u * s + l) | l <- iota 0 s] | u <- iota 0 m]
+  = [seq f j | j <- iota 0 (m * s)].
+Admitted.
+
+(* WHAT IS LEFT: the wires a level starts from, block by block                *)
+Lemma filter_iota_mod (q c : nat) : 0 < q ->
+  [seq i <- iota 0 (c * q.*2) | i %% q.*2 < q]
+  = flatten [seq [seq t * q.*2 + j | j <- iota 0 q] | t <- iota 0 c].
+Admitted.
+
+(* WHAT IS LEFT: a stage of two batches, one after the other, may be read as  *)
+(* the two stages: only comparisons of different blocks have to move, and a   *)
+(* block keeps to itself                                                      *)
+Lemma dequiv_stage_cat (cnt q : nat) (fl : flips) (g1 g2 : seq (nat * nat)) :
+  0 < q -> 8 %| q -> cnt * q %| n %/ 8 ->
+  all (fun ab => (ab.1 < cnt) && (ab.2 < cnt)) (g1 ++ g2) ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (stage n fl n cnt q (g1 ++ g2))).1)
+           (cren (cinv (avx2_layout dvdn_e2n64))
+              (pflat (stage n fl n cnt q g1)).1
+            ++ cren (cinv (avx2_layout dvdn_e2n64))
+                 (pflat (stage n fl n cnt q g2)).1).
+Admitted.
+
+(* WHAT IS LEFT: a stage whose batch compares at ONE register distance is the *)
+(* level of that distance -- the two lemmas above put its wires in the order  *)
+(* dequiv_level asks for, cinv_block keeps their distance and dflP gives      *)
+(* them the orientation                                                       *)
+Lemma dequiv_stage_g (K cnt q d : nat) (fl : flips) (g : seq (nat * nat)) :
+  0 < K -> 8 %| K -> 0 < d -> 8 %| q -> cnt * q %| n %/ 8 -> dflP K fl ->
+  all (fun ab => (ab.2 == ab.1 + d) && (ab.2 < cnt)) g ->
+  perm_eq [seq ab.1 | ab <- g] [seq a <- iota 0 cnt | a %% d.*2 < d] ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (stage n fl n cnt q g)).1)
+           (dlevel n K (d * q)).
+Admitted.
+
+(* one stage, at a distance narrower than a row: the batch compares at three  *)
+(* distances, the tiling puts it at every block, and the whole stage is the   *)
+(* three levels of those distances                                            *)
 Lemma dequiv_stage_mrg8 (K q : nat) (fl : flips) :
   0 < K -> 8 %| K -> 8 %| q -> q * 8 %| n %/ 8 -> dflP K fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (pflat (stage n fl n 8 q mrg8)).1)
            (dlevel n K (q * 4) ++ dlevel n K (q * 2) ++ dlevel n K q).
-Admitted.
+Proof.
+move=> K_gt0 K8 q8 q8' flP.
+have q_gt0 : 0 < q.
+  by case: (posnP q) q8' => // ->; rewrite mul0n dvd0n => /eqP;
+     have := row_gt0; lia.
+have q8'' : 8 * q %| n %/ 8 by rewrite mulnC.
+have -> : mrg8 = [:: (0, 4); (1, 5); (2, 6); (3, 7)]
+                 ++ ([:: (0, 2); (1, 3); (4, 6); (5, 7)]
+                     ++ [:: (0, 1); (2, 3); (4, 5); (6, 7)]) :> seq (nat * nat)
+  by [].
+have H1 := @dequiv_stage_cat 8 q fl [:: (0, 4); (1, 5); (2, 6); (3, 7)]
+             ([:: (0, 2); (1, 3); (4, 6); (5, 7)]
+              ++ [:: (0, 1); (2, 3); (4, 5); (6, 7)]).
+apply: dequiv_trans (H1 _ _ _ _) _ => //.
+apply: dequiv_cat.
+  have -> : dlevel n K (q * 4) = dlevel n K (4 * q) by rewrite mulnC.
+  by apply: (dequiv_stage_g (d := 4) (cnt := 8)).
+have H2 := @dequiv_stage_cat 8 q fl [:: (0, 2); (1, 3); (4, 6); (5, 7)]
+             [:: (0, 1); (2, 3); (4, 5); (6, 7)].
+apply: dequiv_trans (H2 _ _ _ _) _ => //.
+apply: dequiv_cat.
+  have -> : dlevel n K (q * 2) = dlevel n K (2 * q) by rewrite mulnC.
+  by apply: (dequiv_stage_g (d := 2) (cnt := 8)).
+have -> : dlevel n K q = dlevel n K (1 * q) by rewrite mul1n.
+by apply: (dequiv_stage_g (d := 1) (cnt := 8)).
+Qed.
 
-(* WHAT IS LEFT: the same, for the batch of four -- two levels               *)
+(* the same, for the batch of four -- two levels                              *)
 Lemma dequiv_stage_mrg4 (K q : nat) (fl : flips) :
   0 < K -> 8 %| K -> 8 %| q -> q * 4 %| n %/ 8 -> dflP K fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (pflat (stage n fl n 4 q mrg4)).1)
            (dlevel n K (q * 2) ++ dlevel n K q).
-Admitted.
+Proof.
+move=> K_gt0 K8 q8 q4 flP.
+have q_gt0 : 0 < q.
+  by case: (posnP q) q4 => // ->; rewrite mul0n dvd0n => /eqP;
+     have := row_gt0; lia.
+have q4' : 4 * q %| n %/ 8 by rewrite mulnC.
+have -> : mrg4 = [:: (0, 2); (1, 3)] ++ [:: (0, 1); (2, 3)] :> seq (nat * nat)
+  by [].
+have H := @dequiv_stage_cat 4 q fl [:: (0, 2); (1, 3)] [:: (0, 1); (2, 3)].
+apply: dequiv_trans (H _ _ _ _) _ => //.
+apply: dequiv_cat.
+  have -> : dlevel n K (q * 2) = dlevel n K (2 * q) by rewrite mulnC.
+  by apply: (dequiv_stage_g (d := 2) (cnt := 4)).
+have -> : dlevel n K q = dlevel n K (1 * q) by rewrite mul1n.
+by apply: (dequiv_stage_g (d := 1) (cnt := 4)).
+Qed.
 
-(* WHAT IS LEFT: the same, for the batch of two -- one level                 *)
+(* and for the batch of two -- one level                                      *)
 Lemma dequiv_stage_mrg2 (K q : nat) (fl : flips) :
   0 < K -> 8 %| K -> 8 %| q -> q * 2 %| n %/ 8 -> dflP K fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (pflat (stage n fl n 2 q mrg2)).1)
            (dlevel n K q).
-Admitted.
+Proof.
+move=> K_gt0 K8 q8 q2 flP.
+have -> : dlevel n K q = dlevel n K (1 * q) by rewrite mul1n.
+apply: (dequiv_stage_g (d := 1) (cnt := 2)) => //.
+by rewrite mulnC.
+Qed.
 
 (* one sweep step: the stage of the three coarsest distances left, then the   *)
 (* same eight times finer -- and, once under a hundred and twenty-eight, the  *)
@@ -2741,16 +2826,47 @@ rewrite -[_ :: _ ++ _]cat1s pflat_cat /= pflat_cat.
 by rewrite ccomp_idl (pflat_nomove (nomv_adj16 _ _)) pflat_Vshuf1 cats0.
 Qed.
 
-(* WHAT IS LEFT: that batch, renamed, is the level a row apart.  Through      *)
-(* sh_perm the batch compares lanes four apart, which cinv_lane_shift sends   *)
-(* a row apart; what is left is the wire set, for dequiv_level_gen: the       *)
-(* lanes under four of every register, renamed, are the level's wires.        *)
+(* the wires the pass of two starts from, in the order it lists them: the     *)
+(* lanes under four of every register, named where the shuffle reads them     *)
+Definition adjw : seq nat :=
+  flatten [seq [seq t * 16 + nth 0 tb_perm l | l <- iota 0 8]
+          | t <- iota 0 (n %/ 16)].
+
+(* WHAT IS LEFT: the batch, renamed, comparison by comparison.  Through       *)
+(* sh_perm it compares lanes four apart, which cinv_lane_shift sends a row    *)
+(* apart, and the flips it carries are the ones the merge asks for            *)
+Lemma pflat_adj16_sh (K : nat) (fl : flips) : dflP K fl ->
+  cren (cinv (avx2_layout dvdn_e2n64))
+       (cren (sh_perm dvdn_e2n64)
+             (pflat (adj16 n (fl_shuf 16 tb_perm fl))).1)
+  = [seq (if (K == n)
+             || odd (capp (cinv (avx2_layout dvdn_e2n64)) x %/ K)
+          then (capp (cinv (avx2_layout dvdn_e2n64)) x,
+                capp (cinv (avx2_layout dvdn_e2n64)) x + n %/ 8)
+          else (capp (cinv (avx2_layout dvdn_e2n64)) x + n %/ 8,
+                capp (cinv (avx2_layout dvdn_e2n64)) x))
+    | x <- adjw].
+Admitted.
+
+(* WHAT IS LEFT: and those wires, renamed, are the ones the level starts from *)
+Lemma perm_adjw :
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- adjw]
+          [seq i <- iota 0 n | i %% (n %/ 8).*2 < n %/ 8].
+Admitted.
+
+(* so that batch, renamed, is the level a row apart                           *)
 Lemma merges_adj2 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (cren (sh_perm dvdn_e2n64)
                (pflat (adj16 n (fl_shuf 16 tb_perm (fl_tog (mrevP 2) rfl4)))).1))
            (dlevel n (n %/ 4) (n %/ 8)).
-Admitted.
+Proof.
+rewrite (pflat_adj16_sh (K := n %/ 4)); last exact: dflP_rfl2.
+apply: dequiv_level_gen; last exact: perm_adjw; first by rewrite row_gt0.
+have qE := rowE.
+have -> : (n %/ 8).*2 = n %/ 4 by rewrite qE4 -muln2.
+by apply/dvdnP; exists 4; rewrite qE4 -qE; lia.
+Qed.
 
 Lemma merges_pass2 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
@@ -2798,8 +2914,65 @@ rewrite pflat_cat (pflat_nomove (nomv_adj16 _ _)) ccomp_idl.
 by rewrite !cren_id pflat_Vshuf1 cats0.
 Qed.
 
-(* WHAT IS LEFT: those two batches are the levels two rows and a row apart,   *)
-(* the same way round as merges_adj2, with two lane shifts instead of one     *)
+(* the wires the pass of one starts from, in the order it lists them, and     *)
+(* where its shuffles read them: a whole batch two rows apart, then one a     *)
+(* row apart                                                                  *)
+Definition adjw0 : seq nat :=
+  flatten [seq [seq t * 16 + l | l <- iota 0 8] | t <- iota 0 (n %/ 16)].
+
+Definition adjw1a : seq nat :=
+  [seq capp (sh_perm dvdn_e2n64) (capp (sh_u64 dvdn_e2n64) x) | x <- adjw0].
+
+Definition adjw1b : seq nat :=
+  [seq capp (sh_perm dvdn_e2n64)
+       (capp (sh_u64 dvdn_e2n64) (capp (sh_u64 dvdn_e2n64) x)) | x <- adjw0].
+
+(* WHAT IS LEFT: the first batch, renamed, comparison by comparison          *)
+Lemma pflat_adj1a (K : nat) (fl : flips) : dflP K fl ->
+  cren (cinv (avx2_layout dvdn_e2n64))
+    (cren (sh_perm dvdn_e2n64)
+      (cren (sh_u64 dvdn_e2n64)
+        (pflat (adj16 n (fl_shuf 16 tb_u64 (fl_shuf 16 tb_perm fl)))).1))
+  = [seq (if (K == n)
+             || odd (capp (cinv (avx2_layout dvdn_e2n64)) x %/ K)
+          then (capp (cinv (avx2_layout dvdn_e2n64)) x,
+                capp (cinv (avx2_layout dvdn_e2n64)) x + n %/ 4)
+          else (capp (cinv (avx2_layout dvdn_e2n64)) x + n %/ 4,
+                capp (cinv (avx2_layout dvdn_e2n64)) x))
+    | x <- adjw1a].
+Admitted.
+
+(* WHAT IS LEFT: and its wires are the ones the level two rows apart starts   *)
+(* from                                                                       *)
+Lemma perm_adjw1a :
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- adjw1a]
+          [seq i <- iota 0 n | i %% (n %/ 4).*2 < n %/ 4].
+Admitted.
+
+(* WHAT IS LEFT: the second batch, renamed, comparison by comparison         *)
+Lemma pflat_adj1b (K : nat) (fl : flips) : dflP K fl ->
+  cren (cinv (avx2_layout dvdn_e2n64))
+    (cren (sh_perm dvdn_e2n64)
+      (cren (sh_u64 dvdn_e2n64)
+        (cren (sh_u64 dvdn_e2n64)
+          (pflat (adj16 n (fl_shuf 16 tb_u64
+                            (fl_shuf 16 tb_u64 (fl_shuf 16 tb_perm fl))))).1)))
+  = [seq (if (K == n)
+             || odd (capp (cinv (avx2_layout dvdn_e2n64)) x %/ K)
+          then (capp (cinv (avx2_layout dvdn_e2n64)) x,
+                capp (cinv (avx2_layout dvdn_e2n64)) x + n %/ 8)
+          else (capp (cinv (avx2_layout dvdn_e2n64)) x + n %/ 8,
+                capp (cinv (avx2_layout dvdn_e2n64)) x))
+    | x <- adjw1b].
+Admitted.
+
+(* WHAT IS LEFT: and its wires are the ones the level a row apart starts from *)
+Lemma perm_adjw1b :
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- adjw1b]
+          [seq i <- iota 0 n | i %% (n %/ 8).*2 < n %/ 8].
+Admitted.
+
+(* so those two batches are the levels two rows and a row apart               *)
 Lemma merges_adj1 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (cren (sh_perm dvdn_e2n64)
@@ -2812,7 +2985,21 @@ Lemma merges_adj1 :
                                    (fl_shuf 16 tb_perm
                                      (fl_tog (mrevP 1) rfl2)))))).1))))
            (dlevel n (n %/ 2) (n %/ 4) ++ dlevel n (n %/ 2) (n %/ 8)).
-Admitted.
+Proof.
+have qE := rowE.
+have flP : dflP (n %/ 2) (fl_tog (mrevP 1) rfl2) := dflP_rfl1.
+rewrite !cren_cat.
+apply: dequiv_cat.
+  rewrite (pflat_adj1a (K := n %/ 2)) //.
+  apply: dequiv_level_gen; last exact: perm_adjw1a.
+    by rewrite qE4b e2n_gt0.
+  have -> : (n %/ 4).*2 = n %/ 2 by rewrite qE2 qE4 -muln2 -mulnA.
+  by apply/dvdnP; exists 2; rewrite qE2 -qE; lia.
+rewrite (pflat_adj1b (K := n %/ 2)) //.
+apply: dequiv_level_gen; last exact: perm_adjw1b; first by rewrite row_gt0.
+have -> : (n %/ 8).*2 = n %/ 4 by rewrite qE4 -muln2.
+by apply/dvdnP; exists 4; rewrite qE4 -qE; lia.
+Qed.
 
 Lemma merges_pass1 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
@@ -2861,9 +3048,63 @@ rewrite pflat_cat (pflat_nomove Hf) ccomp_idl.
 by rewrite cren_id pflat_Vshuf1 cats0.
 Qed.
 
-(* WHAT IS LEFT: that batch, renamed, is the three levels of a row or more.   *)
-(* Its wires are eight lanes apart inside a group of sixty-four, which the    *)
-(* two transposes carry to the rows of one lane                               *)
+(* one level as the program names it: the wires it starts from, renamed, with *)
+(* the orientation the merge asks for                                         *)
+Definition mklev (K q : nat) (P : seq nat) : seq (nat * nat) :=
+  [seq (if (K == n) || odd (capp (cinv (avx2_layout dvdn_e2n64)) x %/ K)
+        then (capp (cinv (avx2_layout dvdn_e2n64)) x,
+              capp (cinv (avx2_layout dvdn_e2n64)) x + q)
+        else (capp (cinv (avx2_layout dvdn_e2n64)) x + q,
+              capp (cinv (avx2_layout dvdn_e2n64)) x))
+  | x <- P].
+
+(* the wires the transpose sort's batch starts from, in the order it lists    *)
+(* them and where the two transposes read them: the registers listed in as'   *)
+(* of every group of sixty-four                                               *)
+Definition trw (as' : seq nat) : seq nat :=
+  flatten [seq flatten
+             [seq [seq capp (sh_trlo dvdn_e2n64)
+                         (capp (sh_trhi dvdn_e2n64) (t * 64 + a * 8 + l))
+                  | l <- iota 0 8]
+             | a <- as']
+          | t <- iota 0 (n %/ 64)].
+
+(* WHAT IS LEFT: the batch, renamed, comparison by comparison: its three      *)
+(* register distances, eight lanes apart inside a group of sixty-four, are    *)
+(* four rows, two rows and one row apart                                      *)
+Lemma pflat_tr64_sh :
+  cren (cinv (avx2_layout dvdn_e2n64))
+    (cren (sh_trlo dvdn_e2n64)
+      (cren (sh_trhi dvdn_e2n64)
+        (pflat (flatten
+          [seq vnet n (fl_shuf 64 tb_trhi
+                        (fl_tog t64P (fl_shuf 64 tb_trlo
+                           (avx2_rev dvdn_e2n64).2)))
+                    (t * 64) 8 mrg8r
+          | t <- iota 0 (n %/ 64)])).1))
+  = mklev n (n %/ 2) (trw [:: 0; 2; 4; 6])
+    ++ mklev n (n %/ 4) (trw [:: 0; 1; 4; 5])
+    ++ mklev n (n %/ 8) (trw [:: 0; 1; 2; 3]).
+Admitted.
+
+(* WHAT IS LEFT: and each of the three sets of wires is the one its level     *)
+(* starts from                                                                *)
+Lemma perm_trwA :
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- trw [:: 0; 2; 4; 6]]
+          [seq i <- iota 0 n | i %% (n %/ 2).*2 < n %/ 2].
+Admitted.
+
+Lemma perm_trwB :
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- trw [:: 0; 1; 4; 5]]
+          [seq i <- iota 0 n | i %% (n %/ 4).*2 < n %/ 4].
+Admitted.
+
+Lemma perm_trwC :
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- trw [:: 0; 1; 2; 3]]
+          [seq i <- iota 0 n | i %% (n %/ 8).*2 < n %/ 8].
+Admitted.
+
+(* so that batch, renamed, is the three levels of a row or more               *)
 Lemma merges_tr64 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (cren (sh_trlo dvdn_e2n64)
@@ -2875,7 +3116,23 @@ Lemma merges_tr64 :
                              (t * 64) 8 mrg8r
                    | t <- iota 0 (n %/ 64)])).1)))
            (dlevel n n (n %/ 2) ++ dlevel n n (n %/ 4) ++ dlevel n n (n %/ 8)).
-Admitted.
+Proof.
+have qE := rowE.
+rewrite pflat_tr64_sh.
+apply: dequiv_cat.
+  rewrite /mklev; apply: dequiv_level_gen; last exact: perm_trwA.
+    by rewrite qE2b e2n_gt0.
+  by have -> : (n %/ 2).*2 = n by rewrite qE2 -muln2 -qE; lia.
+apply: dequiv_cat.
+  rewrite /mklev; apply: dequiv_level_gen; last exact: perm_trwB.
+    by rewrite qE4b e2n_gt0.
+  have -> : (n %/ 4).*2 = n %/ 2 by rewrite qE2 qE4 -muln2 -mulnA.
+  by apply/dvdnP; exists 2; rewrite qE2 -qE; lia.
+rewrite /mklev; apply: dequiv_level_gen; last exact: perm_trwC.
+  by rewrite row_gt0.
+have -> : (n %/ 8).*2 = n %/ 4 by rewrite qE4 -muln2.
+by apply/dvdnP; exists 4; rewrite qE4 -qE; lia.
+Qed.
 
 Lemma merges_tr :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
