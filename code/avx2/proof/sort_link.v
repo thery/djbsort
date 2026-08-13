@@ -3057,6 +3057,66 @@ Proof. by []. Qed.
 
 (* the second shuffle undoes the first, so the second batch is read exactly   *)
 (* where the pass of two reads its own                                        *)
+(* the same for the sixty-four lane shuffles, and the transpose read off its  *)
+(* table: the register a wire is in and the lane it is at change places       *)
+Lemma capp_sh_tr (i : nat) : i < n ->
+  capp (sh_tr dvdn_e2n64) i = i %/ 64 * 64 + nth 0 tb_tr (i %% 64).
+Proof. by move=> iL; rewrite /sh_tr capp_btab. Qed.
+
+Lemma nth_tb_tr (j : nat) : j < 64 -> nth 0 tb_tr j = j %% 8 * 8 + j %/ 8.
+Proof.
+by move=> jL; rewrite /tb_tr (nth_map 0) ?size_iota // nth_iota // add0n.
+Qed.
+
+Lemma tb_tr_invol (j : nat) : j < 64 -> nth 0 tb_tr (nth 0 tb_tr j) = j.
+Proof.
+have H0 : all (fun j => nth 0 tb_tr (nth 0 tb_tr j) == j) (iota 0 64) by [].
+by move=> jL; apply/eqP; apply: (allP H0); rewrite mem_iota.
+Qed.
+
+Lemma sh_trK (i : nat) : i < n ->
+  capp (sh_tr dvdn_e2n64) (capp (sh_tr dvdn_e2n64) i) = i.
+Proof.
+move=> iL.
+have d64 : 64 %| n := dvdn_e2n64.
+have [c cE] := dvdnP d64.
+have jL : i %% 64 < 64 by rewrite ltn_mod.
+have tL := nth_tab_lt tb_trP (i %% 64).
+rewrite capp_sh_tr // capp_sh_tr ?capp_lt //.
+  rewrite divnMDl // (divn_small tL) addn0 modnMDl (modn_small tL).
+  by rewrite tb_tr_invol // -divn_eq.
+have : i %/ 64 < c by rewrite ltn_divLR // -cE.
+by move: cE tL; nia.
+Qed.
+
+Lemma cinv_sh_tr (i : nat) : i < n ->
+  capp (cinv (sh_tr dvdn_e2n64)) i = capp (sh_tr dvdn_e2n64) i.
+Proof.
+move=> iL; apply: capp_cinvE => //; first by apply: capp_lt.
+by apply: sh_trK.
+Qed.
+
+Lemma n64E : n %/ 64 * 64 = n.
+Proof. by have [c cE] := dvdnP dvdn_e2n64; rewrite cE mulnK. Qed.
+
+Lemma blk64 (t j : nat) : t < n %/ 64 -> j < 64 ->
+  [/\ t * 64 + j < n, (t * 64 + j) %/ 64 = t & (t * 64 + j) %% 64 = j].
+Proof.
+move=> tL jL; have qq := n64E; split; first by nia.
+- by rewrite divnMDl // divn_small ?addn0.
+by rewrite modnMDl modn_small.
+Qed.
+
+Lemma sh_tr_wire (t a l : nat) : t < n %/ 64 -> a < 8 -> l < 8 ->
+  capp (sh_tr dvdn_e2n64) (t * 64 + a * 8 + l) = t * 64 + l * 8 + a.
+Proof.
+move=> tL aL lL.
+have jL : a * 8 + l < 64 by lia.
+have [L1 D1 M1] := blk64 tL jL.
+rewrite -addnA capp_sh_tr // -addnA D1 M1 nth_tb_tr //.
+by rewrite modnMDl (modn_small lL) divnMDl // (divn_small lL) addn0 addnA.
+Qed.
+
 Lemma tb_u64_lt (l : nat) : l < 16 -> nth 0 tb_u64 l < 16.
 Proof.
 have H : all (fun l => nth 0 tb_u64 l < 16) (iota 0 16) by [].
@@ -3490,6 +3550,27 @@ rewrite avx2_layoutE -E2.
 have := sh_trs_id.
 move=> /(congr1 (fun s => capp s (capp (sh_out dvdn_e2n64) z))).
 by rewrite capp_id !cappM ?capp_lt // => ->.
+Qed.
+
+(* so the two transposes the program performs are, in the final naming, the   *)
+(* single transpose sh_tr                                                     *)
+Lemma cinv_layout_trE (x : nat) : x < n ->
+  capp (cinv (avx2_layout dvdn_e2n64))
+       (capp (sh_trlo dvdn_e2n64) (capp (sh_trhi dvdn_e2n64) x))
+  = capp (cinv (avx2_layout dvdn_e2n64)) (capp (sh_tr dvdn_e2n64) x).
+Proof.
+move=> xL.
+rewrite cinv_layout_tr //.
+apply: capp_cinvE => //; first by apply: capp_lt; apply: capp_lt.
+rewrite avx2_layoutE.
+set S := ccomp (sh_tr dvdn_e2n64) (sh_out dvdn_e2n64).
+have zL : capp (cinv S) x < n by apply: capp_lt.
+rewrite /S cappM; last by apply: capp_lt; apply: capp_lt.
+have -> : capp (sh_out dvdn_e2n64)
+            (capp (cinv (sh_out dvdn_e2n64)) (capp (sh_tr dvdn_e2n64) x))
+        = capp (sh_tr dvdn_e2n64) x.
+  by rewrite -cappM ?capp_lt // ccomp_inv capp_id.
+by apply: sh_trK.
 Qed.
 
 (* WHAT IS LEFT: and each of the three sets of wires is the one its level     *)
