@@ -3040,13 +3040,65 @@ Admitted.
 Lemma adjw_lane4 : perm_eq adjw [seq x <- iota 0 n | x %% 8 < 4].
 Admitted.
 
-(* WHAT IS LEFT: and those are the wires the level a row apart starts from -- *)
+(* the wires the level a row apart starts from --                             *)
 (* trc sends the lanes under four to the even rows                            *)
+(* which row a wire lands in: the one trc gives its lane                      *)
+Lemma cinv_row (x : nat) : x < n ->
+  capp (cinv (avx2_layout dvdn_e2n64)) x %/ (n %/ 8) = nth 0 trc (x %% 8).
+Proof.
+have qq := row8E; have qE := rowE; have q_gt0 := row_gt0.
+move=> xL.
+have rL : x %/ (n %/ 8) < 8 by rewrite ltn_divLR // mulnC qE.
+have bL : (x %% (n %/ 8)) %/ 8 < (n %/ 8) %/ 8.
+  by rewrite ltn_divLR // qq ltn_pmod.
+have tL := trc_lt rL.
+have H : 8 * ((x %% (n %/ 8)) %/ 8) + nth 0 trc (x %/ (n %/ 8)) < n %/ 8
+  by move: qq bL tL; nia.
+by rewrite capp_cinv_wire // divnMDl // (divn_small H) addn0.
+Qed.
+
+Lemma cinv_row2 (x : nat) : x < n ->
+  capp (cinv (avx2_layout dvdn_e2n64)) x %/ (n %/ 4) = nth 0 trc (x %% 8) %/ 2.
+Proof. by move=> xL; rewrite qE4 divnMA cinv_row. Qed.
+
+(* the lanes under four are the ones trc sends to an even row, and the lanes  *)
+(* under two of every four the ones it sends to an even pair of rows          *)
+Lemma trc_even (m : nat) : m < 8 -> odd (nth 0 trc m) = (4 <= m).
+Proof. by case: m => [|[|[|[|[|[|[|[|]]]]]]]]. Qed.
+
+Lemma trc_even2 (m : nat) : m < 8 -> odd (nth 0 trc m %/ 2) = (2 <= m %% 4).
+Proof. by case: m => [|[|[|[|[|[|[|[|]]]]]]]]. Qed.
+
+(* the layout may be read backwards                                          *)
+Lemma capp_layoutK (i : nat) : i < n ->
+  capp (cinv (avx2_layout dvdn_e2n64)) (capp (avx2_layout dvdn_e2n64) i) = i.
+Proof. by move=> iL; apply: capp_cinvE => //; apply: capp_lt. Qed.
+
 Lemma cinv_perm_lane4 :
   perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x
           | x <- [seq x <- iota 0 n | x %% 8 < 4]]
           [seq i <- iota 0 n | i %% (n %/ 8).*2 < n %/ 8].
-Admitted.
+Proof.
+have q_gt0 := row_gt0.
+apply: uniq_perm; first 2 last.
+- move=> y; apply/idP/idP.
+    case/mapP => x; rewrite mem_filter mem_iota add0n.
+    move=> /andP[x4 /andP[_ xL]] ->.
+    rewrite mem_filter mem_iota add0n capp_lt // andbT.
+    by rewrite andbT cond_oddE // cinv_row // trc_even ?ltn_mod // -ltnNge.
+  rewrite mem_filter mem_iota add0n => /andP[yC /andP[_ yL]].
+  apply/mapP; exists (capp (avx2_layout dvdn_e2n64) y); last first.
+    by rewrite capp_layoutK.
+  rewrite mem_filter mem_iota add0n capp_lt // andbT.
+  have := cinv_row (capp_lt (avx2_layout dvdn_e2n64) yL).
+  rewrite capp_layoutK // => E.
+  move: yC; rewrite cond_oddE // E trc_even ?ltn_mod // -ltnNge.
+  by move=> ->; rewrite leq0n.
+- rewrite map_inj_in_uniq ?filter_uniq ?iota_uniq // => x y.
+  rewrite !mem_filter !mem_iota !add0n.
+  by move=> /andP[_ /andP[_ xL]] /andP[_ /andP[_ yL]]; apply: capp_inj.
+by rewrite filter_uniq ?iota_uniq.
+Qed.
 
 Lemma perm_adjw :
   perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- adjw]
@@ -3147,12 +3199,32 @@ Admitted.
 Lemma adjw1a_lane2 : perm_eq adjw1a [seq x <- iota 0 n | x %% 8 %% 4 < 2].
 Admitted.
 
-(* WHAT IS LEFT: and those are the wires the level two rows apart starts from *)
+(* the wires the level two rows apart starts from *)
 Lemma cinv_perm_lane2 :
   perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x
           | x <- [seq x <- iota 0 n | x %% 8 %% 4 < 2]]
           [seq i <- iota 0 n | i %% (n %/ 4).*2 < n %/ 4].
-Admitted.
+Proof.
+have q_gt0 : 0 < n %/ 4 by rewrite qE4 muln_gt0 row_gt0.
+apply: uniq_perm; first 2 last.
+- move=> y; apply/idP/idP.
+    case/mapP => x; rewrite mem_filter mem_iota add0n.
+    move=> /andP[x4 /andP[_ xL]] ->.
+    rewrite mem_filter mem_iota add0n capp_lt // andbT.
+    by rewrite andbT cond_oddE // cinv_row2 // trc_even2 ?ltn_mod // -ltnNge.
+  rewrite mem_filter mem_iota add0n => /andP[yC /andP[_ yL]].
+  apply/mapP; exists (capp (avx2_layout dvdn_e2n64) y); last first.
+    by rewrite capp_layoutK.
+  rewrite mem_filter mem_iota add0n capp_lt // andbT.
+  have := cinv_row2 (capp_lt (avx2_layout dvdn_e2n64) yL).
+  rewrite capp_layoutK // => E.
+  move: yC; rewrite cond_oddE // E trc_even2 ?ltn_mod // -ltnNge.
+  by move=> ->; rewrite leq0n.
+- rewrite map_inj_in_uniq ?filter_uniq ?iota_uniq // => x y.
+  rewrite !mem_filter !mem_iota !add0n.
+  by move=> /andP[_ /andP[_ xL]] /andP[_ /andP[_ yL]]; apply: capp_inj.
+by rewrite filter_uniq ?iota_uniq.
+Qed.
 
 Lemma perm_adjw1a :
   perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- adjw1a]
