@@ -3177,12 +3177,19 @@ Lemma cinv_row2 (x : nat) : x < n ->
   capp (cinv (avx2_layout dvdn_e2n64)) x %/ (n %/ 4) = nth 0 trc (x %% 8) %/ 2.
 Proof. by move=> xL; rewrite qE4 divnMA cinv_row. Qed.
 
+Lemma cinv_row4 (x : nat) : x < n ->
+  capp (cinv (avx2_layout dvdn_e2n64)) x %/ (n %/ 2) = nth 0 trc (x %% 8) %/ 4.
+Proof. by move=> xL; rewrite qE2 divnMA cinv_row. Qed.
+
 (* the lanes under four are the ones trc sends to an even row, and the lanes  *)
 (* under two of every four the ones it sends to an even pair of rows          *)
 Lemma trc_even (m : nat) : m < 8 -> odd (nth 0 trc m) = (4 <= m).
 Proof. by case: m => [|[|[|[|[|[|[|[|]]]]]]]]. Qed.
 
 Lemma trc_even2 (m : nat) : m < 8 -> odd (nth 0 trc m %/ 2) = (2 <= m %% 4).
+Proof. by case: m => [|[|[|[|[|[|[|[|]]]]]]]]. Qed.
+
+Lemma trc_even4 (m : nat) : m < 8 -> odd (nth 0 trc m %/ 4) = odd m.
 Proof. by case: m => [|[|[|[|[|[|[|[|]]]]]]]]. Qed.
 
 (* the layout may be read backwards                                          *)
@@ -3370,6 +3377,33 @@ apply: uniq_perm; first 2 last.
   have := cinv_row2 (capp_lt (avx2_layout dvdn_e2n64) yL).
   rewrite capp_layoutK // => E.
   move: yC; rewrite cond_oddE // E trc_even2 ?ltn_mod // -ltnNge.
+  by move=> ->; rewrite leq0n.
+- rewrite map_inj_in_uniq ?filter_uniq ?iota_uniq // => x y.
+  rewrite !mem_filter !mem_iota !add0n.
+  by move=> /andP[_ /andP[_ xL]] /andP[_ /andP[_ yL]]; apply: capp_inj.
+by rewrite filter_uniq ?iota_uniq.
+Qed.
+
+(* and the even lanes the wires the level four rows apart starts from        *)
+Lemma cinv_perm_lane1 :
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x
+          | x <- [seq x <- iota 0 n | ~~ odd (x %% 8)]]
+          [seq i <- iota 0 n | i %% (n %/ 2).*2 < n %/ 2].
+Proof.
+have q_gt0 : 0 < n %/ 2 by rewrite qE2 muln_gt0 row_gt0.
+apply: uniq_perm; first 2 last.
+- move=> y; apply/idP/idP.
+    case/mapP => x; rewrite mem_filter mem_iota add0n.
+    move=> /andP[x4 /andP[_ xL]] ->.
+    rewrite mem_filter mem_iota add0n capp_lt // andbT.
+    by rewrite andbT cond_oddE // cinv_row4 // trc_even4 ?ltn_mod.
+  rewrite mem_filter mem_iota add0n => /andP[yC /andP[_ yL]].
+  apply/mapP; exists (capp (avx2_layout dvdn_e2n64) y); last first.
+    by rewrite capp_layoutK.
+  rewrite mem_filter mem_iota add0n capp_lt // andbT.
+  have := cinv_row4 (capp_lt (avx2_layout dvdn_e2n64) yL).
+  rewrite capp_layoutK // => E.
+  move: yC; rewrite cond_oddE // E trc_even4 ?ltn_mod //.
   by move=> ->; rewrite leq0n.
 - rewrite map_inj_in_uniq ?filter_uniq ?iota_uniq // => x y.
   rewrite !mem_filter !mem_iota !add0n.
@@ -3571,6 +3605,30 @@ have -> : capp (sh_out dvdn_e2n64)
         = capp (sh_tr dvdn_e2n64) x.
   by rewrite -cappM ?capp_lt // ccomp_inv capp_id.
 by apply: sh_trK.
+Qed.
+
+(* so the wires of the transpose sort, in the final naming, are the wires of  *)
+(* its group of sixty-four with the register and the lane changed over        *)
+Lemma trwE (as' : seq nat) : all (fun a => a < 8) as' ->
+  [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- trw as']
+  = flatten [seq flatten
+       [seq [seq capp (cinv (avx2_layout dvdn_e2n64)) (t * 64 + l * 8 + a)
+            | l <- iota 0 8]
+       | a <- as']
+     | t <- iota 0 (n %/ 64)].
+Proof.
+move=> asB.
+rewrite /trw map_flatten -map_comp.
+congr flatten; apply/eq_in_map => t; rewrite mem_iota add0n => /andP[_ tL].
+rewrite /comp map_flatten -map_comp.
+congr flatten; apply/eq_in_map => a aI.
+have aL : a < 8 by apply: (allP asB).
+rewrite /comp -map_comp; apply/eq_in_map => l.
+rewrite mem_iota add0n => /andP[_ lL].
+have jL : a * 8 + l < 64 by lia.
+have [L1 _ _] := blk64 tL jL.
+rewrite /comp cinv_layout_trE; last by rewrite -addnA.
+by rewrite sh_tr_wire.
 Qed.
 
 (* WHAT IS LEFT: and each of the three sets of wires is the one its level     *)
