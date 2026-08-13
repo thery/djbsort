@@ -2023,13 +2023,35 @@ have [] := uniq_min_size MU sub; first by rewrite size_map.
 by move=> _ H; rewrite H.
 Qed.
 
-(* hence a stage that compares at one narrow distance IS that level, whatever *)
-(* order it lists its wires in: they share no wire, so the order costs        *)
-(* nothing, and the flips give each of them the orientation the level asks    *)
-(* for                                                                        *)
-Lemma dequiv_level (K q : nat) (P : seq nat) :
-  0 < q -> 8 %| q -> q.*2 %| (n %/ 8) -> uniq P ->
-  P =i [seq i <- iota 0 n | i %% q.*2 < q] ->
+(* two wires of one register, a few lanes apart: the layout sends them to     *)
+(* the same place of two rows, the rows the transpose gives their lanes       *)
+Lemma cinv_lane_shift (x d : nat) : x < n -> x %% 8 + d < 8 ->
+  capp (cinv (avx2_layout dvdn_e2n64)) (x + d) + nth 0 trc (x %% 8) * (n %/ 8)
+  = capp (cinv (avx2_layout dvdn_e2n64)) x + nth 0 trc (x %% 8 + d) * (n %/ 8).
+Proof.
+have qE := rowE; have qq := row8E; have q_gt0 := row_gt0.
+move=> xL dL.
+have xdL : x + d < n by move: xL dL; have := ltn_pmod x (isT : 0 < 8); lia.
+have h8 : (x + d) %/ 8 = x %/ 8.
+  by rewrite {1}(divn_eq x 8) -addnA divnMDl // (divn_small dL) addn0.
+have lE : (x + d) %% 8 = x %% 8 + d.
+  by rewrite {1}(divn_eq x 8) -addnA modnMDl modn_small.
+have qE8' : n %/ 8 = 8 * ((n %/ 8) %/ 8) by rewrite mulnC qq.
+have qE8'' : n %/ 8 = ((n %/ 8) %/ 8) * 8 by rewrite qq.
+have rE : (x + d) %/ (n %/ 8) = x %/ (n %/ 8) by rewrite qE8' !divnMA h8.
+have bE : ((x + d) %% (n %/ 8)) %/ 8 = (x %% (n %/ 8)) %/ 8.
+  by rewrite qE8'' -!modn_divl h8.
+by rewrite !capp_cinv_wire // lE rE bE; lia.
+Qed.
+
+(* whatever order a list of wires is given in, if renaming it gives exactly   *)
+(* the wires a level starts from then the comparisons it names ARE that       *)
+(* level: they share no wire, so the order costs nothing, and the flips give  *)
+(* each of them the orientation the level asks for                            *)
+Lemma dequiv_level_gen (K q : nat) (P : seq nat) :
+  0 < q -> q.*2 %| n ->
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- P]
+          [seq i <- iota 0 n | i %% q.*2 < q] ->
   dequiv n [seq (if (K == n)
                     || odd (capp (cinv (avx2_layout dvdn_e2n64)) x %/ K)
                  then (capp (cinv (avx2_layout dvdn_e2n64)) x,
@@ -2039,18 +2061,13 @@ Lemma dequiv_level (K q : nat) (P : seq nat) :
            | x <- P]
            (dlevel n K q).
 Proof.
-have qE := rowE.
-move=> q_gt0 q8 q2r PU PS.
-have q2n : q.*2 %| n by apply: dvdn_trans q2r _; rewrite -{2}qE dvdn_mulr.
+move=> q_gt0 q2n PF.
 set F := capp (cinv (avx2_layout dvdn_e2n64)).
 set f := fun i => if (K == n) || odd (i %/ K) then (i, i + q) else (i + q, i).
 set S := [seq i <- iota 0 n | i %% q.*2 < q].
 have SM (i : nat) : (i \in S) = (i < n) && (i %% q.*2 < q).
   by rewrite mem_filter mem_iota add0n andbC.
 have SU : uniq S by apply/filter_uniq/iota_uniq.
-have PF : perm_eq [seq F x | x <- P] S.
-  apply: perm_trans (cinv_perm_level q_gt0 q8 q2r).
-  by rewrite perm_map // (uniq_perm PU SU).
 have fI : injective f.
   move=> x y; rewrite /f.
   by case: ifP => _; case: ifP => _ [E1 E2]; move: E1 E2; lia.
@@ -2087,6 +2104,29 @@ apply: dequiv_reorder; last 2 first.
     by move: H2 H3 iC cE; rewrite mulSn; lia.
   by rewrite /f /bnd; case: ifP => _; rewrite [(_, _).1]/= [(_, _).2]/= iL iqL.
 by rewrite map_inj_uniq // (perm_uniq PF).
+Qed.
+
+(* hence a stage that compares at one narrow distance IS that level, whatever *)
+(* order it lists its wires in: below a row the layout only permutes the      *)
+(* wires the level starts from                                                *)
+Lemma dequiv_level (K q : nat) (P : seq nat) :
+  0 < q -> 8 %| q -> q.*2 %| (n %/ 8) -> uniq P ->
+  P =i [seq i <- iota 0 n | i %% q.*2 < q] ->
+  dequiv n [seq (if (K == n)
+                    || odd (capp (cinv (avx2_layout dvdn_e2n64)) x %/ K)
+                 then (capp (cinv (avx2_layout dvdn_e2n64)) x,
+                       capp (cinv (avx2_layout dvdn_e2n64)) x + q)
+                 else (capp (cinv (avx2_layout dvdn_e2n64)) x + q,
+                       capp (cinv (avx2_layout dvdn_e2n64)) x))
+           | x <- P]
+           (dlevel n K q).
+Proof.
+have qE := rowE.
+move=> q_gt0 q8 q2r PU PS.
+have q2n : q.*2 %| n by apply: dvdn_trans q2r _; rewrite -{2}qE dvdn_mulr.
+apply: dequiv_level_gen => //.
+apply: perm_trans (cinv_perm_level q_gt0 q8 q2r).
+by rewrite perm_map // (uniq_perm PU (filter_uniq _ (iota_uniq _ _)) PS).
 Qed.
 
 (* -------------------------------------------------------------------------- *)
@@ -2503,9 +2543,9 @@ Qed.
 (*  The four merges the tail still owes                                       *)
 (* -------------------------------------------------------------------------- *)
 
-(* WHAT IS LEFT: the ladder.  It is the same program in all four, and it      *)
-(* takes the same distances -- half a row down to eight -- whichever merge it *)
-(* is working for; only the pattern it carries says which.                    *)
+(* the ladder is the same program in all four, and it takes the same          *)
+(* distances -- half a row down to eight -- whichever merge it is working     *)
+(* for; only the pattern it carries says which                                *)
 Lemma qE16 : n %/ 16 = `2^ (k - 2).
 Proof.
 have E : n = `2^ (k - 2) * 16.
@@ -2678,8 +2718,8 @@ rewrite cat0s.
 by apply: dequiv_ladder; rewrite ?row_gt0 ?dvdn_row //; exact: dflP_rfl4.
 Qed.
 
-(* WHAT IS LEFT: the pass of two, which compares a row apart -- it brings the *)
-(* two registers of every sixteen into matching lanes and compares there      *)
+(* the pass of two compares a row apart: it brings the two registers of every *)
+(* sixteen into matching lanes and compares there                             *)
 (* the comparisons a pass makes: the two registers of every sixteen           *)
 Lemma pflat_adj16 (fl : flips) :
   (pflat (adj16 n fl)).1
@@ -2701,7 +2741,10 @@ rewrite -[_ :: _ ++ _]cat1s pflat_cat /= pflat_cat.
 by rewrite ccomp_idl (pflat_nomove (nomv_adj16 _ _)) pflat_Vshuf1 cats0.
 Qed.
 
-(* WHAT IS LEFT: that batch, renamed, is the level a row apart              *)
+(* WHAT IS LEFT: that batch, renamed, is the level a row apart.  Through      *)
+(* sh_perm the batch compares lanes four apart, which cinv_lane_shift sends   *)
+(* a row apart; what is left is the wire set, for dequiv_level_gen: the       *)
+(* lanes under four of every register, renamed, are the level's wires.        *)
 Lemma merges_adj2 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (cren (sh_perm dvdn_e2n64)
@@ -2731,8 +2774,8 @@ apply: dequiv_ladder; last exact: dflP_rfl2.
 by rewrite qE4 dvdn_mulr ?dvdn_row.
 Qed.
 
-(* WHAT IS LEFT: the pass of one, which compares two rows apart and then a    *)
-(* row apart, through its two shuffles                                        *)
+(* the pass of one compares two rows apart and then a row apart, through its  *)
+(* two shuffles                                                               *)
 (* the pass of one, as two batches seen through its three shuffles            *)
 Lemma pflat_rev_pass1 (fl : flips) :
   (pflat (rev_pass dvdn_e2n64 fl 1).1).1
@@ -2755,7 +2798,8 @@ rewrite pflat_cat (pflat_nomove (nomv_adj16 _ _)) ccomp_idl.
 by rewrite !cren_id pflat_Vshuf1 cats0.
 Qed.
 
-(* WHAT IS LEFT: those two batches are the levels two rows and a row apart  *)
+(* WHAT IS LEFT: those two batches are the levels two rows and a row apart,   *)
+(* the same way round as merges_adj2, with two lane shifts instead of one     *)
 Lemma merges_adj1 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (cren (sh_perm dvdn_e2n64)
@@ -2793,8 +2837,8 @@ apply: dequiv_ladder; last exact: dflP_rfl1.
 by rewrite qE2 dvdn_mulr ?dvdn_row.
 Qed.
 
-(* WHAT IS LEFT: the transpose sort, which does the three distances a row or  *)
-(* more apart by turning them into distances of eight and back                *)
+(* the transpose sort does the three distances a row or more apart by turning *)
+(* them into distances of eight and back                                      *)
 (* the transpose sort, as one batch of eight seen through its two transposes  *)
 Lemma pflat_tsort64 (fl : flips) :
   (pflat (tsort64 dvdn_e2n64 fl).1).1
@@ -2817,7 +2861,9 @@ rewrite pflat_cat (pflat_nomove Hf) ccomp_idl.
 by rewrite cren_id pflat_Vshuf1 cats0.
 Qed.
 
-(* WHAT IS LEFT: that batch, renamed, is the three levels of a row or more  *)
+(* WHAT IS LEFT: that batch, renamed, is the three levels of a row or more.   *)
+(* Its wires are eight lanes apart inside a group of sixty-four, which the    *)
+(* two transposes carry to the rows of one lane                               *)
 Lemma merges_tr64 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (cren (sh_trlo dvdn_e2n64)
