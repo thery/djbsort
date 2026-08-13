@@ -2250,6 +2250,35 @@ Proof. by move=> jL; rewrite [LHS]/= ltnNge jL. Qed.
 (* WHAT IS LEFT: the doublings, one merge size after the other -- the sweeps  *)
 (* of that size and the wide sweep that closes it, then the same again with   *)
 (* the size doubled and the pattern the merge left behind.                    *)
+(* WHAT IS LEFT: what the sweeps of one merge size do -- the levels above a   *)
+(* group of eight                                                             *)
+Lemma dequiv_sweeps (e : nat) (fl : flips) :
+  3 <= e -> dflP (`2^ e) fl ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (sweeps n n fl (`2^ e %/ 2))).1)
+           (dcascade_hi n (`2^ e) e 3).
+Admitted.
+
+(* so one doubling is one merge: its sweeps and the wide sweep that closes it *)
+Lemma dequiv_dbl_level (e : nat) (fl : flips) :
+  3 <= e -> dflP (`2^ e) fl ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             ((pflat (sweeps n n fl (`2^ e %/ 2))).1
+              ++ (pflat (flatten [seq vnet n fl (t * 8) (n %/ 8) mrg8r
+                                 | t <- iota 0 ((n %/ 8) %/ 8)])).1))
+           (dcascade n (`2^ e) e).
+Proof.
+move=> eL flP.
+rewrite cren_cat (@dcascade_hiE n (`2^ e) e 3) //.
+apply: dequiv_cat; first exact: dequiv_sweeps.
+rewrite pflat_flatten -?map_comp;
+  last by rewrite all_map; apply/allP => t _; exact: nomv_vnet.
+apply: dequiv_wide => //; first by rewrite e2n_gt0.
+by rewrite -[8]/(`2^ 3) dvdn_e2n.
+Qed.
+
+(* WHAT IS LEFT: the doublings themselves -- one merge size after the other,  *)
+(* each with the pattern the one before it left                               *)
 Lemma dequiv_pdouble (fuel e j : nat) (fl : flips) :
   3 <= e -> n %/ 8 = `2^ e * (`2^ j) -> 0 < j -> j <= fuel -> dflP (`2^ e) fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
@@ -2284,10 +2313,33 @@ Qed.
 (* WHAT IS LEFT: the ladder.  It is the same program in all four, and it      *)
 (* takes the same distances -- half a row down to eight -- whichever merge it *)
 (* is working for; only the pattern it carries says which.                    *)
+Lemma qE16 : n %/ 16 = `2^ (k - 2).
+Proof.
+have E : n = `2^ (k - 2) * 16.
+  by rewrite -[16]/(`2^ 4) -e2nD; congr (`2^ _); lia.
+by rewrite {1}E mulnK.
+Qed.
+
+(* WHAT IS LEFT: the ladder's own recursion -- a stage of three distances,    *)
+(* then the same again eight times finer                                      *)
+Lemma dequiv_ladder1 (fuel e K : nat) (fl : flips) :
+  e <= fuel -> 0 < K -> 8 %| K -> dflP K fl ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (ladder1 n fuel fl (`2^ e))).1)
+           (dcascade_hi n K e.+1 3).
+Admitted.
+
+(* so the ladder, for any merge: half a row down to eight                    *)
 Lemma dequiv_ladder (K : nat) (fl : flips) : 0 < K -> 8 %| K -> dflP K fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64)) (pflat (ladder n fl)).1)
            (dcascade_hi n K k.-1 3).
-Admitted.
+Proof.
+move=> K_gt0 K8 flP.
+rewrite /ladder qE16.
+have -> : k.-1 = (k - 2).+1 by lia.
+apply: dequiv_ladder1 => //.
+by have := ltn_ne2n k; have : `2^ k <= n; [rewrite leq_e2n; lia | lia].
+Qed.
 
 (* the merge of a row: the pass compares nothing, the ladder does it all      *)
 Lemma merges_hi4 :
@@ -2303,11 +2355,40 @@ Qed.
 
 (* WHAT IS LEFT: the pass of two, which compares a row apart -- it brings the *)
 (* two registers of every sixteen into matching lanes and compares there      *)
+(* the comparisons a pass makes: the two registers of every sixteen           *)
+Lemma pflat_adj16 (fl : flips) :
+  (pflat (adj16 n fl)).1
+  = flatten [seq [seq (if nth false fl (t * 16 + l)
+                       then (t * 16 + 8 + l, t * 16 + l)
+                       else (t * 16 + l, t * 16 + 8 + l))
+                 | l <- iota 0 8]
+            | t <- iota 0 (n %/ 16)].
+Proof. by rewrite /adj16 /vmm map_comp pflat_map_Vcmp. Qed.
+
+(* the pass of two, as one batch seen through one shuffle                    *)
+Lemma pflat_rev_pass2 (fl : flips) :
+  (pflat (rev_pass dvdn_e2n64 fl 2).1).1
+  = cren (sh_perm dvdn_e2n64)
+         (pflat (adj16 n (fl_shuf 16 tb_perm (fl_tog (mrevP 2) fl)))).1.
+Proof.
+rewrite /rev_pass /=.
+rewrite -[_ :: _ ++ _]cat1s pflat_cat /= pflat_cat.
+by rewrite ccomp_idl (pflat_nomove (nomv_adj16 _ _)) pflat_Vshuf1 cats0.
+Qed.
+
+(* WHAT IS LEFT: that batch, renamed, is the level a row apart              *)
+Lemma merges_adj2 :
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (cren (sh_perm dvdn_e2n64)
+               (pflat (adj16 n (fl_shuf 16 tb_perm (fl_tog (mrevP 2) rfl4)))).1))
+           (dlevel n (n %/ 4) (n %/ 8)).
+Admitted.
+
 Lemma merges_pass2 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (pflat (rev_pass dvdn_e2n64 rfl4 2).1).1)
            (dlevel n (n %/ 4) (n %/ 8)).
-Admitted.
+Proof. by rewrite pflat_rev_pass2; exact: merges_adj2. Qed.
 
 Lemma merges_hi2 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
@@ -2327,11 +2408,48 @@ Qed.
 
 (* WHAT IS LEFT: the pass of one, which compares two rows apart and then a    *)
 (* row apart, through its two shuffles                                        *)
+(* the pass of one, as two batches seen through its three shuffles            *)
+Lemma pflat_rev_pass1 (fl : flips) :
+  (pflat (rev_pass dvdn_e2n64 fl 1).1).1
+  = cren (sh_perm dvdn_e2n64)
+      (cren (sh_u64 dvdn_e2n64)
+        ((pflat (adj16 n (fl_shuf 16 tb_u64
+                           (fl_shuf 16 tb_perm (fl_tog (mrevP 1) fl))))).1
+         ++ cren (sh_u64 dvdn_e2n64)
+              (pflat (adj16 n (fl_shuf 16 tb_u64
+                                (fl_shuf 16 tb_u64
+                                  (fl_shuf 16 tb_perm
+                                    (fl_tog (mrevP 1) fl)))))).1)).
+Proof.
+rewrite /rev_pass /=.
+rewrite -[_ :: _ :: _]cat1s pflat_cat /= ccomp_idl.
+rewrite -[_ :: _ ++ _]cat1s pflat_cat /= ccomp_idl.
+rewrite pflat_cat (pflat_nomove (nomv_adj16 _ _)) ccomp_idl.
+rewrite -[_ :: _ ++ _]cat1s pflat_cat /= ccomp_idl.
+rewrite pflat_cat (pflat_nomove (nomv_adj16 _ _)) ccomp_idl.
+by rewrite !cren_id pflat_Vshuf1 cats0.
+Qed.
+
+(* WHAT IS LEFT: those two batches are the levels two rows and a row apart  *)
+Lemma merges_adj1 :
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (cren (sh_perm dvdn_e2n64)
+               (cren (sh_u64 dvdn_e2n64)
+                 ((pflat (adj16 n (fl_shuf 16 tb_u64
+                            (fl_shuf 16 tb_perm (fl_tog (mrevP 1) rfl2))))).1
+                  ++ cren (sh_u64 dvdn_e2n64)
+                       (pflat (adj16 n (fl_shuf 16 tb_u64
+                                 (fl_shuf 16 tb_u64
+                                   (fl_shuf 16 tb_perm
+                                     (fl_tog (mrevP 1) rfl2)))))).1))))
+           (dlevel n (n %/ 2) (n %/ 4) ++ dlevel n (n %/ 2) (n %/ 8)).
+Admitted.
+
 Lemma merges_pass1 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (pflat (rev_pass dvdn_e2n64 rfl2 1).1).1)
            (dlevel n (n %/ 2) (n %/ 4) ++ dlevel n (n %/ 2) (n %/ 8)).
-Admitted.
+Proof. by rewrite pflat_rev_pass1; exact: merges_adj1. Qed.
 
 Lemma merges_hi1 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
@@ -2352,11 +2470,47 @@ Qed.
 
 (* WHAT IS LEFT: the transpose sort, which does the three distances a row or  *)
 (* more apart by turning them into distances of eight and back                *)
+(* the transpose sort, as one batch of eight seen through its two transposes  *)
+Lemma pflat_tsort64 (fl : flips) :
+  (pflat (tsort64 dvdn_e2n64 fl).1).1
+  = cren (sh_trlo dvdn_e2n64)
+      (cren (sh_trhi dvdn_e2n64)
+        (pflat (flatten [seq vnet n (fl_shuf 64 tb_trhi
+                                      (fl_tog t64P (fl_shuf 64 tb_trlo fl)))
+                              (t * 64) 8 mrg8r
+                        | t <- iota 0 (n %/ 64)])).1).
+Proof.
+have Hf : all (@nomv n) (flatten [seq vnet n (fl_shuf 64 tb_trhi
+                                      (fl_tog t64P (fl_shuf 64 tb_trlo fl)))
+                              (t * 64) 8 mrg8r
+                        | t <- iota 0 (n %/ 64)]).
+  by apply: nomv_flatten; rewrite all_map; apply/allP => t _; exact: nomv_vnet.
+rewrite /tsort64 /=.
+rewrite -[_ :: _ :: _]cat1s pflat_cat /= ccomp_idl.
+rewrite -[_ :: _ ++ _]cat1s pflat_cat /= ccomp_idl.
+rewrite pflat_cat (pflat_nomove Hf) ccomp_idl.
+by rewrite cren_id pflat_Vshuf1 cats0.
+Qed.
+
+(* WHAT IS LEFT: that batch, renamed, is the three levels of a row or more  *)
+Lemma merges_tr64 :
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (cren (sh_trlo dvdn_e2n64)
+               (cren (sh_trhi dvdn_e2n64)
+                 (pflat (flatten
+                   [seq vnet n (fl_shuf 64 tb_trhi
+                                 (fl_tog t64P (fl_shuf 64 tb_trlo
+                                    (avx2_rev dvdn_e2n64).2)))
+                             (t * 64) 8 mrg8r
+                   | t <- iota 0 (n %/ 64)])).1)))
+           (dlevel n n (n %/ 2) ++ dlevel n n (n %/ 4) ++ dlevel n n (n %/ 8)).
+Admitted.
+
 Lemma merges_tr :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (pflat (avx2_tr dvdn_e2n64).1).1)
            (dlevel n n (n %/ 2) ++ dlevel n n (n %/ 4) ++ dlevel n n (n %/ 8)).
-Admitted.
+Proof. by rewrite /avx2_tr pflat_tsort64; exact: merges_tr64. Qed.
 
 Lemma merges_hi_last :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
