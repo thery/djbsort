@@ -3014,6 +3014,62 @@ rewrite -[_ :: _ ++ _]cat1s pflat_cat /= pflat_cat.
 by rewrite ccomp_idl (pflat_nomove (nomv_adj16 _ _)) pflat_Vshuf1 cats0.
 Qed.
 
+(* -------------------------------------------------------------------------- *)
+(*  The shuffles, as tables                                                   *)
+(* -------------------------------------------------------------------------- *)
+
+(* a shuffle of sixteen lanes reads position i from the place its table names *)
+Lemma bfun_tab16E (tb : seq nat) (p : perm_eq tb (iota 0 16)) (j : nat) :
+  bfun (k := 16) isT (tabf p) j = j %/ 16 * 16 + nth 0 tb (j %% 16).
+Proof. by []. Qed.
+
+Lemma capp_sh_perm (i : nat) : i < n ->
+  capp (sh_perm dvdn_e2n64) i = i %/ 16 * 16 + nth 0 tb_perm (i %% 16).
+Proof. by move=> iL; rewrite /sh_perm capp_btab. Qed.
+
+Lemma capp_sh_u64 (i : nat) : i < n ->
+  capp (sh_u64 dvdn_e2n64) i = i %/ 16 * 16 + nth 0 tb_u64 (i %% 16).
+Proof. by move=> iL; rewrite /sh_u64 capp_btab. Qed.
+
+Lemma n16E : n %/ 16 * 16 = n.
+Proof.
+have d16 : 16 %| n by apply: dvdn_trans dvdn_e2n64; apply/dvdnP; exists 4.
+by have [c cE] := dvdnP d16; rewrite cE mulnK.
+Qed.
+
+(* where a lane of a group of sixteen is                                      *)
+Lemma blk16 (t l : nat) : t < n %/ 16 -> l < 16 ->
+  [/\ t * 16 + l < n, (t * 16 + l) %/ 16 = t & (t * 16 + l) %% 16 = l].
+Proof.
+move=> tL lL; have qq := n16E; split; first by nia.
+- by rewrite divnMDl // divn_small ?addn0.
+by rewrite modnMDl modn_small.
+Qed.
+
+(* the pass of one shuffles twice before it compares, and again before it     *)
+(* compares the second time; here are the two tables that gives               *)
+Definition tb_pu : seq nat :=
+  [seq nth 0 tb_perm (nth 0 tb_u64 l) | l <- iota 0 16].
+
+Lemma tb_puE :
+  tb_pu = [:: 0; 1; 4; 5; 8; 9; 12; 13; 2; 3; 6; 7; 10; 11; 14; 15].
+Proof. by []. Qed.
+
+(* the second shuffle undoes the first, so the second batch is read exactly   *)
+(* where the pass of two reads its own                                        *)
+Lemma tb_u64_lt (l : nat) : l < 16 -> nth 0 tb_u64 l < 16.
+Proof.
+have H : all (fun l => nth 0 tb_u64 l < 16) (iota 0 16) by [].
+by move=> lL; apply: (allP H); rewrite mem_iota.
+Qed.
+
+Lemma tb_u64_invol (l : nat) : l < 16 -> nth 0 tb_u64 (nth 0 tb_u64 l) = l.
+Proof.
+have H0 : all (fun l => nth 0 tb_u64 (nth 0 tb_u64 l) == l) (iota 0 16) by [].
+by move=> lL; apply/eqP; apply: (allP H0); rewrite mem_iota.
+Qed.
+
+
 (* the wires the pass of two starts from, in the order it lists them: the     *)
 (* lanes under four of every register, named where the shuffle reads them     *)
 Definition adjw : seq nat :=
@@ -3180,6 +3236,41 @@ Definition adjw1b : seq nat :=
   [seq capp (sh_perm dvdn_e2n64)
        (capp (sh_u64 dvdn_e2n64) (capp (sh_u64 dvdn_e2n64) x)) | x <- adjw0].
 
+(* the pass of one reads its first batch through tb_pu                        *)
+Lemma adjw1aE : adjw1a
+  = flatten [seq [seq t * 16 + nth 0 tb_pu l | l <- iota 0 8]
+            | t <- iota 0 (n %/ 16)].
+Proof.
+rewrite /adjw1a /adjw0 map_flatten -map_comp.
+congr flatten; apply/eq_in_map => t; rewrite mem_iota add0n => /andP[_ tL].
+rewrite /comp -map_comp; apply/eq_in_map => l.
+rewrite mem_iota add0n => /andP[_ lL].
+have l16 : l < 16 by lia.
+have [L1 D1 M1] := blk16 tL l16.
+have u16 := tb_u64_lt l16.
+rewrite /comp capp_sh_u64 // D1 M1.
+have [L2 D2 M2] := blk16 tL u16.
+by rewrite capp_sh_perm // D2 M2 /tb_pu (nth_map 0) ?size_iota // nth_iota.
+Qed.
+
+(* and its second batch where the pass of two reads its own: the shuffle      *)
+(* between them is its own inverse                                            *)
+Lemma adjw1bE : adjw1b = adjw.
+Proof.
+rewrite /adjw1b /adjw0 /adjw map_flatten -map_comp.
+congr flatten; apply/eq_in_map => t; rewrite mem_iota add0n => /andP[_ tL].
+rewrite /comp -map_comp; apply/eq_in_map => l.
+rewrite mem_iota add0n => /andP[_ lL].
+have l16 : l < 16 by lia.
+have [L1 D1 M1] := blk16 tL l16.
+have u16 := tb_u64_lt l16.
+rewrite /comp [capp (sh_u64 dvdn_e2n64) (t * 16 + l)]capp_sh_u64 // D1 M1.
+have [L2 D2 M2] := blk16 tL u16.
+rewrite [capp (sh_u64 dvdn_e2n64) (t * 16 + _)]capp_sh_u64 // D2 M2.
+rewrite tb_u64_invol //.
+by rewrite capp_sh_perm // D1 M1.
+Qed.
+
 (* WHAT IS LEFT: the first batch, renamed, comparison by comparison          *)
 Lemma pflat_adj1a (K : nat) (fl : flips) : dflP K fl ->
   cren (cinv (avx2_layout dvdn_e2n64))
@@ -3250,9 +3341,9 @@ Lemma pflat_adj1b (K : nat) (fl : flips) : dflP K fl ->
     | x <- adjw1b].
 Admitted.
 
-(* WHAT IS LEFT: the second batch starts from the lanes under four            *)
+(* the second batch starts from the lanes under four, as the pass of two does *)
 Lemma adjw1b_lane4 : perm_eq adjw1b [seq x <- iota 0 n | x %% 8 < 4].
-Admitted.
+Proof. by rewrite adjw1bE; exact: adjw_lane4. Qed.
 
 Lemma perm_adjw1b :
   perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- adjw1b]
