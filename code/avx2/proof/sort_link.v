@@ -2503,7 +2503,9 @@ Definition stagew (cnt q : nat) (g : seq (nat * nat)) : seq nat :=
      [seq [seq t * (cnt * q) + u * 8 + ab.1 * q + l | l <- iota 0 8] | ab <- g]
                        | u <- iota 0 (q %/ 8)] | t <- iota 0 (n %/ (cnt * q))].
 
-(* WHAT IS LEFT: a stage whose batch compares at ONE register distance, its   *)
+(* a stage whose batch compares at ONE register distance, its comparisons     *)
+(* listed one by one: cinv_block keeps their distance and dflP gives them     *)
+(* the orientation                                                            *)
 (* comparisons listed one by one: cinv_block keeps their distance and dflP    *)
 (* gives them the orientation                                                 *)
 Lemma pflat_stage_sh (K cnt q d : nat) (fl : flips) (g : seq (nat * nat)) :
@@ -2517,7 +2519,62 @@ Lemma pflat_stage_sh (K cnt q d : nat) (fl : flips) (g : seq (nat * nat)) :
           else (capp (cinv (avx2_layout dvdn_e2n64)) x + d * q,
                 capp (cinv (avx2_layout dvdn_e2n64)) x))
     | x <- stagew cnt q g].
-Admitted.
+Proof.
+move=> q_gt0 q8 cq flP gD; have [flS flN] := flP.
+have qE := rowE.
+have qq := row8E.
+have cqn : cnt * q %| n by apply: dvdn_trans cq _; rewrite -{2}qE dvdn_mulr.
+have cq_gt0 : 0 < cnt * q.
+  case: (posnP (cnt * q)) cq => // ->; rewrite dvd0n => /eqP H.
+  by have := row_gt0; rewrite H.
+have q8E : q %/ 8 * 8 = q by have [c ->] := dvdnP q8; rewrite mulnK.
+have nE : n %/ (cnt * q) * (cnt * q) = n
+  by have [c cE] := dvdnP cqn; rewrite cE mulnK.
+rewrite pflat_stage /stagew.
+rewrite cren_flatten -map_comp map_flatten -map_comp.
+congr flatten; apply/eq_in_map => t; rewrite mem_iota add0n => /andP[_ tL].
+rewrite /comp pflat_blockn cren_flatten -map_comp map_flatten -map_comp.
+congr flatten; apply/eq_in_map => u; rewrite mem_iota add0n => /andP[_ uL].
+rewrite /comp pflat_vnet_cren map_flatten -map_comp.
+congr flatten; apply/eq_in_map => ab abI.
+have /andP[/eqP abE abL] := allP gD _ abI.
+have a1L : ab.1 < cnt by apply: leq_ltn_trans abL; rewrite abE leq_addr.
+rewrite /comp -map_comp; apply/eq_in_map => l.
+rewrite mem_iota add0n => /andP[_ lL].
+rewrite /comp.
+set x := t * (cnt * q) + u * 8 + ab.1 * q + l.
+have oB (a : nat) : a < cnt -> u * 8 + a * q + l < cnt * q.
+  move=> aL; have H : u * 8 + l < q by move: uL lL q8E; nia.
+  by move: H aL; nia.
+have xE : x = t * (cnt * q) + (u * 8 + ab.1 * q + l) by rewrite /x !addnA.
+have yE : t * (cnt * q) + u * 8 + ab.2 * q + l
+        = t * (cnt * q) + (u * 8 + ab.2 * q + l) by rewrite !addnA.
+have xL : x < n by rewrite xE; have := oB _ a1L; move: tL nE; nia.
+have yL : t * (cnt * q) + u * 8 + ab.2 * q + l < n.
+  rewrite yE.
+  have H := oB _ abL.
+  apply: leq_trans (_ : t.+1 * (cnt * q) <= n).
+    by rewrite mulSnr ltn_add2l.
+  by rewrite -nE leq_mul2r tL orbT.
+have mE : (u * 8 + ab.1 * q + l) %% 8 = (u * 8 + ab.2 * q + l) %% 8.
+  have [c cE] := dvdnP q8.
+  have E (a : nat) : (u * 8 + a * (c * 8) + l) %% 8 = l %% 8.
+    by rewrite mulnA -mulnDl modnMDl.
+  by rewrite cE !E.
+have Ep : capp (cinv (avx2_layout dvdn_e2n64))
+            (t * (cnt * q) + u * 8 + ab.2 * q + l)
+        = capp (cinv (avx2_layout dvdn_e2n64)) x + d * q.
+  have H := cinv_block (c := cnt * q) (t := t)
+              (o1 := u * 8 + ab.1 * q + l) (o2 := u * 8 + ab.2 * q + l)
+              cq (dvdn_mull _ q8) cq_gt0 (oB _ a1L) (oB _ abL) mE.
+  rewrite -xE -yE in H.
+  have yx : t * (cnt * q) + u * 8 + ab.2 * q + l = x + d * q.
+    rewrite /x; move: abE; move: (ab.1) (ab.2) => a1 a2 abE.
+    by rewrite abE mulnDl; lia.
+  rewrite yx.
+  by have := H xL yL; rewrite yx; lia.
+by rewrite Ep flN // /dfl; case: ((K == n) || _).
+Qed.
 
 (* the offsets a stage takes inside one block                                 *)
 Definition stcs (q : nat) (g : seq (nat * nat)) : seq nat :=
