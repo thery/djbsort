@@ -2847,14 +2847,82 @@ rewrite /comp map_flatten -map_comp; congr flatten; apply/eq_map => ab.
 by rewrite /comp -map_comp; apply/eq_map => l; rewrite /comp !addnA.
 Qed.
 
-(* WHAT IS LEFT: inside one block, the batch takes the offsets the level      *)
-(* starts from: the batch gives the register, the eight lanes of every group  *)
-(* of eight give the rest                                                     *)
+(* two loops, one inside the other, may be run in either order                *)
+Lemma perm_flatten_catm (T S : eqType) (G H : S -> seq T) (l : seq S) :
+  perm_eq (flatten [seq G y ++ H y | y <- l])
+          (flatten [seq G y | y <- l] ++ flatten [seq H y | y <- l]).
+Proof.
+elim: l => //= y l IH.
+rewrite -!catA perm_cat2l.
+apply: perm_trans (_ : perm_eq _ (H y ++ (flatten [seq G z | z <- l]
+                                          ++ flatten [seq H z | z <- l]))) _.
+  by rewrite perm_cat2l.
+by rewrite perm_catCA.
+Qed.
+
+Lemma perm_flatten_swap2 (T S1 S2 : eqType) (F : S1 -> S2 -> seq T)
+    (l1 : seq S1) (l2 : seq S2) :
+  perm_eq (flatten [seq flatten [seq F x y | y <- l2] | x <- l1])
+          (flatten [seq flatten [seq F x y | x <- l1] | y <- l2]).
+Proof.
+elim: l1 => [|x l1 IH] /=.
+  by elim: l2.
+apply: perm_trans (_ : perm_eq _ (flatten [seq F x y | y <- l2]
+    ++ flatten [seq flatten [seq F z y | z <- l1] | y <- l2])) _.
+  by rewrite perm_cat2l.
+by rewrite perm_sym; apply: perm_flatten_catm.
+Qed.
+
+(* inside one block, the batch takes the offsets the level starts from: the   *)
+(* batch gives the register, the eight lanes of every group of eight give the *)
+(* rest                                                                       *)
 Lemma perm_stcs (cnt q d : nat) (g : seq (nat * nat)) :
   0 < q -> 8 %| q -> d.*2 %| cnt ->
   perm_eq [seq ab.1 | ab <- g] [seq a <- iota 0 cnt | a %% d.*2 < d] ->
   perm_eq (stcs q g) [seq c <- iota 0 (cnt * q) | c %% (d * q).*2 < d * q].
-Admitted.
+Proof.
+move=> q_gt0 q8 d2 gP.
+have qE : q %/ 8 * 8 = q by have [c ->] := dvdnP q8; rewrite mulnK.
+have A : perm_eq (stcs q g)
+           (flatten [seq [seq a * q + c | c <- iota 0 q]
+                    | a <- [seq ab.1 | ab <- g]]).
+  rewrite /stcs.
+  apply: perm_trans (perm_flatten_swap2
+     (fun (u : nat) (ab : nat * nat) =>
+        [seq u * 8 + ab.1 * q + l | l <- iota 0 8])
+     (iota 0 (q %/ 8)) g) _.
+  have E : flatten [seq flatten [seq [seq u * 8 + ab.1 * q + l | l <- iota 0 8]
+                               | u <- iota 0 (q %/ 8)] | ab <- g]
+         = flatten [seq [seq a * q + c | c <- iota 0 q]
+                   | a <- [seq ab.1 | ab <- g]].
+    rewrite -map_comp; congr flatten; apply/eq_map => ab; rewrite /comp.
+    rewrite -[in RHS]qE
+            -(flatten_iota_split (fun j => ab.1 * (q %/ 8 * 8) + j) (q %/ 8) 8).
+    by congr flatten; apply/eq_map => u; apply/eq_map => l; rewrite qE; lia.
+  by rewrite E perm_refl.
+apply: perm_trans A _.
+case: (posnP d) => [dE|d_gt0].
+  move: d2; rewrite dE double0 dvd0n => /eqP cntE.
+  by move: gP; rewrite cntE => /perm_nilP gE; rewrite gE.
+apply: perm_trans (_ : perm_eq _ [seq a * q + c
+     | a <- [seq a <- iota 0 cnt | a %% d.*2 < d], c <- iota 0 q]) _.
+  by apply: perm_allpairs.
+have EC : flatten [seq [seq a * q + c | c <- iota 0 q]
+                  | a <- [seq a <- iota 0 cnt | a %% d.*2 < d]]
+        = [seq c <- iota 0 (cnt * q) | c %% (d * q).*2 < d * q].
+  have [k' cntE] := dvdnP d2.
+  rewrite cntE.
+  have -> : [seq a <- iota 0 (k' * d.*2) | a %% d.*2 < d]
+          = flatten [seq [seq t * d.*2 + j | j <- iota 0 d] | t <- iota 0 k']
+    by rewrite filter_iota_mod.
+  have -> : k' * d.*2 * q = k' * (d * q).*2 by lia.
+  rewrite filter_iota_mod ?muln_gt0 ?d_gt0 //.
+  rewrite map_flatten flatten_flatten -!map_comp.
+  congr flatten; apply/eq_map => t; rewrite /comp -map_comp.
+  rewrite -(flatten_iota_split (fun j => t * (d * q).*2 + j) d q).
+  by congr flatten; apply/eq_map => j; apply/eq_map => c; rewrite /comp; lia.
+by rewrite EC perm_refl.
+Qed.
 
 (* so a stage starts from the wires its level starts from                     *)
 Lemma stagew_mem (cnt q d : nat) (g : seq (nat * nat)) :
