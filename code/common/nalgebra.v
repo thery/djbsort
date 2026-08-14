@@ -17,9 +17,11 @@ Import Order POrderTheory TotalTheory.
 (*    cpairs / nstages read a connector (network) back as its comparators     *)
 (*    cnoflip/nnoflip  a connector (network) that never flips                 *)
 (*    cdisjoint        no line is moved by both connectors                    *)
-(*    cfun_comm        disjoint connectors commute; nfun_nswap, and the       *)
-(*                     comparator-list moves nfun_pnet_swap / _moveL /        *)
-(*                     _moveL_block / _heads_first / _mix built on it         *)
+(*    cfun_comm        disjoint connectors commute; nfun_nswap and the        *)
+(*                     comparator-list move nfun_pnet_swap built on it        *)
+(*    dswap / dequiv   two orders of the same comparisons, and the toolkit    *)
+(*                     that turns one into the other: dequiv_colour,          *)
+(*                     dequiv_flatten_swap, dequiv_heads_first, dequiv_mix    *)
 (*    pdup / neotile   deinterleave a comparator list / a network, iterated   *)
 (*    ntile / arsh     tile a block network across an array, and the blocked  *)
 (*                     view of the array it tiles over                        *)
@@ -500,28 +502,6 @@ rewrite /bnd /dpair /= => /andP[an bn] /andP[cn en] /and4P[aNc aNe bNc bNe].
 exact: nfun_pnet_swap.
 Qed.
 
-(* Moving one comparator left past a block it is disjoint from. *)
-Lemma nfun_pnet_moveL n (qs rs : seq (nat * nat)) ab (t : n.-tuple A) :
-  bnd n ab -> all (bnd n) qs -> all (dpair ab) qs ->
-  nfun (pnet n (qs ++ ab :: rs)) t = nfun (pnet n (ab :: qs ++ rs)) t.
-Proof.
-elim: qs t => [//|[c e] qs IH] t abB /andP[cdB qsB] /andP[abcd qsD].
-have [cn en] : (c < n) /\ (e < n) by move: cdB; rewrite /bnd /= => /andP[].
-rewrite !cat_cons.
-rewrite -(nfun_pnet_swap2 [::] (qs ++ rs) t cdB abB (dpair_sym abcd)).
-by rewrite !(pnet_cons _ cn en) !nfunE IH.
-Qed.
-
-Lemma nfun_pnet_moveL_cat n (ps qs rs : seq (nat * nat)) ab (t : n.-tuple A) :
-  bnd n ab -> all (bnd n) qs -> all (dpair ab) qs ->
-  nfun (pnet n (ps ++ qs ++ ab :: rs)) t
-    = nfun (pnet n (ps ++ ab :: qs ++ rs)) t.
-Proof.
-move=> abB qsB qsD.
-rewrite (nfun_pnet_cat ps (qs ++ ab :: rs) t) (nfun_pnet_cat ps (ab :: qs ++ rs) t).
-by rewrite nfun_pnet_moveL.
-Qed.
-
 (* Any sorting network computes the sort function, so two sorting networks   *)
 (* on the same width compute the same function.  (Also in avx2's             *)
 (* sort_generic.v; kept here so both tracks can reach it.)                   *)
@@ -534,18 +514,6 @@ move=> ns; apply: (sorted_eq (@le_trans _ _) (@le_anti _ _)).
 by apply: (perm_trans (perm_nfun _ _)); rewrite perm_sym; exact: (permEl (perm_sort _ _)).
 Qed.
 
-(* Blockwise replacement: if two families agree as functions block by block, *)
-(* the concatenations of the blocks agree too.                               *)
-Lemma nfun_pnet_flatten n (T : Type) (F G : T -> seq (nat * nat)) (l : seq T)
-    (t : n.-tuple A) :
-  (forall a (u : n.-tuple A), nfun (pnet n (F a)) u = nfun (pnet n (G a)) u) ->
-  nfun (pnet n (flatten [seq F a | a <- l])) t
-    = nfun (pnet n (flatten [seq G a | a <- l])) t.
-Proof.
-move=> H; elim: l t => [//|a l IH] t /=.
-by rewrite !nfun_pnet_cat H IH.
-Qed.
-
 Lemma nfun_pnet_flatten_in n (T : eqType) (F G : T -> seq (nat * nat))
     (l : seq T) (t : n.-tuple A) :
   (forall a, a \in l ->
@@ -556,21 +524,6 @@ Proof.
 elim: l t => [//|a l IH] t H /=.
 rewrite !nfun_pnet_cat H ?mem_head //.
 by apply: IH => x xl u; apply: H; rewrite inE xl orbT.
-Qed.
-
-(* Moving a whole block left past another block it is disjoint from. *)
-Lemma nfun_pnet_moveL_block n (qs bs rs : seq (nat * nat)) (t : n.-tuple A) :
-  all (bnd n) qs -> all (bnd n) bs ->
-  all (fun b => all (dpair b) qs) bs ->
-  nfun (pnet n (qs ++ bs ++ rs)) t = nfun (pnet n (bs ++ qs ++ rs)) t.
-Proof.
-elim: bs rs t => [//|b bs IH] rs t qsB /andP[bB bsB] /andP[bD bsD].
-rewrite cat_cons (@nfun_pnet_moveL n qs (bs ++ rs) b t bB qsB bD).
-rewrite cat_cons.
-rewrite -[b :: (qs ++ bs ++ rs)]cat1s -[b :: (bs ++ qs ++ rs)]cat1s.
-rewrite (nfun_pnet_cat [:: b] (qs ++ bs ++ rs) t).
-rewrite (nfun_pnet_cat [:: b] (bs ++ qs ++ rs) t).
-by apply: IH.
 Qed.
 
 (* -------------------------------------------------------------------------- *)
@@ -598,34 +551,409 @@ move=> H; elim: H t => // {l1 l2}l1 l2 l3 [ps ab cd qs abB cdB abcd] _ IH t.
 by rewrite nfun_pnet_swap2 // IH.
 Qed.
 
-(* Running, for each index, its first block and then its second block, is   *)
-(* the same as running all the first blocks and then all the second blocks, *)
-(* provided a later first block shares no wire with an earlier second one.  *)
-Lemma nfun_pnet_heads_first n (T : eqType) (lt : rel T)
-    (F G : T -> seq (nat * nat)) (l : seq T) (t : n.-tuple A) :
+(* The list-level toolkit: what a program may do to the order of its         *)
+(* comparisons, without ever moving one past a comparison it shares a wire   *)
+(* with.  nfun_dequiv above turns any of it into an equality of functions.   *)
+
+(* one exchange respects concatenation, on either side                        *)
+Lemma dswap_catl n (l l1 l2 : seq (nat * nat)) :
+  dswap n l1 l2 -> dswap n (l ++ l1) (l ++ l2).
+Proof. by case=> ps ab cd qs *; rewrite !catA; constructor. Qed.
+
+Lemma dswap_catr n (l l1 l2 : seq (nat * nat)) :
+  dswap n l1 l2 -> dswap n (l1 ++ l) (l2 ++ l).
+Proof. by case=> ps ab cd qs *; rewrite -!catA /=; constructor. Qed.
+
+(* reordering respects concatenation, on either side                          *)
+Lemma dequiv_catl n (l l1 l2 : seq (nat * nat)) :
+  dequiv n l1 l2 -> dequiv n (l ++ l1) (l ++ l2).
+Proof.
+elim=> [{}l1|{}l1 {}l2 l3 H _ IH]; first exact: dequiv_refl.
+by apply: dequiv_step IH; apply: dswap_catl.
+Qed.
+
+Lemma dequiv_catr n (l l1 l2 : seq (nat * nat)) :
+  dequiv n l1 l2 -> dequiv n (l1 ++ l) (l2 ++ l).
+Proof.
+elim=> [{}l1|{}l1 {}l2 l3 H _ IH]; first exact: dequiv_refl.
+by apply: dequiv_step IH; apply: dswap_catr.
+Qed.
+
+Lemma dequiv_trans n (l1 l2 l3 : seq (nat * nat)) :
+  dequiv n l1 l2 -> dequiv n l2 l3 -> dequiv n l1 l3.
+Proof.
+by move=> H; elim: H => // {}l1 {}l2 l4 H _ IH /IH; apply: dequiv_step H.
+Qed.
+
+Lemma dequiv_cat n (l1 l1' l2 l2' : seq (nat * nat)) :
+  dequiv n l1 l1' -> dequiv n l2 l2' -> dequiv n (l1 ++ l2) (l1' ++ l2').
+Proof.
+by move=> H1 H2; apply: dequiv_trans (dequiv_catr _ H1) (dequiv_catl _ H2).
+Qed.
+
+(* a comparison may be moved forward past any run it shares no wire with      *)
+Lemma dequiv_move n (ab : nat * nat) (ps qs rs : seq (nat * nat)) :
+  bnd n ab -> all (bnd n) qs -> all (dpair ab) qs ->
+  dequiv n (ps ++ ab :: qs ++ rs) (ps ++ qs ++ ab :: rs).
+Proof.
+move=> abB; elim: qs ps => [|cd qs IH] ps /=.
+  by move=> _ _; apply: dequiv_refl.
+move=> /andP[cdB qsB] /andP[abcd qsD].
+apply: dequiv_step (@dswap_step n ps ab cd (qs ++ rs) abB cdB abcd) _.
+by rewrite -cat_rcons -[in X in dequiv _ _ X]cat_rcons; apply: IH.
+Qed.
+
+(* comparisons that share no wire with the others may all be brought to the   *)
+(* front, in the order they already have                                      *)
+Lemma dequiv_part n (p : nat * nat -> bool) (l : seq (nat * nat)) :
+  all (bnd n) l ->
+  all (fun ab => all (fun cd => (p ab != p cd) ==> dpair ab cd) l) l ->
+  dequiv n l ([seq ab <- l | p ab] ++ [seq ab <- l | ~~ p ab]).
+Proof.
+elim: l => [|a l IH] /=; first by move=> _ _; apply: dequiv_refl.
+move=> /andP[aB lB] /andP[/andP[_ aD] /allP lD].
+have lD' : all (fun ab => all (fun cd => (p ab != p cd) ==> dpair ab cd) l) l.
+  by apply/allP => ab abI; have /andP[_] := lD _ abI.
+case: (boolP (p a)) => pa /=; first by apply: (dequiv_catl [:: a]); apply: IH.
+apply: dequiv_trans (dequiv_catl [:: a] (IH lB lD')) _.
+apply: (@dequiv_move n a [::] [seq ab <- l | p ab] [seq ab <- l | ~~ p ab]) => //=.
+  by apply/allP => cd; rewrite mem_filter => /andP[_ /(allP lB)].
+apply/allP => cd; rewrite mem_filter => /andP[pcd cdI].
+by have := allP aD _ cdI; rewrite (negbTE pa) pcd.
+Qed.
+
+(* so comparisons that share no wire unless they have the same name may be    *)
+(* gathered name by name, each group keeping the order it had                 *)
+Lemma dequiv_group n (c : nat * nat -> nat) (cs : seq nat) (l : seq (nat * nat)) :
+  uniq cs -> all (bnd n) l ->
+  all (fun ab => all (fun cd => (c ab != c cd) ==> dpair ab cd) l) l ->
+  dequiv n l (flatten [seq [seq ab <- l | c ab == v] | v <- cs]
+              ++ [seq ab <- l | c ab \notin cs]).
+Proof.
+elim: cs l => [|v cs IH] l /=.
+  by move=> _ _ _; rewrite filter_predT; apply: dequiv_refl.
+move=> /andP[vNI csU] lB lD.
+apply: dequiv_trans (@dequiv_part n (fun ab => c ab == v) l lB _) _.
+  apply/allP => ab abI; apply/allP => cd cdI; apply/implyP => H.
+  have /allP/(_ cd cdI)/implyP := allP lD _ abI; apply.
+  by apply: contra H => /eqP->.
+rewrite -catA; apply: dequiv_catl.
+have GB : all (bnd n) [seq ab <- l | c ab != v].
+  by apply/allP => x; rewrite mem_filter => /andP[_ /(allP lB)].
+have GD : all (fun ab => all (fun cd => (c ab != c cd) ==> dpair ab cd)
+                             [seq ab <- l | c ab != v])
+              [seq ab <- l | c ab != v].
+  apply/allP => ab; rewrite mem_filter => /andP[_ abI].
+  apply/allP => cd; rewrite mem_filter => /andP[_ cdI].
+  by have /allP/(_ cd cdI) := allP lD _ abI.
+have E1 : [seq [seq ab <- [seq ab <- l | c ab != v] | c ab == w] | w <- cs]
+          = [seq [seq ab <- l | c ab == w] | w <- cs].
+  apply/eq_in_map => w wI; rewrite -filter_predI; apply: eq_filter => ab /=.
+  have wv : w != v by apply/eqP => e; move: wI; rewrite e (negbTE vNI).
+  by case: (altP (c ab =P w)) => [cw|] //=; rewrite cw wv.
+have E2 : [seq ab <- [seq ab <- l | c ab != v] | c ab \notin cs]
+          = [seq ab <- l | c ab \notin v :: cs].
+  by rewrite -filter_predI; apply: eq_filter => ab /=; rewrite inE negb_or andbC.
+by have := IH _ csU GB GD; rewrite E1 E2.
+Qed.
+
+(* when a comparison keeps to one region -- its two wires carry the same      *)
+(* region number -- comparisons of different regions share no wire            *)
+Lemma dpair_regions (w : nat -> nat) (l : seq (nat * nat)) :
+  all (fun ab => w ab.2 == w ab.1) l ->
+  all (fun ab => all (fun cd => (w ab.1 != w cd.1) ==> dpair ab cd) l) l.
+Proof.
+move=> lW; apply/allP => ab abI; apply/allP => cd cdI; apply/implyP => H.
+have /eqP abE := allP lW _ abI; have /eqP cdE := allP lW _ cdI.
+rewrite /dpair; apply/and4P; split; apply: contra H => /eqP E.
+- by rewrite E.
+- by rewrite E cdE.
+- by rewrite -abE E.
+by rewrite -abE E cdE.
+Qed.
+
+(* the shape both halves of the reordering take: give every comparison the    *)
+(* number of the region it belongs to, check that comparisons of different    *)
+(* regions share no wire, and read each region off                            *)
+Lemma dequiv_regroup n (c : nat * nat -> nat) (m : nat) (l : seq (nat * nat))
+    (f : nat -> seq (nat * nat)) :
+  all (bnd n) l -> all (fun ab => c ab < m) l ->
+  all (fun ab => all (fun cd => (c ab != c cd) ==> dpair ab cd) l) l ->
+  (forall g, g < m -> [seq ab <- l | c ab == g] = f g) ->
+  dequiv n l (flatten [seq f g | g <- iota 0 m]).
+Proof.
+move=> lB lM lD lf.
+have := @dequiv_group n c (iota 0 m) l (iota_uniq _ _) lB lD.
+have -> : [seq ab <- l | c ab \notin iota 0 m] = [::].
+  rewrite -(filter_pred0 l); apply: eq_in_filter => ab abI /=.
+  by rewrite mem_iota /= add0n (allP lM _ abI).
+rewrite cats0 => H; apply: dequiv_trans H _.
+rewrite (_ : [seq [seq ab <- l | c ab == g] | g <- iota 0 m]
+             = [seq f g | g <- iota 0 m]); first exact: dequiv_refl.
+by apply/eq_in_map => g; rewrite mem_iota /= add0n; apply: lf.
+Qed.
+
+(* the empty pieces of a flatten do not count                                 *)
+Lemma flat_nil (T : Type) (F : nat -> seq T) (l : seq nat) :
+  (forall t, t \in l -> F t = [::]) -> flatten [seq F t | t <- l] = [::].
+Proof.
+elim: l => //= a l IH H.
+by rewrite H ?mem_head // IH // => x xI; rewrite H // inE xI orbT.
+Qed.
+
+(* a flatten with one piece of its own picks that piece out                   *)
+Lemma flatten_pick (T : Type) (F : nat -> seq T) (v : seq T) (t0 M : nat) :
+  t0 < M -> (forall t, t < M -> F t = if t == t0 then v else [::]) ->
+  flatten [seq F t | t <- iota 0 M] = v.
+Proof.
+move=> t0L HF.
+have -> : iota 0 M = iota 0 t0 ++ t0 :: iota t0.+1 (M - t0.+1).
+  by rewrite -{1}[M](subnKC t0L) addSnnS iotaD add0n.
+rewrite map_cat flatten_cat /= HF // eqxx.
+rewrite flat_nil => [|x]; last first.
+  move=> xI; have xL : x < t0 by move: xI; rewrite mem_iota /= add0n.
+  by rewrite HF ?ltn_eqF // (ltn_trans xL t0L).
+rewrite cat0s flat_nil ?cats0 // => x.
+rewrite mem_iota => /andP[xG xL]; rewrite subnKC // in xL.
+by rewrite HF ?gtn_eqF.
+Qed.
+
+(* reordering piece by piece                                                  *)
+Lemma dequiv_flatten n (T : Type) (f f' : T -> seq (nat * nat)) (l : seq T) :
+  (forall x, dequiv n (f x) (f' x)) ->
+  dequiv n (flatten [seq f x | x <- l]) (flatten [seq f' x | x <- l]).
+Proof.
+move=> H; elim: l => /= [|x l IH]; first exact: dequiv_refl.
+by apply: dequiv_cat (H x) IH.
+Qed.
+
+(* a reordering may be undone                                                 *)
+Lemma dswap_sym n (l1 l2 : seq (nat * nat)) : dswap n l1 l2 -> dswap n l2 l1.
+Proof.
+by case=> ps ab cd qs H1 H2 H3; constructor => //; apply: dpair_sym.
+Qed.
+
+Lemma dequiv_sym n (l1 l2 : seq (nat * nat)) : dequiv n l1 l2 -> dequiv n l2 l1.
+Proof.
+elim=> [l|{}l1 {}l2 l3 H _ IH]; first exact: dequiv_refl.
+apply: dequiv_trans IH _.
+by apply: dequiv_step; [exact: dswap_sym H | exact: dequiv_refl].
+Qed.
+
+(* two listings of the same comparisons are a reordering of one another as    *)
+(* soon as a colouring keeps comparisons of different colours apart and both  *)
+(* listings read each colour the same way                                     *)
+Lemma dequiv_colour n (c : nat * nat -> nat) (m : nat) (l1 l2 : seq (nat * nat)) :
+  all (bnd n) l1 -> all (fun ab => c ab < m) l1 ->
+  all (fun ab => all (fun cd => (c ab != c cd) ==> dpair ab cd) l1) l1 ->
+  all (bnd n) l2 -> all (fun ab => c ab < m) l2 ->
+  all (fun ab => all (fun cd => (c ab != c cd) ==> dpair ab cd) l2) l2 ->
+  (forall g, g < m -> [seq ab <- l1 | c ab == g] = [seq ab <- l2 | c ab == g]) ->
+  dequiv n l1 l2.
+Proof.
+move=> l1B l1M l1D l2B l2M l2D E.
+apply: dequiv_trans
+  (@dequiv_regroup n c m l1 (fun g => [seq ab <- l2 | c ab == g]) l1B l1M l1D E) _.
+apply: dequiv_sym.
+by apply: (@dequiv_regroup n c m l2 (fun g => [seq ab <- l2 | c ab == g])).
+Qed.
+
+(* a property of every piece is a property of the flatten                     *)
+Lemma all_flatten_map (T : eqType) (P : pred T) (G : nat -> seq T)
+    (l : seq nat) :
+  (forall t, t \in l -> all P (G t)) -> all P (flatten [seq G t | t <- l]).
+Proof.
+elim: l => //= t l IH H; rewrite all_cat H ?mem_head //=.
+by apply: IH => x xI; apply: H; rewrite inE xI orbT.
+Qed.
+
+(* the same, when the colour of a comparison is the colour of its wires       *)
+Lemma dequiv_colour_w n (w : nat -> nat) (m : nat) (l1 l2 : seq (nat * nat)) :
+  all (bnd n) l1 -> all (fun ab => (w ab.2 == w ab.1) && (w ab.1 < m)) l1 ->
+  all (bnd n) l2 -> all (fun ab => (w ab.2 == w ab.1) && (w ab.1 < m)) l2 ->
+  (forall g, g < m ->
+     [seq ab <- l1 | w ab.1 == g] = [seq ab <- l2 | w ab.1 == g]) ->
+  dequiv n l1 l2.
+Proof.
+move=> l1B l1W l2B l2W E.
+apply: (@dequiv_colour n (fun ab => w ab.1) m) => //.
+- by apply/allP => ab /(allP l1W) /andP[].
+- by apply: dpair_regions; apply/allP => ab /(allP l1W) /andP[].
+- by apply/allP => ab /(allP l2W) /andP[].
+by apply: dpair_regions; apply/allP => ab /(allP l2W) /andP[].
+Qed.
+
+(* a doubly indexed listing read block by block, or part by part: the two     *)
+(* orders are a reordering of one another when the comparisons of the block t *)
+(* all have colour t                                                          *)
+Lemma dequiv_flatten_swap n (w : nat -> nat) (F : nat -> nat -> seq (nat * nat))
+    (m p : nat) :
+  (forall j t, j < p -> t < m -> all (bnd n) (F j t)) ->
+  (forall j t, j < p -> t < m ->
+     all (fun ab => (w ab.2 == w ab.1) && (w ab.1 == t)) (F j t)) ->
+  dequiv n (flatten [seq flatten [seq F j t | j <- iota 0 p] | t <- iota 0 m])
+           (flatten [seq flatten [seq F j t | t <- iota 0 m] | j <- iota 0 p]).
+Proof.
+move=> FB FW.
+have Ffil (j t g : nat) : j < p -> t < m ->
+    [seq ab <- F j t | w ab.1 == g] = if t == g then F j t else [::].
+  move=> jL tL; have /allP FWjt := FW _ _ jL tL.
+  case: (altP (t =P g)) => [tg|tg].
+    apply/all_filterP; apply/allP => ab abI.
+    by have /andP[_ /eqP->] := FWjt _ abI; rewrite tg.
+  rewrite -(filter_pred0 (F j t)); apply: eq_in_filter => ab abI /=.
+  by have /andP[_ /eqP->] := FWjt _ abI; rewrite (negbTE tg).
+apply: (@dequiv_colour_w n w m).
+- apply: all_flatten_map => t; rewrite mem_iota add0n => /andP[_ tL].
+  by apply: all_flatten_map => j; rewrite mem_iota add0n => /andP[_ jL];
+     apply: FB.
+- apply: all_flatten_map => t; rewrite mem_iota add0n => /andP[_ tL].
+  apply: all_flatten_map => j; rewrite mem_iota add0n => /andP[_ jL].
+  apply/allP => ab abI; have /andP[H1 /eqP H2] := allP (FW _ _ jL tL) _ abI.
+  by rewrite H1 H2.
+- apply: all_flatten_map => j; rewrite mem_iota add0n => /andP[_ jL].
+  by apply: all_flatten_map => t; rewrite mem_iota add0n => /andP[_ tL];
+     apply: FB.
+- apply: all_flatten_map => j; rewrite mem_iota add0n => /andP[_ jL].
+  apply: all_flatten_map => t; rewrite mem_iota add0n => /andP[_ tL].
+  apply/allP => ab abI; have /andP[H1 /eqP H2] := allP (FW _ _ jL tL) _ abI.
+  by rewrite H1 H2.
+move=> g gL.
+rewrite !filter_flatten_seq -!map_comp.
+rewrite (@flatten_pick _ _ (flatten [seq F j g | j <- iota 0 p]) g m) //.
+  congr flatten; apply/eq_in_map => j; rewrite mem_iota add0n => /andP[_ jL].
+  rewrite /comp filter_flatten_seq -map_comp; symmetry.
+  apply: (@flatten_pick _ _ (F j g) g m) => // t tL.
+  by rewrite Ffil //; case: (altP (t =P g)) => [->|tg];
+     rewrite ?eqxx ?(negbTE tg).
+move=> t tL; rewrite filter_flatten_seq -map_comp.
+case: (altP (t =P g)) => [tg|tg].
+  congr flatten; apply/eq_in_map => j; rewrite mem_iota add0n => /andP[_ jL].
+  by rewrite /comp Ffil // tg eqxx.
+apply: flat_nil => j; rewrite mem_iota add0n => /andP[_ jL].
+by rewrite /comp Ffil // (negbTE tg).
+Qed.
+
+(* comparisons that share no wire may be put in any order at all              *)
+Lemma dequiv_reorder n (l1 l2 : seq (nat * nat)) :
+  all (bnd n) l1 -> uniq l1 -> perm_eq l1 l2 ->
+  all (fun ab => all (fun cd => (ab != cd) ==> dpair ab cd) l1) l1 ->
+  dequiv n l1 l2.
+Proof.
+elim: l2 l1 => [|cd l2 IH] l1 l1B l1U l1P l1D.
+  by rewrite (perm_nilP l1P); apply: dequiv_refl.
+have cdI : cd \in l1 by rewrite (perm_mem l1P) mem_head.
+case: (splitPr cdI) l1B l1U l1P l1D => ps rs.
+move=> l1B l1U l1P l1D.
+have memT (x : nat * nat) : x \in ps ++ rs -> x \in ps ++ cd :: rs.
+  by rewrite !mem_cat inE => /orP[-> //|->]; rewrite !orbT.
+move: l1B; rewrite all_cat [all _ (_ :: _)]/= => /andP[psB /andP[cdB rsB]].
+move: l1U; rewrite cat_uniq [uniq (_ :: _)]/= [has _ (_ :: _)]/= negb_or.
+move=> /and3P[psU /andP[cdps psrs] /andP[cdrs rsU]].
+have Hdp : all (dpair cd) ps.
+  apply/allP => ab abI.
+  have abIl : ab \in ps ++ cd :: rs by rewrite mem_cat abI.
+  have cdIl : cd \in ps ++ cd :: rs by rewrite mem_cat inE eqxx orbT.
+  have := allP (allP l1D _ cdIl) _ abIl.
+  by rewrite (_ : (cd != ab) = true) //; apply/eqP => cdE; rewrite cdE abI in cdps.
+have step1 : dequiv n (ps ++ cd :: rs) (cd :: (ps ++ rs)).
+  by apply/dequiv_sym/(@dequiv_move n cd [::] ps rs).
+apply: dequiv_trans step1 _; apply: (dequiv_catl [:: cd]).
+apply: IH.
+- by rewrite all_cat psB.
+- by rewrite cat_uniq psU psrs.
+- move: l1P; rewrite (perm_catCA ps [:: cd] rs) => l1P'.
+  by rewrite -(perm_cons cd).
+apply/allP => ab abI; apply/allP => ef efI.
+by have := allP (allP l1D _ (memT _ abI)) _ (memT _ efI).
+Qed.
+
+Lemma dequiv_flatten_in n (T : eqType) (f f' : T -> seq (nat * nat)) (l : seq T) :
+  (forall x, x \in l -> dequiv n (f x) (f' x)) ->
+  dequiv n (flatten [seq f x | x <- l]) (flatten [seq f' x | x <- l]).
+Proof.
+elim: l => /= [_|x l IH H]; first exact: dequiv_refl.
+apply: dequiv_cat; first by apply: H; rewrite mem_head.
+by apply: IH => y yI; apply: H; rewrite inE yI orbT.
+Qed.
+
+(* three parts read block by block, or block after block part by part         *)
+Lemma dequiv_flatten_swap3 n (w : nat -> nat) (FA FB FC : nat -> seq (nat * nat))
+    (m : nat) :
+  (forall t, t < m ->
+     all (fun ab => [&& bnd n ab, w ab.2 == w ab.1 & w ab.1 == t]) (FA t)) ->
+  (forall t, t < m ->
+     all (fun ab => [&& bnd n ab, w ab.2 == w ab.1 & w ab.1 == t]) (FB t)) ->
+  (forall t, t < m ->
+     all (fun ab => [&& bnd n ab, w ab.2 == w ab.1 & w ab.1 == t]) (FC t)) ->
+  dequiv n (flatten [seq FA t ++ (FB t ++ FC t) | t <- iota 0 m])
+           (flatten [seq FA t | t <- iota 0 m]
+            ++ (flatten [seq FB t | t <- iota 0 m]
+                ++ flatten [seq FC t | t <- iota 0 m])).
+Proof.
+move=> HA HB HC.
+pose F (j t : nat) := match j with 0 => FA t | 1 => FB t | _ => FC t end.
+have Hall (j t : nat) : j < 3 -> t < m ->
+    all (fun ab => [&& bnd n ab, w ab.2 == w ab.1 & w ab.1 == t]) (F j t).
+  by move=> jL tL; case: j jL => [|[|[|j]]] //= _; [apply: HA|apply: HB|apply: HC].
+have E1 (t : nat) : FA t ++ (FB t ++ FC t) = flatten [seq F j t | j <- iota 0 3]
+  by rewrite /F /= cats0.
+have E2 : flatten [seq FA t | t <- iota 0 m]
+          ++ (flatten [seq FB t | t <- iota 0 m]
+              ++ flatten [seq FC t | t <- iota 0 m])
+        = flatten [seq flatten [seq F j t | t <- iota 0 m] | j <- iota 0 3]
+  by rewrite /F /= cats0.
+rewrite (eq_map E1) E2.
+apply: (@dequiv_flatten_swap n w F m 3) => j t jL tL.
+  by apply/allP => ab abI; have /and3P[H1 _ _] := allP (Hall _ _ jL tL) _ abI.
+by apply/allP => ab abI; have /and3P[_ H2 H3] := allP (Hall _ _ jL tL) _ abI;
+   rewrite H2 H3.
+Qed.
+
+(* Moving a comparison, or a whole block of them, left past a run they share
+   no wire with. *)
+Lemma dequiv_moveL n (ab : nat * nat) (ps qs rs : seq (nat * nat)) :
+  bnd n ab -> all (bnd n) qs -> all (dpair ab) qs ->
+  dequiv n (ps ++ qs ++ ab :: rs) (ps ++ ab :: qs ++ rs).
+Proof.
+by move=> abB qsB qsD; apply/dequiv_sym/dequiv_move.
+Qed.
+
+Lemma dequiv_moveL_block n (ps qs bs rs : seq (nat * nat)) :
+  all (bnd n) qs -> all (bnd n) bs ->
+  all (fun b => all (dpair b) qs) bs ->
+  dequiv n (ps ++ qs ++ bs ++ rs) (ps ++ bs ++ qs ++ rs).
+Proof.
+elim: bs ps rs => [|b bs IH] ps rs qsB; first by move=> _ _; apply: dequiv_refl.
+move=> /andP[bB bsB] /andP[bD bsD].
+apply: dequiv_trans (@dequiv_moveL n b ps qs (bs ++ rs) bB qsB bD) _.
+rewrite -!cat_rcons.
+by apply: IH.
+Qed.
+
+(* A listing that runs, for each index, its first block and then its second,
+   read instead as all the first blocks and then all the second ones.  It asks
+   only that a later first block share no wire with an earlier second one --
+   the list-level form of nfun_pnet_heads_first. *)
+Lemma dequiv_heads_first n (T : eqType) (lt : rel T)
+    (F G : T -> seq (nat * nat)) (l : seq T) :
   transitive lt -> sorted lt l ->
   (forall a, all (bnd n) (F a)) -> (forall a, all (bnd n) (G a)) ->
   (forall a b, a \in l -> b \in l -> lt a b ->
      all (fun x => all (dpair x) (G a)) (F b)) ->
-  nfun (pnet n (flatten [seq F a ++ G a | a <- l])) t
-    = nfun (pnet n (flatten [seq F a | a <- l] ++ flatten [seq G a | a <- l])) t.
+  dequiv n (flatten [seq F a ++ G a | a <- l])
+           (flatten [seq F a | a <- l] ++ flatten [seq G a | a <- l]).
 Proof.
-move=> ltT; elim: l t => [//|a l IH] t Sl FB GB D /=.
+move=> ltT; elim: l => [|a l IH] /= Sl FB GB D; first exact: dequiv_refl.
 have Sl' : sorted lt l by apply: path_sorted Sl.
 have aL : all (lt a) l by apply: order_path_min Sl.
 have D' : forall x y, x \in l -> y \in l -> lt x y ->
     all (fun z => all (dpair z) (G x)) (F y).
   by move=> x y xl yl; apply: D; rewrite inE ?xl ?yl orbT.
-rewrite (nfun_pnet_cat (F a ++ G a)
-           (flatten [seq F x ++ G x | x <- l]) t) (IH _ Sl' FB GB D').
-rewrite -nfun_pnet_cat.
-rewrite -!catA.
-rewrite (nfun_pnet_cat (F a)
-  (G a ++ flatten [seq F x | x <- l] ++ flatten [seq G x | x <- l]) t).
-rewrite (nfun_pnet_cat (F a)
-  (flatten [seq F x | x <- l] ++ G a ++ flatten [seq G x | x <- l]) t).
-apply: (@nfun_pnet_moveL_block n (G a) (flatten [seq F x | x <- l])
-                               (flatten [seq G x | x <- l])).
+apply: dequiv_trans (dequiv_catl (F a ++ G a) (IH Sl' FB GB D')) _.
+rewrite -!catA; apply: dequiv_catl.
+apply: (@dequiv_moveL_block n [::] (G a) (flatten [seq F x | x <- l])
+                            (flatten [seq G x | x <- l])).
 - exact: GB.
 - by apply/allP => x /flattenP[c /mapP[b _ ->]] xc; move: (FB b) => /allP; apply.
 apply/allP => x /flattenP[c /mapP[b bl ->]] xc.
@@ -633,44 +961,26 @@ have := D a b (mem_head a l) _ (allP aL _ bl).
 by rewrite inE bl orbT => /(_ isT) /allP; apply.
 Qed.
 
-(* Running one family of comparators and then another, versus interleaving   *)
-(* them pairwise.  When every comparator of the second family is disjoint    *)
-(* from every comparator of the first -- as happens when one lands on even   *)
-(* wires and the other on odd ones -- the two give the same function.  This  *)
-(* is precisely the gap between a doubled sweep, which finishes one parity   *)
-(* before starting the other, and `pdup`, which alternates.                  *)
-Lemma nfun_pnet_mix n (ps : seq (nat * nat)) (f g : nat * nat -> nat * nat)
-    (t : n.-tuple A) :
+(* One family of comparators and then another, against the two interleaved:
+   the same, when every comparator of the second family shares no wire with
+   any of the first -- one lands on even wires, the other on odd ones. *)
+Lemma dequiv_mix n (ps : seq (nat * nat)) (f g : nat * nat -> nat * nat) :
   all (fun ab => bnd n (f ab)) ps -> all (fun ab => bnd n (g ab)) ps ->
   (forall ab cd, dpair (g ab) (f cd)) ->
-  nfun (pnet n ([seq f ab | ab <- ps] ++ [seq g ab | ab <- ps])) t
-    = nfun (pnet n (flatten [seq [:: f ab; g ab] | ab <- ps])) t.
+  dequiv n ([seq f ab | ab <- ps] ++ [seq g ab | ab <- ps])
+           (flatten [seq [:: f ab; g ab] | ab <- ps]).
 Proof.
-move=> fB gB D; elim: ps t fB gB => [//|a0 ps IH] t /andP[fa fsB] /andP[ga gsB].
-have E1 : [seq f ab | ab <- a0 :: ps] ++ [seq g ab | ab <- a0 :: ps]
-        = [:: f a0] ++ ([seq f ab | ab <- ps] ++ g a0 :: [seq g ab | ab <- ps]).
-  by [].
-have E2 : flatten [seq [:: f ab; g ab] | ab <- a0 :: ps]
-        = [:: f a0] ++ (g a0 :: flatten [seq [:: f ab; g ab] | ab <- ps]).
-  by [].
-have E3 : forall X : seq (nat * nat), g a0 :: X = [:: g a0] ++ X by [].
-rewrite E1 E2.
-rewrite (nfun_pnet_cat [:: f a0]
-           ([seq f ab | ab <- ps] ++ g a0 :: [seq g ab | ab <- ps]) t).
-rewrite (nfun_pnet_cat [:: f a0]
-           (g a0 :: flatten [seq [:: f ab; g ab] | ab <- ps]) t).
-set u := nfun (pnet n [:: f a0]) t.
-have MV : nfun (pnet n ([seq f ab | ab <- ps] ++ g a0 :: [seq g ab | ab <- ps])) u
-        = nfun (pnet n (g a0 :: ([seq f ab | ab <- ps] ++ [seq g ab | ab <- ps]))) u.
-  apply: nfun_pnet_moveL; [exact: ga | by rewrite all_map | ].
-  by apply/allP => x /mapP[y _ ->]; apply: D.
-rewrite MV (E3 ([seq f ab | ab <- ps] ++ [seq g ab | ab <- ps])).
-rewrite (E3 (flatten [seq [:: f ab; g ab] | ab <- ps])).
-rewrite (nfun_pnet_cat [:: g a0]
-           ([seq f ab | ab <- ps] ++ [seq g ab | ab <- ps]) u).
-rewrite (nfun_pnet_cat [:: g a0] (flatten [seq [:: f ab; g ab] | ab <- ps]) u).
-by apply: IH.
+move=> fB gB D; elim: ps fB gB => [|a ps IH] /= fB gB; first exact: dequiv_refl.
+move: fB gB => /andP[fa fsB] /andP[ga gsB].
+apply: (dequiv_catl [:: f a]).
+apply: dequiv_trans (@dequiv_moveL n (g a) [::] [seq f ab | ab <- ps]
+                       [seq g ab | ab <- ps] ga _ _) _.
+- by apply/allP => x /mapP[ab abI ->]; apply: (allP fsB).
+- by apply/allP => x /mapP[ab abI ->]; apply: D.
+by apply: (dequiv_catl [:: g a]); apply: IH.
 Qed.
+
+
 
 (* A wire touched by none of the comparators keeps its value. *)
 Lemma tnth_nfun_pnet_avoid n (ps : seq (nat * nat)) (u : n.-tuple A)

@@ -18,12 +18,11 @@ Import Order POrderTheory TotalTheory.
 (*                             `2^ m with every comparator doubled, followed  *)
 (*                             by the p = 1 block.  The p >= 2 blocks double  *)
 (*                             by level_pairs_double (a list identity) and by *)
-(*                             nfun_casc_pairs_double (an nfun one: a doubled *)
-(*                             sweep runs a whole chain on the even copy of a *)
-(*                             position and only then on the odd copy, where  *)
-(*                             pdup alternates, and the two orders differ by  *)
-(*                             transpositions of comparators on disjoint      *)
-(*                             lines).                                        *)
+(*                             dequiv_casc_pairs_double (a reordering: a      *)
+(*                             doubled sweep runs a whole chain on the even   *)
+(*                             copy of a position and only then on the odd    *)
+(*                             copy, where pdup alternates, and one parity    *)
+(*                             shares no line with the other).                *)
 (*                                                                            *)
 (*    nstages_knuth_exchangeS  the network splits the same way, and the merge *)
 (*                             stage's connectors are sort.c's blocks:        *)
@@ -31,7 +30,7 @@ Import Order POrderTheory TotalTheory.
 (*                             (cpairs_eswap), codd_jump r the distance-r     *)
 (*                             pass on the odd lines (cpairs_odd_jump).       *)
 (*                                                                            *)
-(*    nfun_casc_kjumps         the cascade transpose: sort.c runs the cascade *)
+(*    dequiv_casc_kjumps       the cascade transpose: sort.c runs the cascade *)
 (*                             position-major, the network distance-major.    *)
 (*                             Pulling the largest distance of every chain to *)
 (*                             the front turns one into the other, each move  *)
@@ -39,7 +38,9 @@ Import Order POrderTheory TotalTheory.
 (*                             large-distance comparator shares no line with  *)
 (*                             an earlier position's smaller-distance ones.   *)
 (*                                                                            *)
-(*  The generic half is in common/nalgebra.v.                                 *)
+(*  Both reorderings are instances of nalgebra.v's dequiv toolkit             *)
+(*  (dequiv_mix, dequiv_heads_first), and nfun_dequiv turns each of them      *)
+(*  into the equality of functions the induction uses.                        *)
 (*                                                                            *)
 (******************************************************************************)
 
@@ -252,27 +253,35 @@ case: ab => x1 x2; case: cd => y1 y2; rewrite /dpair /dblS /dbl /=.
 by apply/and4P; split; apply/eqP => /(congr1 odd); rewrite /= !odd_double.
 Qed.
 
-Section CascDouble.
-
-Variable d0 : disp_t.
-Variable A0 : orderType d0.
-
 (* The casc_pairs doubling law.  Not a list identity: the doubled sweep runs  *)
 (* a whole chain on the even copy of a position and then the whole chain on   *)
 (* the odd copy, while pdup alternates per comparator.  The two orders differ *)
 (* only by transpositions of comparators on disjoint wires -- one parity      *)
-(* against the other -- so they agree as functions, by nfun_pnet_mix.         *)
-Lemma nfun_casc_pairs_double N k p (t : (N + N).-tuple A0) : 0 < p ->
-  nfun (pnet (N + N) (casc_pairs (N + N) (`2^ k.+1) p.*2)) t
-    = nfun (pnet (N + N) (pdup (casc_pairs N (`2^ k) p))) t.
+(* against the other -- so they are a reordering of one another.              *)
+Lemma dequiv_casc_pairs_double N k p : 0 < p ->
+  dequiv (N + N) (casc_pairs (N + N) (`2^ k.+1) p.*2)
+                 (pdup (casc_pairs N (`2^ k) p)).
 Proof.
 move=> p_gt0.
 have C : casc_pairs (N + N) (`2^ k.+1) p.*2 = casc_pairs N.*2 (`2^ k.+1) p.*2.
   by rewrite addnn.
 rewrite C (casc_pairs_split N k p_gt0) casc_pairsE pdup_flatten -map_comp.
-apply: nfun_pnet_flatten => a u.
-apply: nfun_pnet_mix; [exact: bnd_cchain_dbl | exact: bnd_cchain_dblS | ].
+apply: dequiv_flatten => a.
+apply: dequiv_mix; [exact: bnd_cchain_dbl | exact: bnd_cchain_dblS | ].
 by move=> ab cd; exact: dpair_dblS_dbl.
+Qed.
+
+Section CascDouble.
+
+Variable d0 : disp_t.
+Variable A0 : orderType d0.
+
+(* hence they compute the same function                                       *)
+Lemma nfun_casc_pairs_double N k p (t : (N + N).-tuple A0) : 0 < p ->
+  nfun (pnet (N + N) (casc_pairs (N + N) (`2^ k.+1) p.*2)) t
+    = nfun (pnet (N + N) (pdup (casc_pairs N (`2^ k) p))) t.
+Proof.
+by move=> p_gt0; apply: nfun_dequiv; exact: dequiv_casc_pairs_double.
 Qed.
 
 End CascDouble.
@@ -482,11 +491,6 @@ rewrite halves_e2n_cons mem_cat inE => /orP[/mapP[x _ ->] _|/eqP -> //].
 by rewrite odd_double.
 Qed.
 
-Section Transpose.
-
-Variable d2 : disp_t.
-Variable A2 : orderType d2.
-
 (* The cascade transpose.  sort.c runs the cascade position-major (for each   *)
 (* even position, the whole distance chain); the network runs it              *)
 (* distance-major (for each distance, all positions).  Peeling the largest    *)
@@ -495,40 +499,49 @@ Variable A2 : orderType d2.
 (* large-distance comparator shares no wire with an earlier position's        *)
 (* smaller-distance ones: parity rules out three of the four coincidences,    *)
 (* and a + r < b + `2^ k.+1 (a < b, r <= `2^ k) rules out the fourth.         *)
-Lemma nfun_casc_kjumps M k (t : (M + M).-tuple A2) :
-  nfun (pnet (M + M) (casc_pairs (M + M) (`2^ k) 1)) t
-    = nfun (pnet (M + M) (kjumps (M + M) k)) t.
+Lemma dequiv_casc_kjumps M k :
+  dequiv (M + M) (casc_pairs (M + M) (`2^ k) 1) (kjumps (M + M) k).
 Proof.
-elim: k t => [t|k IH t]; first by rewrite /= casc_pairs_1.
+elim: k => [|k IH]; first by rewrite /= casc_pairs_1; apply: dequiv_refl.
 have e_gt1 : 1 < `2^ k.+1 by rewrite -[1]/(`2^ 0) ltn_e2n.
 have e_even : ~~ odd (`2^ k.+1) by rewrite e2Sn addnn odd_double.
 rewrite casc_pairs_cons.
-rewrite (@nfun_pnet_heads_first d2 A2 (M + M) _ ltn
+apply: dequiv_trans (@dequiv_heads_first (M + M) _ ltn
            (fun j => if (1 < `2^ k.+1) && (j + `2^ k.+1 < M + M)
                      then [:: (j + 1, j + `2^ k.+1)] else [::])
            (fun j => [seq (j + 1, j + r)
                      | r <- [seq r <- halves (`2^ k) (`2^ k)
                             | (1 < r) && (j + r < M + M)]])
-           [seq j <- iota 0 (M + M) | ~~ odd (j %/ 1)] t).
-- rewrite nfun_pnet_cat heads_level /= nfun_pnet_cat.
-  exact: IH.
-- exact: ltn_trans.
+           [seq j <- iota 0 (M + M) | ~~ odd (j %/ 1)]
+           ltn_trans _ _ _ _) _.
 - by apply: sorted_filter; [exact: ltn_trans | exact: iota_ltn_sorted].
 - move=> a; case: ifP => // /andP[_ aN] /=.
   by rewrite /bnd /= aN andbT; lia.
 - move=> a; apply/allP => x /mapP[r].
   rewrite mem_filter => /andP[/andP[r1 arN] _] ->.
   by rewrite /bnd /= arN andbT; lia.
-move=> a b; rewrite !mem_filter !divn1 => /andP[aE _] /andP[bE _] aLb.
-case: ifP => // _; apply/allP => x; rewrite inE => /eqP -> /=.
-apply/allP => y /mapP[r]; rewrite mem_filter.
-move=> /andP[/andP[r1 arN] rH] ->.
-have rE : ~~ odd r by apply: halves_e2n_even rH r1.
-have rLe : r <= `2^ k by apply: mem_halves_le rH.
-have kLk : `2^ k < `2^ k + `2^ k by lia.
-by rewrite /dpair /=; apply/and4P; split; apply/eqP => E;
-   move: aE bE rE e_even E; rewrite e2Sn; lia.
+- move=> a b; rewrite !mem_filter !divn1 => /andP[aE _] /andP[bE _] aLb.
+  case: ifP => // _; apply/allP => x; rewrite inE => /eqP -> /=.
+  apply/allP => y /mapP[r]; rewrite mem_filter.
+  move=> /andP[/andP[r1 arN] rH] ->.
+  have rE : ~~ odd r by apply: halves_e2n_even rH r1.
+  have rLe : r <= `2^ k by apply: mem_halves_le rH.
+  have kLk : `2^ k < `2^ k + `2^ k by lia.
+  by rewrite /dpair /=; apply/and4P; split; apply/eqP => E;
+     move: aE bE rE e_even E; rewrite e2Sn; lia.
+by rewrite heads_level /=; apply: dequiv_catl; exact: IH.
 Qed.
+
+Section Transpose.
+
+Variable d2 : disp_t.
+Variable A2 : orderType d2.
+
+(* hence the cascade and the network's jumps compute the same function        *)
+Lemma nfun_casc_kjumps M k (t : (M + M).-tuple A2) :
+  nfun (pnet (M + M) (casc_pairs (M + M) (`2^ k) 1)) t
+    = nfun (pnet (M + M) (kjumps (M + M) k)) t.
+Proof. by apply: nfun_dequiv; exact: dequiv_casc_kjumps. Qed.
 
 End Transpose.
 
