@@ -130,7 +130,7 @@ rewrite /sqpow /sqcast nfun_ecast esymK.
 by move: (nfun _ _) => X; case: _ / (e2nD q q) X.
 Qed.
 
-(* Each vector of the square gets half_cleaner_rec false q (through sqcast).   *)
+(* Each vector of the square gets half_cleaner_rec false q (through sqcast).  *)
 Lemma nfun_sqpow (t : (`2^ (q + q)).-tuple A) a :
   tnth (rsh (e2n_gt0 q) (sqcast (nfun sqpow t))) a =
   nfun (half_cleaner_rec false q) (tnth (rsh (e2n_gt0 q) (sqcast t)) a).
@@ -260,7 +260,7 @@ Qed.
 
 Variable q : nat.
 
-(* Full-array ascending sub-lane match, cast-free (nested-tile form).          *)
+(* Full-array ascending sub-lane match, cast-free (nested-tile form).         *)
 Lemma nfun_tile_sqpow_asc j (t : (`2^ (j + (q + q))).-tuple A) :
   nfun (ntile (sqpow q) j) t =
   nfun (ntile (ntile (half_cleaner_rec false q) q) j) t.
@@ -360,7 +360,7 @@ Variable neg : A -> A.
 Hypothesis negK : involutive neg.
 Hypothesis neg_le : forall x y, (neg x <= neg y)%O = (y <= x)%O.
 
-(* Negate every wire of a tuple.                                               *)
+(* Negate every wire of a tuple.                                              *)
 Definition nflip n (t : n.-tuple A) : n.-tuple A :=
   [tuple neg (tnth t i) | i < n].
 
@@ -394,7 +394,7 @@ case: (split i) => x; rewrite !tnth_nflip.
 by rewrite (neg_max negK neg_le).
 Qed.
 
-(* The descending bitonic merge = the ascending one, sign-flip conjugated.     *)
+(* The descending bitonic merge = the ascending one, sign-flip conjugated.    *)
 Lemma nfun_half_cleaner_rec_neg m (t : (`2^ m).-tuple A) :
   nfun (half_cleaner_rec true m) t
     = nflip (nfun (half_cleaner_rec false m) (nflip t)).
@@ -457,7 +457,7 @@ Variable tmerge : bool -> forall m, (`2^ m).-tuple A -> (`2^ m).-tuple A.
 Hypothesis tmergeP :
   forall b m (t : (`2^ m).-tuple A), tmerge b t = nfun (half_cleaner_rec b m) t.
 
-(* The recursive periodic bitonic sort built from tmerge, mirroring pbsort.    *)
+(* The recursive periodic bitonic sort built from tmerge, mirroring pbsort.   *)
 Fixpoint tsort (b : bool) k : (`2^ k).-tuple A -> (`2^ k).-tuple A :=
   if k is k1.+1 then fun t =>
     tmerge b ([tuple of @tsort false k1 (ttake t) ++ @tsort true k1 (tdrop t)]
@@ -533,7 +533,7 @@ Variable neg : A -> A.
 Hypothesis negK : involutive neg.
 Hypothesis neg_le : forall x y, (neg x <= neg y)%O = (y <= x)%O.
 
-(* The ascending AVX2 merge phase, as a function (j-indexed, cast-free).       *)
+(* The ascending AVX2 merge phase, as a function (j-indexed, cast-free).      *)
 Definition ph_asc j (t : (`2^ (j + q + q)).-tuple A) :=
   nfun (take (j + q) (half_cleaner_rec false (j + q + q))
         ++ ecast n (network n) (congr1 e2n (addnA j q q)) (ntile (sqpow q) j)) t.
@@ -542,7 +542,7 @@ Lemma ph_ascE j (t : (`2^ (j + q + q)).-tuple A) :
   @ph_asc j t = nfun (half_cleaner_rec false (j + q + q)) t.
 Proof. exact: nfun_avx2_phase_asc. Qed.
 
-(* Either direction, via the sign flip for descending.                         *)
+(* Either direction, via the sign flip for descending.                        *)
 Definition tmerge_phase (b : bool) j (t : (`2^ (j + q + q)).-tuple A) :=
   if b then nflip neg (@ph_asc j (nflip neg t)) else @ph_asc j t.
 
@@ -562,7 +562,7 @@ Lemma nfun_hcr_ecast b n1 n2 (e : n1 = n2) (t : (`2^ n2).-tuple A) :
   = nfun (half_cleaner_rec b n2) t.
 Proof. by move: t; case: n2 / e => t. Qed.
 
-(* The concrete AVX2 merge: transpose phase for width >= 2q, plain below.       *)
+(* The concrete AVX2 merge: transpose phase for width >= 2q, plain below.     *)
 Definition tmerge_avx2 (b : bool) m (t : (`2^ m).-tuple A) : (`2^ m).-tuple A :=
   match leqP (q + q) m with
   | LeqNotGtn h =>
@@ -626,7 +626,7 @@ Variable q : nat.
 
 Let pf : 0 < `2^ q := e2n_gt0 q.
 
-(* The all-true mask: descend every lane -- a lane-uniform mask.               *)
+(* The all-true mask: descend every lane -- a lane-uniform mask.              *)
 Definition mtrue : (`2^ q * (`2^ q)).-tuple bool :=
   [tuple true | _ < `2^ q * (`2^ q)].
 
@@ -636,7 +636,7 @@ Proof. by rewrite tnth_mktuple. Qed.
 Lemma mask_luni_mtrue : mask_luni mtrue.
 Proof. by move=> i j _; rewrite !tnth_mtrue. Qed.
 
-(* Flipping under the all-true mask negates every wire, and commutes with rsh. *)
+(* Flipping under the all-true mask negates every wire, and commutes with rsh.*)
 Lemma rsh_tflip_mtrue (u : (`2^ q * (`2^ q)).-tuple A) a :
   tnth (rsh pf (tflip neg mtrue u)) a = nflip neg (tnth (rsh pf u) a).
 Proof.

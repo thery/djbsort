@@ -48,11 +48,11 @@ Definition dlevel (n k j : nat) : seq (nat * nat) :=
   [seq (if (k == n) || odd (i %/ k) then (i, i + j) else (i + j, i))
   | i <- [seq i <- iota 0 n | i %% j.*2 < j]].
 
-(* the cascade of a merge: distances k/2, k/4, ..., 1                        *)
+(* the cascade of a merge: distances k/2, k/4, ..., 1                         *)
 Fixpoint dcascade (n k e : nat) : seq (nat * nat) :=
   if e is e1.+1 then dlevel n k (`2^ e1) ++ dcascade n k e1 else [::].
 
-(* the merges, of sizes 8, 16, ..., n                                        *)
+(* the merges, of sizes 8, 16, ..., n                                         *)
 Fixpoint dmerges (n e : nat) : seq (nat * nat) :=
   if e is e1.+1 then dmerges n e1 ++ dcascade n (`2^ e1.+3) e1.+3 else [::].
 
@@ -80,7 +80,7 @@ Fixpoint dcascade_at (n k e b m : nat) : seq (nat * nat) :=
 Lemma dcascadeE (n k e : nat) : dcascade n k e = dcascade_at n k e 0 n.
 Proof. by elim: e => //= e ->. Qed.
 
-(* a stretch splits into stretches                                           *)
+(* a stretch splits into stretches                                            *)
 Lemma dlevel_at_cat (n k j b m1 m2 : nat) :
   dlevel_at n k j b (m1 + m2)
     = dlevel_at n k j b m1 ++ dlevel_at n k j (b + m1) m2.
@@ -97,7 +97,7 @@ rewrite -map_comp; congr (_ ++ flatten _); apply/eq_map => u.
 by rewrite /comp mulnDl mul1n addnA.
 Qed.
 
-(* and a level of a stretch whose ends are aligned stays inside it           *)
+(* and a level of a stretch whose ends are aligned stays inside it            *)
 Lemma bnd_dlevel_at (n k j b m : nat) : 0 < j -> j.*2 %| b -> j.*2 %| m ->
   all (fun ab => (b <= ab.1 < b + m) && (b <= ab.2 < b + m))
       (dlevel_at n k j b m).
@@ -200,7 +200,7 @@ apply: eq_from_tnth => k; case: (k =P i) => [->|/eqP kDi].
 by rewrite cswapE_neq.
 Qed.
 
-(* two connectors are the same as soon as their wires and flips are          *)
+(* two connectors are the same as soon as their wires and flips are           *)
 Lemma connector_eq (n : nat) (c1 c2 : connector n) :
   clink c1 = clink c2 -> cflip c1 = cflip c2 -> c1 = c2.
 Proof.
@@ -345,8 +345,8 @@ Qed.
 (* the same comparison the other way round                                    *)
 Notation pflip l := [seq (ab.2, ab.1) | ab <- l].
 
-(* l on an array of m + m wires does what l1 does to the lower half and l2   *)
-(* to the upper one                                                          *)
+(* l on an array of m + m wires does what l1 does to the lower half and l2    *)
+(* to the upper one                                                           *)
 Definition dsides (m : nat) (l l1 l2 : seq (nat * nat)) : Prop :=
   forall t : (m + m).-tuple A,
     nfun (pnet (m + m) l) t
@@ -366,7 +366,7 @@ rewrite pnet_cat nfun_cat H1 H2 ttakeK tdropK.
 by rewrite !pnet_cat !nfun_cat.
 Qed.
 
-(* one level, the halves read off separately                                 *)
+(* one level, the halves read off separately                                  *)
 Lemma dsides_level (m : nat) (l1 l2 : seq (nat * nat)) :
   all (bnd m) l1 -> all (bnd m) l2 -> dsides m (l1 ++ pshift m l2) l1 l2.
 Proof. by move=> b1 b2 t; rewrite nfun_pnet_merge. Qed.
@@ -389,7 +389,7 @@ have iL2 : i + `2^ r < `2^ p.
 by case: ifP => _; rewrite /bnd /= iL iL2.
 Qed.
 
-(* a level of a merge shorter than a half splits at the middle of the array  *)
+(* a level of a merge shorter than a half splits at the middle of the array   *)
 Lemma dlevel_split (p q r : nat) : q < p -> r <= q ->
   dlevel (`2^ p.+1) (`2^ q) (`2^ r)
     = dlevel (`2^ p) (`2^ q) (`2^ r)
@@ -609,7 +609,7 @@ rewrite !(tnth_nth a) /= tdropE ttakeE nth_cat size_drop size_tuple addKn.
 by rewrite ltnNge leq_addr /= addKn nth_take.
 Qed.
 
-(* sorting a block downwards is sorting it upwards with the halves swapped   *)
+(* sorting a block downwards is sorting it upwards with the halves swapped    *)
 Lemma cfun_half_cleaner_swap (m : nat) (t : (m + m).-tuple A) :
   nsort.cfun (half_cleaner true m) t
     = swapv (nsort.cfun (half_cleaner false m) (swapv t)).
@@ -622,7 +622,7 @@ have -> : k = rshift m j by apply: val_inj.
 by rewrite tnth_swapv_r tnth_mktuple split_lshift tnth_swapv_l tnth_swapv_r.
 Qed.
 
-(* one comparison across the halves, seen from the other side                *)
+(* one comparison across the halves, seen from the other side                 *)
 Lemma cswap_swapv (m : nat) (j : 'I_m) (t : (m + m).-tuple A) :
   swapv (nsort.cfun (cswap (rshift m j) (lshift m j)) t)
     = nsort.cfun (cswap (lshift m j) (rshift m j)) (swapv t).
