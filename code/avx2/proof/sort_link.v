@@ -3599,7 +3599,8 @@ Proof.
 by apply: perm_trans cinv_perm_lane2; rewrite perm_map // adjw1a_lane2.
 Qed.
 
-(* WHAT IS LEFT: the second batch, renamed, comparison by comparison         *)
+(* the second batch, renamed: the shuffle between the two batches is its own  *)
+(* inverse, so it is read where the pass of two reads its own                 *)
 Lemma pflat_adj1b (K : nat) (fl : flips) : dflP K fl ->
   cren (cinv (avx2_layout dvdn_e2n64))
     (cren (sh_perm dvdn_e2n64)
@@ -3614,7 +3615,50 @@ Lemma pflat_adj1b (K : nat) (fl : flips) : dflP K fl ->
           else (capp (cinv (avx2_layout dvdn_e2n64)) x + n %/ 8,
                 capp (cinv (avx2_layout dvdn_e2n64)) x))
     | x <- adjw1b].
-Admitted.
+Proof.
+move=> flP; have [flS flN] := flP.
+rewrite adjw1bE.
+rewrite pflat_adj16_cren !cren_flatten -!map_comp.
+rewrite /adjw map_flatten -map_comp.
+congr flatten; apply/eq_in_map => t; rewrite mem_iota add0n => /andP[_ tL].
+rewrite /comp /cren -!map_comp; apply/eq_in_map => l.
+rewrite mem_iota add0n => /andP[_ lL].
+have l16 : l < 16 by lia.
+have l816 : 8 + l < 16 by lia.
+have [L1 D1 M1] := blk16 tL l16.
+have [L2 D2 M2] := blk16 tL l816.
+rewrite /comp.
+have u16 := tb_u64_lt l16.
+have [Lu Du Mu] := blk16 tL u16.
+have pL := tb_perm_lt l16.
+have [L3 D3 M3] := blk16 tL pL.
+have W (j : nat) : j < 16 ->
+    capp (sh_perm dvdn_e2n64)
+      (capp (sh_u64 dvdn_e2n64) (capp (sh_u64 dvdn_e2n64) (t * 16 + j)))
+    = t * 16 + nth 0 tb_perm j.
+  move=> jL.
+  have [Lj Dj Mj] := blk16 tL jL.
+  have uj := tb_u64_lt jL.
+  have [Lv Dv Mv] := blk16 tL uj.
+  rewrite [capp (sh_u64 dvdn_e2n64) (t * 16 + j)]capp_sh_u64 // Dj Mj.
+  rewrite [capp (sh_u64 dvdn_e2n64) (t * 16 + nth 0 tb_u64 j)]capp_sh_u64 //.
+  rewrite Dv Mv tb_u64_invol //.
+  by rewrite capp_sh_perm // Dj Mj.
+have Fl : nth false (fl_shuf 16 tb_u64
+                      (fl_shuf 16 tb_u64 (fl_shuf 16 tb_perm fl))) (t * 16 + l)
+        = nth false fl (t * 16 + nth 0 tb_perm l).
+  rewrite nth_fl_shuf ?size_fl_shuf ?flS // D1 M1.
+  rewrite nth_fl_shuf ?size_fl_shuf ?flS // Du Mu tb_u64_invol //.
+  by rewrite nth_fl_shuf ?flS // D1 M1.
+have E8 : t * 16 + 8 + l = t * 16 + (8 + l) by rewrite addnA.
+rewrite !pair_if E8 !W // tb_perm_hi // addnA Fl flN // /dfl.
+have Ep : capp (cinv (avx2_layout dvdn_e2n64)) (t * 16 + nth 0 tb_perm l + 4)
+        = capp (cinv (avx2_layout dvdn_e2n64)) (t * 16 + nth 0 tb_perm l)
+          + n %/ 8.
+  by rewrite cinv_adj4 // mod8_blk16 tb_perm_lo.
+rewrite Ep.
+by case: ((K == n) || _).
+Qed.
 
 (* the second batch starts from the lanes under four, as the pass of two does *)
 Lemma adjw1b_lane4 : perm_eq adjw1b [seq x <- iota 0 n | x %% 8 < 4].
