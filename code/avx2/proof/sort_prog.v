@@ -45,7 +45,7 @@ Definition odd4 : seq (nat * nat) := [:: (0,2); (1,3); (0,1); (2,3); (2,1)].
 (*  The shuffles, as tables: position i reads from position (nth 0 tb i)      *)
 (* -------------------------------------------------------------------------- *)
 
-(* two registers, 16 positions: the halves are swapped over                  *)
+(* two registers, 16 positions: the halves are swapped over                   *)
 Definition tb_perm : seq nat :=
   [:: 0; 1; 2; 3; 8; 9; 10; 11; 4; 5; 6; 7; 12; 13; 14; 15].
 
@@ -183,7 +183,7 @@ Definition mrevP (p : nat) (i : nat) : bool :=
   else if p == 2 then (2 <= i %% 8) && (i %% 8 < 6)
   else (i %% 4 == 1) || (i %% 4 == 2).
 
-(* the comparison between the two registers of every group of sixteen        *)
+(* the comparison between the two registers of every group of sixteen         *)
 Definition adj16 (fl : flips) : prog n :=
   [seq vmm fl (t * 16) (t * 16 + 8) | t <- iota 0 (n %/ 16)].
 
@@ -249,11 +249,11 @@ Definition oe_reduce (fl : flips) : prog n :=
 (*  The merges of doubling size                                               *)
 (* -------------------------------------------------------------------------- *)
 
-(* two registers in every four are complemented before they start            *)
+(* two registers in every four are complemented before they start             *)
 Definition flipallP (i : nat) : bool :=
   (i %% 32 < 8) || ((16 <= i %% 32) && (i %% 32 < 24)).
 
-(* the coarse-to-fine sweeps run for one merge size                          *)
+(* the coarse-to-fine sweeps run for one merge size                           *)
 Fixpoint sweeps (fuel : nat) (fl : flips) (q : nat) : prog n :=
   if fuel is f.+1 then
     if 128 <= q then stage fl n 8 (q %/ 4) mrg8 ++ sweeps f fl (q %/ 8)
@@ -264,7 +264,7 @@ Fixpoint sweeps (fuel : nat) (fl : flips) (q : nat) : prog n :=
     else [::]
   else [::].
 
-(* which side of the merge a block is on, hence whether it is complemented   *)
+(* which side of the merge a block is on, hence whether it is complemented    *)
 Definition fmflip (p q jj kk : nat) : bool :=
   let f0 := p.*2 == q in f0 (+) odd kk (+) (~~ f0 && odd jj).
 
@@ -273,8 +273,8 @@ Definition fmP (p : nat) (i : nat) : bool :=
   let r := i %% q in
   fmflip p q (r %/ p.*2) (r %% p.*2 %/ p).
 
-(* the merge itself: the same batch at every register start, then the        *)
-(* complements, which fall on blocks the batch has already passed            *)
+(* the merge itself: the same batch at every register start, then the         *)
+(* complements, which fall on blocks the batch has already passed             *)
 Definition flip_merge (fl : flips) (p : nat) : prog n * flips :=
   let q := n %/ 8 in
   (flatten [seq vnet fl (t * 8) q mrg8r | t <- iota 0 (q %/ 8)],
@@ -292,7 +292,7 @@ Fixpoint pdouble (fuel : nat) (fl : flips) (p : nat) : prog n * flips :=
 (*  The transpose and its sort                                                *)
 (* -------------------------------------------------------------------------- *)
 
-(* the registers complemented between the two halves of the transpose       *)
+(* the registers complemented between the two halves of the transpose         *)
 Definition t64P (i : nat) : bool :=
   let r := i %% 64 %/ 8 in (r < 2) || ((4 <= r) && (r < 6)).
 

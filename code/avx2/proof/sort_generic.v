@@ -60,15 +60,15 @@ Section Padding.
 Variable d : disp_t.
 Variable A : orderType d.
 
-(* a constant sequence is pairwise-related under any reflexive relation *)
+(* a constant sequence is pairwise-related under any reflexive relation       *)
 Lemma pairwise_nseq (r : rel A) x k : reflexive r -> pairwise r (nseq k x).
 Proof. by move=> rr; elim: k => //= k IH; rewrite IH andbT all_nseq rr orbT. Qed.
 
-(* a constant sequence is sorted *)
+(* a constant sequence is sorted                                              *)
 Lemma sorted_nseq (x : A) k : sorted <=%O (nseq k x).
 Proof. by rewrite (sorted_pairwise (@le_trans _ _)); apply/pairwise_nseq/le_refl. Qed.
 
-(* appending copies of a top element preserves sortedness *)
+(* appending copies of a top element preserves sortedness                     *)
 Lemma sorted_cat_nseq_top (s : seq A) (T : A) k :
   (forall x, (x <= T)%O) -> sorted <=%O s -> sorted <=%O (s ++ nseq k T).
 Proof.
@@ -78,7 +78,7 @@ move=> hT hs; rewrite (sorted_pairwise (@le_trans _ _)) pairwise_cat; apply/and3
 - by apply/pairwise_nseq/le_refl.
 Qed.
 
-(* sorting an input with top padding = sorting the input, then the padding *)
+(* sorting an input with top padding = sorting the input, then the padding    *)
 Lemma sort_cat_nseq_top (s : seq A) (T : A) k :
   (forall x, (x <= T)%O) -> sort <=%O (s ++ nseq k T) = sort <=%O s ++ nseq k T.
 Proof.
@@ -88,7 +88,7 @@ move=> hT; apply: (sorted_eq (@le_trans _ _) (@le_anti _ _)).
 - rewrite perm_sort perm_cat2r perm_sym; exact: (permEl (perm_sort _ _)).
 Qed.
 
-(* any sorting network computes the sort function *)
+(* any sorting network computes the sort function                             *)
 Lemma nfun_sort m (net : network m) (t : m.-tuple A) :
   net \is sorting -> nfun net t = sort <=%O t :> seq A.
 Proof.
@@ -137,22 +137,22 @@ Variable A : orderType d.
 (* bitonic sorter bfsort of nbitonic.v.                                       *)
 Definition gnet k : network (`2^ k) := bfsort false k.
 
-(* It is a genuine sorting network -- straight from sorting_bfsort. *)
+(* It is a genuine sorting network.                                           *)
 Lemma sorting_gnet k : gnet k \is sorting.
 Proof. exact: sorting_bfsort. Qed.
 
-(* Running it on a tuple of wire values. *)
+(* Running it on a tuple of wire values.                                      *)
 Definition gsort k (t : (`2^ k).-tuple A) : (`2^ k).-tuple A := nfun (gnet k) t.
 
-(* It only permutes its input... *)
+(* It only permutes its input...                                              *)
 Lemma gsort_perm k (t : (`2^ k).-tuple A) : perm_eq (gsort t) t.
 Proof. exact: perm_nfun. Qed.
 
-(* ...and it returns a sorted tuple. *)
+(* ...and it returns a sorted tuple.                                          *)
 Lemma gsort_sorted k (t : (`2^ k).-tuple A) : sorted <=%O (gsort t).
 Proof. rewrite /gsort; apply: sorting_sorted; exact: sorting_gnet. Qed.
 
-(* Its depth (number of connectors) is the usual bitonic 1+2+...+k. *)
+(* Its depth (number of connectors) is the usual bitonic 1+2+...+k.           *)
 Lemma size_gnet k : size (gnet k) = (k * k.+1)./2.
 Proof. exact: size_bfsort. Qed.
 
@@ -192,7 +192,7 @@ Fixpoint pbsort (b : bool) k : network (`2^ k) :=
                      half_cleaner_rec b k1.+1
   else [::].
 
-(* Same connector count as bfsort: 1 + 2 + ... + k. *)
+(* Same connector count as bfsort: 1 + 2 + ... + k.                           *)
 Lemma size_pbsort b k : size (pbsort b k) = (k * k.+1)./2.
 Proof.
 elim: k b => [b|k IH b] //.
@@ -202,9 +202,8 @@ rewrite size_cat /nmerge size_map size_zip !IH minnn size_half_cleaner_rec.
 by rewrite -addn2 mulnDr -!divn2 divnDMl // mulnC.
 Qed.
 
-(* Correctness by the 0-1 principle: pbsort b sorts into direction b, exactly *)
-(* like sorting_bfsort but feeding IH at false/true instead of at b/~b.  The  *)
-(* final merge always sees an ascending-then-descending (hence bitonic) input.*)
+(* pbsort b sorts a boolean tuple into direction b: its two halves are sorted *)
+(* the opposite way round, so the merge that closes it sees a bitonic input.  *)
 Lemma sorted_pbsort b k (t : (`2^ k).-tuple bool) :
   sorted (if b then (>=%O : rel _) else <=%O) (nfun (pbsort b k) t).
 Proof.
@@ -216,11 +215,11 @@ apply: bitonic_cat; first by apply: (IH false).
 by apply: (IH true).
 Qed.
 
-(* Hence pbsort false is a genuine sorting network. *)
+(* Hence pbsort false is a genuine sorting network.                           *)
 Lemma sorting_pbsort k : pbsort false k \is sorting.
 Proof. by apply/forallP => t; apply: (sorted_pbsort false). Qed.
 
-(* Running it on a tuple of wire values. *)
+(* Running it on a tuple of wire values.                                      *)
 Definition psort k (t : (`2^ k).-tuple A) : (`2^ k).-tuple A :=
   nfun (pbsort false k) t.
 

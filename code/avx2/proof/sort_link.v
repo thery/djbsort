@@ -27,7 +27,7 @@ Unset Strict Implicit.
 Unset Printing Implicit Defensive.
 
 (* -------------------------------------------------------------------------- *)
-(*  What is left to prove                                                     *)
+(*  What the program performs, and how a comparison may be moved              *)
 (* -------------------------------------------------------------------------- *)
 
 Section Link.
@@ -546,7 +546,7 @@ apply: capp_cinvE; first by nia.
 by rewrite avx2_layoutE capp_sh_out // !trc_inv.
 Qed.
 
-(* every wire read as its row, its batch of eight and its lane               *)
+(* every wire read as its row, its batch of eight and its lane                *)
 Lemma modn_row8 (x : nat) : (x %% (n %/ 8)) %% 8 = x %% 8.
 Proof. by rewrite modn_dvdm // dvdn_row. Qed.
 
@@ -595,8 +595,8 @@ have l8 : j %% 8 = i %% 8 by rewrite -(modn_row8 j) -(modn_row8 i) cE.
 by rewrite !capp_cinv_wire // cE l8; lia.
 Qed.
 
-(* the same, read inside one row: two positions of a row that share a lane   *)
-(* keep their distance                                                       *)
+(* the same, read inside one row: two positions of a row that share a lane    *)
+(* keep their distance                                                        *)
 Lemma cinv_narrow (r x y : nat) :
   r < 8 -> x < n %/ 8 -> y < n %/ 8 -> x %% 8 = y %% 8 ->
   capp (cinv (avx2_layout dvdn_e2n64)) (r * (n %/ 8) + x) + y
@@ -615,7 +615,7 @@ rewrite !rowEq // !lanEq lE in H.
 by have := H erefl erefl; lia.
 Qed.
 
-(* a block of c wires whose width divides a row stays inside one row         *)
+(* a block of c wires whose width divides a row stays inside one row          *)
 Lemma block_in_row (c o t : nat) : c %| (n %/ 8) -> 0 < c -> o < c ->
   (t * c + o) %/ (n %/ 8) = (t * c) %/ (n %/ 8).
 Proof.
@@ -624,13 +624,13 @@ rewrite dE [d * c]mulnC !divnMA divnMDl // (divn_small oL) addn0.
 by rewrite mulnK.
 Qed.
 
-(* and a whole number of eights leaves the lane where it was                 *)
+(* and a whole number of eights leaves the lane where it was                  *)
 Lemma block_lane (c o t : nat) : 8 %| c -> (t * c + o) %% 8 = o %% 8.
 Proof. by move=> cD; have [e ->] := dvdnP cD; rewrite mulnA modnMDl. Qed.
 
-(* so a stage whose blocks fit inside a row compares, in the final naming,   *)
-(* at exactly the distance it compares at in the array: for those stages the *)
-(* layout is a renaming of the rows and nothing more                         *)
+(* so a stage whose blocks fit inside a row compares, in the final naming,    *)
+(* at exactly the distance it compares at in the array: for those stages the  *)
+(* layout is a renaming of the rows and nothing more                          *)
 Lemma cinv_block (c t o1 o2 : nat) : c %| (n %/ 8) -> 8 %| c -> 0 < c ->
   o1 < c -> o2 < c -> o1 %% 8 = o2 %% 8 ->
   t * c + o1 < n -> t * c + o2 < n ->
@@ -1024,7 +1024,7 @@ rewrite E modn2 oddb.
 by case: odd; case: odd.
 Qed.
 
-(* the last of them leaves nothing complemented                              *)
+(* the last of them leaves nothing complemented                               *)
 Lemma dfl_fmP_last (p i : nat) : 8 %| p -> p.*2 = n %/ 8 -> i < n ->
   dfl p i (+) fmP n p i = false.
 Proof.
@@ -1063,7 +1063,7 @@ rewrite /mrevP /= (_ : i %% 4 = (i %% 8) %% 4); last by rewrite modn_dvdm.
 by move: lL; case: (i %% 8) => [|[|[|[|[|[|[|[|m]]]]]]]].
 Qed.
 
-(* before the last merge the pattern is the one of the lanes                 *)
+(* before the last merge the pattern is the one of the lanes                  *)
 Lemma dfl_half (i : nat) : i < n -> dfl (n %/ 2) i = ~~ odd (i %% 8).
 Proof.
 move=> iL; rewrite qE2 dfl_wide //.
@@ -1075,7 +1075,7 @@ Qed.
 (*  The pattern each part of the program carries                              *)
 (* -------------------------------------------------------------------------- *)
 
-(* checking a property of every position under a bound is a computation      *)
+(* checking a property of every position under a bound is a computation       *)
 Lemma iota_allP (Q : nat -> bool) (c x : nat) : all Q (iota 0 c) -> x < c -> Q x.
 Proof. by move=> H xL; apply: (allP H); rewrite mem_iota add0n. Qed.
 
@@ -1130,7 +1130,7 @@ case: (p == 2) => /=.
 by rewrite tb_u64K ?size_fl_shuf // tb_permK.
 Qed.
 
-(* a pattern of the whole array is the one the merge of size K asks for      *)
+(* a pattern of the whole array is the one the merge of size K asks for       *)
 Definition dflP (K : nat) (fl : flips) : Prop :=
   size fl = n /\ forall i, i < n -> nth false fl i = dfl K i.
 
@@ -1162,7 +1162,7 @@ have -> : f1 = fl_tog (mrevP p) fl.
 exact: dflP_tog H flP.
 Qed.
 
-(* one step of the merges of doubling size, read on the pattern alone        *)
+(* one step of the merges of doubling size, read on the pattern alone         *)
 Lemma pdoubleS_fl (m f p : nat) (fl : flips) :
   (pdouble m f.+1 fl p).2 =
     (if p * 16 == m then fl_tog (fmP m p) fl
@@ -1172,8 +1172,8 @@ rewrite /=; case: ifP => // _.
 by case: (pdouble m f (fl_tog (fmP m p) fl) p.*2).
 Qed.
 
-(* starting from the pattern of the merge of size p, the doublings run       *)
-(* through the merges up to a row and end with nothing complemented          *)
+(* starting from the pattern of the merge of size p, the doublings run        *)
+(* through the merges up to a row and end with nothing complemented           *)
 Lemma dflP_pdouble (fuel p j : nat) (fl : flips) :
   8 %| p -> n %/ 8 = p * (`2^ j) -> 0 < j -> j <= fuel -> dflP p fl ->
   dflP n (pdouble n fuel fl p).2.
@@ -1225,7 +1225,7 @@ case: (rev_step dvdn_e2n64 f1 2) => c2 f2.
 by case: (rev_step dvdn_e2n64 f2 1).
 Qed.
 
-(* the three reversing passes take it on, one merge each                     *)
+(* the three reversing passes take it on, one merge each                      *)
 Lemma dflP_revs : dflP (n %/ 2) (avx2_rev dvdn_e2n64).2.
 Proof.
 rewrite avx2_rev_fl.
@@ -1239,9 +1239,9 @@ Lemma tsort64_flE (fl : flips) :
    = fl_shuf 64 tb_tr (fl_shuf 64 tb_trhi (fl_tog t64P (fl_shuf 64 tb_trlo fl))).
 Proof. by []. Qed.
 
-(* and the transpose sort undoes the last of them: the mask it puts in       *)
-(* between its two halves is what its shuffles leave of the pattern, so what *)
-(* comes out is nothing complemented -- as the last merge asks               *)
+(* and the transpose sort undoes the last of them: the mask it puts in        *)
+(* between its two halves is what its shuffles leave of the pattern, so what  *)
+(* comes out is nothing complemented -- as the last merge asks                *)
 Lemma dflP_tsort64 (fl : flips) :
   dflP (n %/ 2) fl -> dflP n (tsort64 dvdn_e2n64 fl).2.
 Proof.
@@ -1291,8 +1291,8 @@ Proof. by rewrite /avx2_tr; apply: dflP_tsort64 dflP_revs. Qed.
 (*  The schedule, cut where the program is cut                                *)
 (* -------------------------------------------------------------------------- *)
 
-(* the merges of sizes 8 to a row, then one merge for each reversing pass,   *)
-(* then the last one, which is what the transpose and the ladder after it do *)
+(* the merges of sizes 8 to a row, then one merge for each reversing pass,    *)
+(* then the last one, which is what the transpose and the ladder after it do  *)
 Lemma dmerges_split : dmerges n k
   = dmerges n (k - 4) ++ dcascade n (n %/ 8) k.-1
     ++ dcascade n (n %/ 4) k ++ dcascade n (n %/ 2) k.+1 ++ dcascade n n k.+2.
@@ -1491,7 +1491,7 @@ Qed.
 (*  The schedule, regrouped by block                                          *)
 (* -------------------------------------------------------------------------- *)
 
-(* a reordering may be undone                                                *)
+(* a reordering may be undone                                                 *)
 Lemma dswap_sym (l1 l2 : seq (nat * nat)) : dswap n l1 l2 -> dswap n l2 l1.
 Proof.
 by case=> ps ab cd qs H1 H2 H3; constructor => //; apply: dpair_sym.
@@ -1504,11 +1504,9 @@ apply: dequiv_trans IH _.
 by apply: dequiv_step; [exact: dswap_sym H | exact: dequiv_refl].
 Qed.
 
-(* two listings of the same comparisons are a reordering of one another as   *)
-(* soon as a colouring of the comparisons has: comparisons of different      *)
-(* colours sharing no wire, and every colour read the same way by both       *)
-(* listings.  This is what separates the order a program takes its           *)
-(* comparisons in from the order the schedule takes them in.                 *)
+(* two listings of the same comparisons are a reordering of one another as    *)
+(* soon as a colouring keeps comparisons of different colours apart and both  *)
+(* listings read each colour the same way                                     *)
 Lemma dequiv_colour (c : nat * nat -> nat) (m : nat) (l1 l2 : seq (nat * nat)) :
   all (bnd n) l1 -> all (fun ab => c ab < m) l1 ->
   all (fun ab => all (fun cd => (c ab != c cd) ==> dpair ab cd) l1) l1 ->
@@ -1524,6 +1522,7 @@ apply: dequiv_sym.
 by apply: (@dequiv_regroup c m l2 (fun g => [seq ab <- l2 | c ab == g])).
 Qed.
 
+(* a property of every piece is a property of the flatten                     *)
 Lemma all_flatten_map (T : eqType) (P : pred T) (G : nat -> seq T)
     (l : seq nat) :
   (forall t, t \in l -> all P (G t)) -> all P (flatten [seq G t | t <- l]).
@@ -1532,7 +1531,7 @@ elim: l => //= t l IH H; rewrite all_cat H ?mem_head //=.
 by apply: IH => x xI; apply: H; rewrite inE xI orbT.
 Qed.
 
-(* the same, when the colour of a comparison is the colour of its wires      *)
+(* the same, when the colour of a comparison is the colour of its wires       *)
 Lemma dequiv_colour_w (w : nat -> nat) (m : nat) (l1 l2 : seq (nat * nat)) :
   all (bnd n) l1 -> all (fun ab => (w ab.2 == w ab.1) && (w ab.1 < m)) l1 ->
   all (bnd n) l2 -> all (fun ab => (w ab.2 == w ab.1) && (w ab.1 < m)) l2 ->
@@ -1548,10 +1547,9 @@ apply: (@dequiv_colour (fun ab => w ab.1) m) => //.
 by apply: dpair_regions; apply/allP => ab /(allP l2W) /andP[].
 Qed.
 
-(* a doubly indexed listing may be read block by block or part by part: the  *)
-(* two orders are a reordering of one another as soon as the comparisons of  *)
-(* the block t all have colour t.  This is the program's order (block by     *)
-(* block) against the schedule's (part by part).                             *)
+(* a doubly indexed listing read block by block, or part by part: the two     *)
+(* orders are a reordering of one another when the comparisons of the block t *)
+(* all have colour t                                                          *)
 Lemma dequiv_flatten_swap (w : nat -> nat) (F : nat -> nat -> seq (nat * nat))
     (m p : nat) :
   (forall j t, j < p -> t < m -> all (bnd n) (F j t)) ->
@@ -1600,7 +1598,7 @@ apply: flat_nil => j; rewrite mem_iota add0n => /andP[_ jL].
 by rewrite /comp Ffil // (negbTE tg).
 Qed.
 
-(* comparisons that share no wire may be put in any order at all             *)
+(* comparisons that share no wire may be put in any order at all              *)
 Lemma dequiv_reorder (l1 l2 : seq (nat * nat)) :
   all (bnd n) l1 -> uniq l1 -> perm_eq l1 l2 ->
   all (fun ab => all (fun cd => (ab != cd) ==> dpair ab cd) l1) l1 ->
@@ -1634,8 +1632,8 @@ apply/allP => ab abI; apply/allP => ef efI.
 by have := allP (allP l1D _ (memT _ abI)) _ (memT _ efI).
 Qed.
 
-(* reading one block off a level, and off a cascade: the comparisons of a    *)
-(* block are those of the level or cascade of that block alone               *)
+(* reading one block off a level, and off a cascade: the comparisons of a     *)
+(* block are those of the level or cascade of that block alone                *)
 Lemma dlevel_at_filter (K j b c m g : nat) :
   g < c -> 0 < j -> 0 < m -> j.*2 %| b -> j.*2 %| m ->
   [seq ab <- dlevel_at n K j b (c * m) | (ab.1 - b) %/ m == g]
@@ -1714,8 +1712,8 @@ apply: (@dequiv_regroup (fun ab => (ab.1 - b) %/ m) c
 by move=> g gL; apply: dcascade_at_filter.
 Qed.
 
-(* a level of a group of eight, read off: the four comparisons at that       *)
-(* distance, all oriented by the block the group is in                       *)
+(* a level of a group of eight, read off: the four comparisons at that        *)
+(* distance, all oriented by the block the group is in                        *)
 Lemma dlevel_at8 (K j G : nat) : 0 < K -> 8 %| K -> j.*2 %| 8 ->
   dlevel_at n K j (G * 8) 8
   = [seq (if (K == n) || odd (G * 8 %/ K)
@@ -1739,8 +1737,8 @@ by apply/eq_in_map => r; rewrite mem_filter mem_iota add0n => /andP[_ rL];
    rewrite /comp D // addnA.
 Qed.
 
-(* hence the three levels every merge ends with, on one group of eight: the  *)
-(* twelve comparisons the program's wide batch performs                      *)
+(* hence the three levels every merge ends with, on one group of eight: the   *)
+(* twelve comparisons the program's wide batch performs                       *)
 Lemma dcascade_at8 (K G : nat) : 0 < K -> 8 %| K ->
   dcascade_at n K 3 (G * 8) 8
   = [seq (if (K == n) || odd (G * 8 %/ K)
@@ -1827,7 +1825,7 @@ have c_gt0 : 0 < c by move: cE K_gt0; lia.
 by rewrite cE [c * 8]mulnC !divnMA divnMDl // (divn_small rL) addn0 mulnK.
 Qed.
 
-(* which group a lane of a batch lands in                                    *)
+(* which group a lane of a batch lands in                                     *)
 Lemma lgrp8 (t l : nat) : t < (n %/ 8) %/ 8 -> l < 8 ->
   lgrp (t * 8 + l) = nth 0 trc l * ((n %/ 8) %/ 8) + t.
 Proof.
@@ -1899,7 +1897,7 @@ rewrite flN // /dfl cinv_wide // lgE divn_grp8 //.
 by apply: trc_lt.
 Qed.
 
-(* every comparison of a wide batch keeps to its group                       *)
+(* every comparison of a wide batch keeps to its group                        *)
 Lemma wide_grp_shape (K G : nat) (ab : nat * nat) :
   ab \in [seq (if (K == n) || odd (G * 8 %/ K)
                then (G * 8 + nth 0 trc p.1, G * 8 + nth 0 trc p.2)
@@ -1916,7 +1914,7 @@ by case: ifP => _ /=;
    rewrite !divnMDl // !(divn_small (trc_lt _)) // !addn0 !eqxx.
 Qed.
 
-(* a batch stays in range whatever is complemented                           *)
+(* a batch stays in range whatever is complemented                            *)
 Lemma bnd_pflat_vnet_fl (fl : flips) (i q : nat) (g : seq (nat * nat)) :
   all (fun ab => (i + ab.1 * q + 7 < n) && (i + ab.2 * q + 7 < n)) g ->
   all (bnd n) (pflat (vnet n fl i q g)).1.
@@ -2005,9 +2003,9 @@ rewrite !map_cat.
 by apply: dequiv_cat; [apply: step | apply: dequiv_cat; apply: step].
 Qed.
 
-(* hence the wide stage of a merge, whole: it is that merge's last three     *)
-(* levels, one group of eight after the other where the schedule takes each  *)
-(* distance across the whole array                                           *)
+(* hence the wide stage of a merge, whole: it is that merge's last three      *)
+(* levels, one group of eight after the other where the schedule takes each   *)
+(* distance across the whole array                                            *)
 Lemma dequiv_wide (K : nat) (fl : flips) : 0 < K -> 8 %| K -> dflP K fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (flatten [seq (pflat (vnet n fl (t * 8) (n %/ 8) mrg8r)).1
@@ -2081,7 +2079,7 @@ Qed.
 (*  A level of a narrow distance                                              *)
 (* -------------------------------------------------------------------------- *)
 
-(* which half of its merge block a wire is in, read as a parity              *)
+(* which half of its merge block a wire is in, read as a parity               *)
 Lemma cond_oddE (x q : nat) : 0 < q -> (x %% q.*2 < q) = ~~ odd (x %/ q).
 Proof.
 move=> q_gt0.
@@ -2090,8 +2088,8 @@ have divE (z : nat) : (z < q) = (z %/ q == 0).
 by rewrite divE -mul2n -modn_divl modn2; case: odd.
 Qed.
 
-(* the layout does not change it, for any distance the stages compare at:    *)
-(* it renames the rows, and there are an even number of them in a block      *)
+(* the layout does not change it, for any distance the stages compare at:     *)
+(* it renames the rows, and there are an even number of them in a block       *)
 Lemma cinv_odd (q x : nat) : 8 %| q -> q.*2 %| (n %/ 8) -> x < n ->
   odd (capp (cinv (avx2_layout dvdn_e2n64)) x %/ q) = odd (x %/ q).
 Proof.
@@ -2114,7 +2112,7 @@ rewrite [in RHS](wire_split x) Esplit E8 //.
 by rewrite !oddD !oddM !odd_double !andbF.
 Qed.
 
-(* so the layout permutes the wires a level starts from                      *)
+(* so the layout permutes the wires a level starts from                       *)
 Lemma cinv_perm_level (q : nat) : 0 < q -> 8 %| q -> q.*2 %| (n %/ 8) ->
   perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) i
           | i <- [seq i <- iota 0 n | i %% q.*2 < q]]
@@ -2297,7 +2295,7 @@ Qed.
 (*  The merges, one at a time                                                 *)
 (* -------------------------------------------------------------------------- *)
 
-(* the wide sweep that closes a merge, as the program writes it              *)
+(* the wide sweep that closes a merge, as the program writes it               *)
 Lemma dequiv_wide_stage (K : nat) (fl : flips) : 0 < K -> 8 %| K -> dflP K fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (pflat (stage n fl n 8 (n %/ 8) mrg8r)).1)
@@ -2376,7 +2374,7 @@ apply: dequiv_cat; first by rewrite -cren_cat.
 exact: dequiv_wide_stage.
 Qed.
 
-(* the patterns the three reversing passes carry                             *)
+(* the patterns the three reversing passes carry                              *)
 Definition rfl4 : flips := fl_tog (mrevP 4) (avx2_dbl n).2.
 Definition rfl2 : flips := fl_tog (mrevP 2) rfl4.
 Definition rfl1 : flips := fl_tog (mrevP 1) rfl2.
@@ -2593,6 +2591,7 @@ Lemma flatten_iota_pair (T : Type) (G : nat -> seq T) (m s : nat) :
   = flatten [seq G i | i <- iota 0 (m * s)].
 Proof. by rewrite -(flatten_iota_split G m s) flatten_flatten -map_comp. Qed.
 
+(* a loop of two, and a loop of three, written out                            *)
 Lemma flatten2 (T : Type) (G : nat -> seq T) :
   flatten [seq G j | j <- iota 0 2] = G 0 ++ G 1.
 Proof. by rewrite /= cats0. Qed.
@@ -2734,7 +2733,7 @@ have /and3P[_ H2 H3] := allP H _ abI.
 by rewrite H2 (eqP H3) -divn_eq eqxx.
 Qed.
 
-(* the same, seen through the layout                                         *)
+(* the same, seen through the layout                                          *)
 Lemma dequiv_stage_cat (cnt q : nat) (fl : flips) (g1 g2 : seq (nat * nat)) :
   0 < q -> 8 %| q -> cnt * q %| n %/ 8 ->
   all (fun ab => (ab.1 < cnt) && (ab.2 < cnt)) (g1 ++ g2) ->
@@ -2757,10 +2756,8 @@ Definition stagew (cnt q : nat) (g : seq (nat * nat)) : seq nat :=
                        | u <- iota 0 (q %/ 8)] | t <- iota 0 (n %/ (cnt * q))].
 
 (* a stage whose batch compares at ONE register distance, its comparisons     *)
-(* listed one by one: cinv_block keeps their distance and dflP gives them     *)
-(* the orientation                                                            *)
-(* comparisons listed one by one: cinv_block keeps their distance and dflP    *)
-(* gives them the orientation                                                 *)
+(* listed one by one: they keep their distance and carry the orientation the  *)
+(* merge asks for                                                             *)
 Lemma pflat_stage_sh (K cnt q d : nat) (fl : flips) (g : seq (nat * nat)) :
   0 < q -> 8 %| q -> cnt * q %| n %/ 8 -> dflP K fl ->
   all (fun ab => (ab.2 == ab.1 + d) && (ab.2 < cnt)) g ->
@@ -2847,7 +2844,7 @@ rewrite /comp map_flatten -map_comp; congr flatten; apply/eq_map => ab.
 by rewrite /comp -map_comp; apply/eq_map => l; rewrite /comp !addnA.
 Qed.
 
-(* two loops, one inside the other, may be run in either order                *)
+(* a loop whose body is two pieces holds the same as the two loops            *)
 Lemma perm_flatten_catm (T S : eqType) (G H : S -> seq T) (l : seq S) :
   perm_eq (flatten [seq G y ++ H y | y <- l])
           (flatten [seq G y | y <- l] ++ flatten [seq H y | y <- l]).
@@ -2860,6 +2857,7 @@ apply: perm_trans (_ : perm_eq _ (H y ++ (flatten [seq G z | z <- l]
 by rewrite perm_catCA.
 Qed.
 
+(* and two loops, one inside the other, may be run in either order            *)
 Lemma perm_flatten_swap2 (T S1 S2 : eqType) (F : S1 -> S2 -> seq T)
     (l1 : seq S1) (l2 : seq S2) :
   perm_eq (flatten [seq flatten [seq F x y | y <- l2] | x <- l1])
@@ -3075,7 +3073,7 @@ Lemma sweepsS (m f q : nat) (fl : flips) :
     else if q == 8 then stage m fl m 2 8 mrg2 else [::].
 Proof. by []. Qed.
 
-(* so the sweeps are the levels from their distance down to eight            *)
+(* so the sweeps are the levels from their distance down to eight             *)
 Lemma dequiv_sweeps1 (fuel s K : nat) (fl : flips) :
   s <= fuel -> 3 <= s -> 0 < K -> 8 %| K -> `2^ s.+1 %| n %/ 8 -> dflP K fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
@@ -3311,7 +3309,7 @@ Lemma ladder2S (m f q : nat) (fl : flips) :
     else if q == 8 then stage m fl m 2 8 mrg2 else [::].
 Proof. by []. Qed.
 
-(* below eight it compares nothing                                           *)
+(* below eight it compares nothing                                            *)
 Lemma ladder2_nil (m f q : nat) (fl : flips) :
   q < 16 -> q != 8 -> ladder2 m f fl q = [::].
 Proof.
@@ -3320,7 +3318,7 @@ have -> : (15 < q) = false by apply/negbTE; rewrite -leqNgt.
 by rewrite (negPf q8).
 Qed.
 
-(* so that half is the levels from its distance down to eight                *)
+(* so that half is the levels from its distance down to eight                 *)
 Lemma dequiv_ladder2 (fuel s K : nat) (fl : flips) :
   s <= fuel -> 3 <= s -> 0 < K -> 8 %| K -> `2^ s.+1 %| n %/ 8 -> dflP K fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
@@ -3383,7 +3381,7 @@ rewrite orbb; have -> : (15 < q) = false; first by apply/negbTE; rewrite -leqNgt
 by rewrite (negPf q8).
 Qed.
 
-(* the ladder's own recursion: the levels from its distance down to eight    *)
+(* the ladder's own recursion: the levels from its distance down to eight     *)
 Lemma dequiv_ladder1 (fuel s K : nat) (fl : flips) :
   s <= fuel -> 3 <= s -> 0 < K -> 8 %| K -> `2^ s.+1 %| n %/ 8 -> dflP K fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
@@ -3435,7 +3433,7 @@ apply: IH => //; first by lia.
 by apply: dvdn_trans sD; rewrite dvdn_e2n; lia.
 Qed.
 
-(* so the ladder, for any merge: half a row down to eight                    *)
+(* so the ladder, for any merge: half a row down to eight                     *)
 Lemma dequiv_ladder (K : nat) (fl : flips) : 0 < K -> 8 %| K -> dflP K fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64)) (pflat (ladder n fl)).1)
            (dcascade_hi n K k.-1 3).
@@ -3468,9 +3466,7 @@ rewrite cat0s.
 by apply: dequiv_ladder; rewrite ?row_gt0 ?dvdn_row //; exact: dflP_rfl4.
 Qed.
 
-(* the pass of two compares a row apart: it brings the two registers of every *)
-(* sixteen into matching lanes and compares there                             *)
-(* the comparisons a pass makes: the two registers of every sixteen           *)
+(* what a pass compares: the two registers of every sixteen, lane by lane     *)
 Lemma pflat_adj16 (fl : flips) :
   (pflat (adj16 n fl)).1
   = flatten [seq [seq (if nth false fl (t * 16 + l)
@@ -3496,7 +3492,7 @@ rewrite /comp /cren -map_comp; apply/eq_map => l.
 by rewrite /comp; case: ifP.
 Qed.
 
-(* the pass of two, as one batch seen through one shuffle                    *)
+(* the pass of two, as one batch seen through one shuffle                     *)
 Lemma pflat_rev_pass2 (fl : flips) :
   (pflat (rev_pass dvdn_e2n64 fl 2).1).1
   = cren (sh_perm dvdn_e2n64)
@@ -3548,10 +3544,8 @@ Lemma tb_puE :
   tb_pu = [:: 0; 1; 4; 5; 8; 9; 12; 13; 2; 3; 6; 7; 10; 11; 14; 15].
 Proof. by []. Qed.
 
-(* the second shuffle undoes the first, so the second batch is read exactly   *)
-(* where the pass of two reads its own                                        *)
-(* the same for the sixty-four lane shuffles, and the transpose read off its  *)
-(* table: the register a wire is in and the lane it is at change places       *)
+(* the sixty-four lane shuffles, read off their tables; the transpose changes *)
+(* the register a wire is in over with the lane it is at                      *)
 Lemma capp_sh_tr (i : nat) : i < n ->
   capp (sh_tr dvdn_e2n64) i = i %/ 64 * 64 + nth 0 tb_tr (i %% 64).
 Proof. by move=> iL; rewrite /sh_tr capp_btab. Qed.
@@ -3705,8 +3699,6 @@ apply: perm_block_offsets (dvdn16) _ _ => //.
 by move=> t c cL; rewrite mod8_blk16.
 Qed.
 
-(* the wires the level a row apart starts from --                             *)
-(* trc sends the lanes under four to the even rows                            *)
 (* which row a wire lands in: the one trc gives its lane                      *)
 Lemma cinv_row (x : nat) : x < n ->
   capp (cinv (avx2_layout dvdn_e2n64)) x %/ (n %/ 8) = nth 0 trc (x %% 8).
@@ -3741,7 +3733,7 @@ Proof. by case: m => [|[|[|[|[|[|[|[|]]]]]]]]. Qed.
 Lemma trc_even4 (m : nat) : m < 8 -> odd (nth 0 trc m %/ 4) = odd m.
 Proof. by case: m => [|[|[|[|[|[|[|[|]]]]]]]]. Qed.
 
-(* the layout may be read backwards                                          *)
+(* the layout may be read backwards                                           *)
 Lemma capp_layoutK (i : nat) : i < n ->
   capp (cinv (avx2_layout dvdn_e2n64)) (capp (avx2_layout dvdn_e2n64) i) = i.
 Proof. by move=> iL; apply: capp_cinvE => //; apply: capp_lt. Qed.
@@ -3815,8 +3807,6 @@ apply: dequiv_ladder; last exact: dflP_rfl2.
 by rewrite qE4 dvdn_mulr ?dvdn_row.
 Qed.
 
-(* the pass of one compares two rows apart and then a row apart, through its  *)
-(* two shuffles                                                               *)
 (* the pass of one, as two batches seen through its three shuffles            *)
 Lemma pflat_rev_pass1 (fl : flips) :
   (pflat (rev_pass dvdn_e2n64 fl 1).1).1
@@ -3887,7 +3877,7 @@ rewrite tb_u64_invol //.
 by rewrite capp_sh_perm // D1 M1.
 Qed.
 
-(* the offsets the pass of one reads its first batch at                      *)
+(* the offsets the pass of one reads its first batch at                       *)
 Lemma tb_pu_lo (l : nat) : l < 8 -> nth 0 tb_pu l %% 8 %% 4 < 2.
 Proof.
 have H : all (fun l => nth 0 tb_pu l %% 8 %% 4 < 2) (iota 0 8) by [].
@@ -3975,7 +3965,7 @@ apply: perm_block_offsets (dvdn16) _ _ => //.
 by move=> t c cL; rewrite mod8_blk16.
 Qed.
 
-(* the wires the level two rows apart starts from *)
+(* the wires the level two rows apart starts from                             *)
 Lemma cinv_perm_lane2 :
   perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x
           | x <- [seq x <- iota 0 n | x %% 8 %% 4 < 2]]
@@ -4002,7 +3992,7 @@ apply: uniq_perm; first 2 last.
 by rewrite filter_uniq ?iota_uniq.
 Qed.
 
-(* and the even lanes the wires the level four rows apart starts from        *)
+(* and the even lanes the wires the level four rows apart starts from         *)
 Lemma cinv_perm_lane1 :
   perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x
           | x <- [seq x <- iota 0 n | ~~ odd (x %% 8)]]
@@ -4160,8 +4150,6 @@ apply: dequiv_ladder; last exact: dflP_rfl1.
 by rewrite qE2 dvdn_mulr ?dvdn_row.
 Qed.
 
-(* the transpose sort does the three distances a row or more apart by turning *)
-(* them into distances of eight and back                                      *)
 (* the transpose sort, as one batch of eight seen through its two transposes  *)
 Lemma pflat_tsort64 (fl : flips) :
   (pflat (tsort64 dvdn_e2n64 fl).1).1
@@ -4216,11 +4204,9 @@ Lemma trwE2 (as' : seq nat) :
   trw as' = flatten [seq trwb as' t | t <- iota 0 (n %/ 64)].
 Proof. by []. Qed.
 
-(* WHAT IS LEFT: the two transposes cancel against the layout.  The layout is *)
-(* sh_out (avx2_layoutE) and sh_trs_id says trlo o trhi o tr is the identity, *)
-(* so trlo o trhi is the inverse of tr, and reading a wire of the transpose   *)
-(* sort in the final naming is reading it through the inverse of tr o out --  *)
-(* a table of sixty-four, which is what the three lemmas below need.          *)
+(* the two transposes cancel against the layout: reading a wire of the        *)
+(* transpose sort in the final naming is reading it through the inverse of    *)
+(* the transpose followed by the shuffle that writes the result out           *)
 Lemma cinv_layout_tr (x : nat) : x < n ->
   capp (cinv (avx2_layout dvdn_e2n64))
        (capp (sh_trlo dvdn_e2n64) (capp (sh_trhi dvdn_e2n64) x))
@@ -4687,11 +4673,9 @@ rewrite /avx2_lad; apply: dequiv_ladder => //.
 exact: dflP_avx2_tr.
 Qed.
 
-(* The merges take the same shape, one merge at a time: the doublings, then   *)
-(* one merge for each reversing pass, then the last one, which is what the    *)
-(* transpose, the ladder after it and the sort that writes the result out do  *)
-(* together.  Each of them ends with the three levels inside a group of       *)
-(* eight, which is the program's wide sweep (dequiv_wide_stage).              *)
+(* the merges, one merge at a time: the doublings, then one merge for each    *)
+(* reversing pass, then the last one -- the transpose, the ladder after it    *)
+(* and the sort that writes the result out, together                          *)
 Lemma dequiv_merges : dequiv n amerges (dmerges n k).
 Proof.
 have n_gt0 : 0 < n by rewrite e2n_gt0.
