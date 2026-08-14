@@ -1313,6 +1313,25 @@ Lemma pflat_vnet_fl (fl : flips) (i q : nat) (g : seq (nat * nat)) :
               | ab <- g].
 Proof. by rewrite /vnet /vmm map_comp pflat_map_Vcmp. Qed.
 
+(* the same, renamed: what a batch compares, wire by wire, once a shuffle has *)
+(* said where each lane is read                                               *)
+Lemma pflat_vnet_cren (s : cperm n) (fl : flips) (i q : nat)
+    (g : seq (nat * nat)) :
+  cren s (pflat (vnet n fl i q g)).1
+  = flatten [seq [seq (if nth false fl (i + ab.1 * q + l)
+                       then (capp s (i + ab.2 * q + l),
+                             capp s (i + ab.1 * q + l))
+                       else (capp s (i + ab.1 * q + l),
+                             capp s (i + ab.2 * q + l)))
+                 | l <- iota 0 8]
+            | ab <- g].
+Proof.
+rewrite pflat_vnet_fl cren_flatten -map_comp.
+congr flatten; apply/eq_map => ab.
+rewrite /comp /cren -map_comp; apply/eq_map => l.
+by rewrite /comp; case: ifP.
+Qed.
+
 (* one block: the batch at every register start of a span                     *)
 Lemma pflat_blockn (fl : flips) (base span q : nat) (g : seq (nat * nat)) :
   (pflat (blockn n fl base span q g)).1
@@ -2023,13 +2042,67 @@ have [] := uniq_min_size MU sub; first by rewrite size_map.
 by move=> _ H; rewrite H.
 Qed.
 
-(* hence a stage that compares at one narrow distance IS that level, whatever *)
-(* order it lists its wires in: they share no wire, so the order costs        *)
-(* nothing, and the flips give each of them the orientation the level asks    *)
-(* for                                                                        *)
-Lemma dequiv_level (K q : nat) (P : seq nat) :
-  0 < q -> 8 %| q -> q.*2 %| (n %/ 8) -> uniq P ->
-  P =i [seq i <- iota 0 n | i %% q.*2 < q] ->
+(* two wires of one register, a few lanes apart: the layout sends them to     *)
+(* the same place of two rows, the rows the transpose gives their lanes       *)
+Lemma cinv_lane_shift (x d : nat) : x < n -> x %% 8 + d < 8 ->
+  capp (cinv (avx2_layout dvdn_e2n64)) (x + d) + nth 0 trc (x %% 8) * (n %/ 8)
+  = capp (cinv (avx2_layout dvdn_e2n64)) x + nth 0 trc (x %% 8 + d) * (n %/ 8).
+Proof.
+have qE := rowE; have qq := row8E; have q_gt0 := row_gt0.
+move=> xL dL.
+have xdL : x + d < n by move: xL dL; have := ltn_pmod x (isT : 0 < 8); lia.
+have h8 : (x + d) %/ 8 = x %/ 8.
+  by rewrite {1}(divn_eq x 8) -addnA divnMDl // (divn_small dL) addn0.
+have lE : (x + d) %% 8 = x %% 8 + d.
+  by rewrite {1}(divn_eq x 8) -addnA modnMDl modn_small.
+have qE8' : n %/ 8 = 8 * ((n %/ 8) %/ 8) by rewrite mulnC qq.
+have qE8'' : n %/ 8 = ((n %/ 8) %/ 8) * 8 by rewrite qq.
+have rE : (x + d) %/ (n %/ 8) = x %/ (n %/ 8) by rewrite qE8' !divnMA h8.
+have bE : ((x + d) %% (n %/ 8)) %/ 8 = (x %% (n %/ 8)) %/ 8.
+  by rewrite qE8'' -!modn_divl h8.
+by rewrite !capp_cinv_wire // lE rE bE; lia.
+Qed.
+
+(* four lanes on inside a register is one row on: trc puts the lanes under    *)
+(* four in the even rows, and the four above them in the odd ones             *)
+Lemma trc_lane4 (m : nat) : m < 4 -> nth 0 trc (m + 4) = (nth 0 trc m).+1.
+Proof. by case: m => [|[|[|[|]]]]. Qed.
+
+Lemma cinv_adj4 (x : nat) : x < n -> x %% 8 < 4 ->
+  capp (cinv (avx2_layout dvdn_e2n64)) (x + 4)
+  = capp (cinv (avx2_layout dvdn_e2n64)) x + n %/ 8.
+Proof.
+move=> xL x4.
+have hL : x %% 8 + 4 < 8 by lia.
+have H := cinv_lane_shift xL hL.
+by rewrite trc_lane4 // mulSn in H; lia.
+Qed.
+
+(* two lanes on is two rows on, for the lanes trc keeps two apart             *)
+Lemma trc_lane2 (m : nat) : m < 8 -> m %% 4 < 2 ->
+  nth 0 trc (m + 2) = nth 0 trc m + 2.
+Proof. by case: m => [|[|[|[|[|[|[|[|]]]]]]]]. Qed.
+
+Lemma cinv_adj2 (x : nat) : x < n -> x %% 8 %% 4 < 2 ->
+  capp (cinv (avx2_layout dvdn_e2n64)) (x + 2)
+  = capp (cinv (avx2_layout dvdn_e2n64)) x + n %/ 4.
+Proof.
+move=> xL x2.
+have m8 : x %% 8 < 8 by rewrite ltn_mod.
+have hL : x %% 8 + 2 < 8 by move: x2 m8; have := ltn_mod x 8; lia.
+have H := cinv_lane_shift xL hL.
+rewrite trc_lane2 // mulnDl in H.
+by move: H; rewrite qE4; lia.
+Qed.
+
+(* whatever order a list of wires is given in, if renaming it gives exactly   *)
+(* the wires a level starts from then the comparisons it names ARE that       *)
+(* level: they share no wire, so the order costs nothing, and the flips give  *)
+(* each of them the orientation the level asks for                            *)
+Lemma dequiv_level_gen (K q : nat) (P : seq nat) :
+  0 < q -> q.*2 %| n ->
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- P]
+          [seq i <- iota 0 n | i %% q.*2 < q] ->
   dequiv n [seq (if (K == n)
                     || odd (capp (cinv (avx2_layout dvdn_e2n64)) x %/ K)
                  then (capp (cinv (avx2_layout dvdn_e2n64)) x,
@@ -2039,18 +2112,13 @@ Lemma dequiv_level (K q : nat) (P : seq nat) :
            | x <- P]
            (dlevel n K q).
 Proof.
-have qE := rowE.
-move=> q_gt0 q8 q2r PU PS.
-have q2n : q.*2 %| n by apply: dvdn_trans q2r _; rewrite -{2}qE dvdn_mulr.
+move=> q_gt0 q2n PF.
 set F := capp (cinv (avx2_layout dvdn_e2n64)).
 set f := fun i => if (K == n) || odd (i %/ K) then (i, i + q) else (i + q, i).
 set S := [seq i <- iota 0 n | i %% q.*2 < q].
 have SM (i : nat) : (i \in S) = (i < n) && (i %% q.*2 < q).
   by rewrite mem_filter mem_iota add0n andbC.
 have SU : uniq S by apply/filter_uniq/iota_uniq.
-have PF : perm_eq [seq F x | x <- P] S.
-  apply: perm_trans (cinv_perm_level q_gt0 q8 q2r).
-  by rewrite perm_map // (uniq_perm PU SU).
 have fI : injective f.
   move=> x y; rewrite /f.
   by case: ifP => _; case: ifP => _ [E1 E2]; move: E1 E2; lia.
@@ -2087,6 +2155,29 @@ apply: dequiv_reorder; last 2 first.
     by move: H2 H3 iC cE; rewrite mulSn; lia.
   by rewrite /f /bnd; case: ifP => _; rewrite [(_, _).1]/= [(_, _).2]/= iL iqL.
 by rewrite map_inj_uniq // (perm_uniq PF).
+Qed.
+
+(* hence a stage that compares at one narrow distance IS that level, whatever *)
+(* order it lists its wires in: below a row the layout only permutes the      *)
+(* wires the level starts from                                                *)
+Lemma dequiv_level (K q : nat) (P : seq nat) :
+  0 < q -> 8 %| q -> q.*2 %| (n %/ 8) -> uniq P ->
+  P =i [seq i <- iota 0 n | i %% q.*2 < q] ->
+  dequiv n [seq (if (K == n)
+                    || odd (capp (cinv (avx2_layout dvdn_e2n64)) x %/ K)
+                 then (capp (cinv (avx2_layout dvdn_e2n64)) x,
+                       capp (cinv (avx2_layout dvdn_e2n64)) x + q)
+                 else (capp (cinv (avx2_layout dvdn_e2n64)) x + q,
+                       capp (cinv (avx2_layout dvdn_e2n64)) x))
+           | x <- P]
+           (dlevel n K q).
+Proof.
+have qE := rowE.
+move=> q_gt0 q8 q2r PU PS.
+have q2n : q.*2 %| n by apply: dvdn_trans q2r _; rewrite -{2}qE dvdn_mulr.
+apply: dequiv_level_gen => //.
+apply: perm_trans (cinv_perm_level q_gt0 q8 q2r).
+by rewrite perm_map // (uniq_perm PU (filter_uniq _ (iota_uniq _ _)) PS).
 Qed.
 
 (* -------------------------------------------------------------------------- *)
@@ -2247,44 +2338,615 @@ Lemma dcascade_hiS (K e j : nat) : j <= e ->
   dcascade_hi n K e.+1 j = dlevel n K (`2^ e) ++ dcascade_hi n K e j.
 Proof. by move=> jL; rewrite [LHS]/= ltnNge jL. Qed.
 
-(* WHAT IS LEFT: the doublings, one merge size after the other -- the sweeps  *)
-(* of that size and the wide sweep that closes it, then the same again with   *)
-(* the size doubled and the pattern the merge left behind.                    *)
-(* WHAT IS LEFT: what the sweeps of one merge size do -- the levels above a   *)
-(* group of eight                                                             *)
+(* -------------------------------------------------------------------------- *)
+(*  Which wires a nest of loops runs over                                     *)
+(* -------------------------------------------------------------------------- *)
+
+(* the array, block by block                                                  *)
+Lemma iota_blocks (m b : nat) :
+  iota 0 (m * b) = flatten [seq iota (t * b) b | t <- iota 0 m].
+Proof.
+elim: m => [|m IH]; first by rewrite mul0n.
+rewrite mulSnr iotaD IH -addn1 iotaD map_cat flatten_cat /=.
+by rewrite cats0 add0n.
+Qed.
+
+Lemma perm_flatten_map (T : eqType) (F G : nat -> seq T) (l : seq nat) :
+  (forall t, t \in l -> perm_eq (F t) (G t)) ->
+  perm_eq (flatten [seq F t | t <- l]) (flatten [seq G t | t <- l]).
+Proof.
+elim: l => [|t l IH] //= H.
+apply: perm_cat; first by apply: H; rewrite mem_head.
+by apply: IH => x xI; apply: H; rewrite inE xI orbT.
+Qed.
+
+(* a loop that takes the same offsets in every block runs over exactly the    *)
+(* wires those offsets pick out, whatever order it takes them in -- provided  *)
+(* the condition on a wire only depends on where it is inside its block       *)
+Lemma perm_block_offsets (b : nat) (cs : seq nat) (Q : nat -> bool) :
+  b %| n -> perm_eq cs [seq c <- iota 0 b | Q c] ->
+  (forall t c, c < b -> Q (t * b + c) = Q c) ->
+  perm_eq (flatten [seq [seq t * b + c | c <- cs] | t <- iota 0 (n %/ b)])
+          [seq x <- iota 0 n | Q x].
+Proof.
+move=> bD csP QI.
+have n_gt0 : 0 < n by rewrite e2n_gt0.
+have b_gt0 : 0 < b by case: (posnP b) bD => // ->; rewrite dvd0n => /eqP nE0;
+  move: n_gt0; rewrite nE0.
+have nE : n %/ b * b = n by have [c cE] := dvdnP bD; rewrite cE mulnK.
+rewrite -{2}nE iota_blocks filter_flatten -map_comp.
+apply: perm_flatten_map => t; rewrite mem_iota add0n => /andP[_ tL].
+rewrite /comp.
+have -> : iota (t * b) b = [seq t * b + c | c <- iota 0 b]
+  by rewrite -iotaDl addn0.
+rewrite filter_map.
+rewrite (_ : [seq c <- iota 0 b | preim (fun c => t * b + c) Q c]
+             = [seq c <- iota 0 b | Q c]); last first.
+  by apply: eq_in_filter => c; rewrite mem_iota add0n => /andP[_ cL];
+     rewrite /preim /= QI.
+by rewrite perm_map.
+Qed.
+
+Lemma dvdn16 : 16 %| n.
+Proof. by apply: dvdn_trans dvdn_e2n64; apply/dvdnP; exists 4. Qed.
+
+Lemma mod8_blk16 (t c : nat) : (t * 16 + c) %% 8 = c %% 8.
+Proof.
+have -> : t * 16 + c = (t * 2) * 8 + c by lia.
+by rewrite modnMDl.
+Qed.
+
+(* reading a nest of two loops as one: the eight lanes of every group of      *)
+(* eight, up to a span, are that span read straight through                   *)
+Lemma flatten_iota_split (T : Type) (f : nat -> T) (m s : nat) :
+  flatten [seq [seq f (u * s + l) | l <- iota 0 s] | u <- iota 0 m]
+  = [seq f j | j <- iota 0 (m * s)].
+Proof.
+elim: m f => [|m IH] f; first by rewrite mul0n.
+rewrite mulSn iotaD map_cat add0n [in LHS]/= mul0n.
+congr (_ ++ _).
+rewrite (_ : iota 1 m = [seq 1 + u | u <- iota 0 m]); last by rewrite -iotaDl.
+have -> : [seq f (u * s + l) | u <- [seq 1 + u | u <- iota 0 m], l <- iota 0 s]
+        = [seq (fun j => f (s + j)) (u * s + l) | u <- iota 0 m, l <- iota 0 s].
+  rewrite -map_comp; congr flatten; apply: eq_map => u.
+  rewrite /comp; apply: eq_map => l.
+  by rewrite add1n mulSn addnA.
+rewrite (IH (fun j => f (s + j))).
+have -> : iota s (m * s) = [seq s + i | i <- iota 0 (m * s)]
+  by rewrite -iotaDl addn0.
+by elim: (iota 0 (m * s)) => //= a l ->.
+Qed.
+
+(* the wires a level starts from, block by block                              *)
+Lemma filter_iota_mod (q c : nat) : 0 < q ->
+  [seq i <- iota 0 (c * q.*2) | i %% q.*2 < q]
+  = flatten [seq [seq t * q.*2 + j | j <- iota 0 q] | t <- iota 0 c].
+Proof.
+move=> q_gt0.
+elim: c => [|c IH]; first by rewrite mul0n.
+rewrite mulSnr iotaD filter_cat IH.
+have -> : iota 0 c.+1 = iota 0 c ++ [:: c] by rewrite -addn1 iotaD.
+rewrite map_cat flatten_cat /= cats0.
+congr (_ ++ _).
+have -> : iota (c * q.*2) q.*2 = [seq c * q.*2 + i | i <- iota 0 q.*2]
+  by rewrite -iotaDl addn0.
+rewrite filter_map.
+have -> : [seq i <- iota 0 q.*2 | (c * q.*2 + i) %% q.*2 < q] = iota 0 q.
+  have -> : q.*2 = q + q by rewrite addnn.
+  rewrite iotaD filter_cat.
+  have E (i : nat) : i < q + q -> (c * (q + q) + i) %% (q + q) = i.
+    by move=> iL; rewrite modnMDl modn_small.
+  rewrite (_ : [seq i <- iota 0 q | _] = iota 0 q); last first.
+    rewrite -[RHS]filter_predT; apply: eq_in_filter => i.
+    by rewrite mem_iota add0n => /andP[_ iL]; rewrite E //; lia.
+  rewrite (_ : [seq i <- iota q q | _] = [::]) ?cats0 //.
+  rewrite -[RHS](filter_pred0 (iota q q)); apply: eq_in_filter => i.
+  by rewrite mem_iota => /andP[qL iL]; rewrite E //= ltnNge qL.
+by [].
+Qed.
+
+(* a reordering, and a run of them, survive a renaming: the renaming is       *)
+(* injective, so it keeps comparisons that share no wire apart                *)
+Lemma dswap_cren (s : cperm n) (l1 l2 : seq (nat * nat)) :
+  dswap n l1 l2 -> dswap n (cren s l1) (cren s l2).
+Proof.
+case=> ps ab cd qs abB cdB abcd.
+rewrite !cren_cat !cren_cons.
+constructor.
+- by move: abB; rewrite /bnd => /andP[H1 H2]; rewrite /= !capp_lt.
+- by move: cdB; rewrite /bnd => /andP[H1 H2]; rewrite /= !capp_lt.
+move: abB cdB abcd; rewrite /bnd /dpair /= => /andP[a1 a2] /andP[c1 c2].
+move=> /and4P[H1 H2 H3 H4]; apply/and4P; split; apply/eqP => E.
+- by case/eqP: H1; apply: capp_inj E.
+- by case/eqP: H2; apply: capp_inj E.
+- by case/eqP: H3; apply: capp_inj E.
+by case/eqP: H4; apply: capp_inj E.
+Qed.
+
+Lemma dequiv_cren (s : cperm n) (l1 l2 : seq (nat * nat)) :
+  dequiv n l1 l2 -> dequiv n (cren s l1) (cren s l2).
+Proof.
+elim=> [l|l3 l4 l5 H1 _ IH]; first exact: dequiv_refl.
+by apply: dequiv_step IH; apply: dswap_cren.
+Qed.
+
+(* WHAT IS LEFT: a stage of two batches, one after the other, is the two      *)
+(* stages: only comparisons of different blocks have to move, and a block     *)
+(* keeps to itself                                                            *)
+Lemma stage_cat_unren (cnt q : nat) (fl : flips) (g1 g2 : seq (nat * nat)) :
+  0 < q -> 8 %| q -> cnt * q %| n %/ 8 ->
+  all (fun ab => (ab.1 < cnt) && (ab.2 < cnt)) (g1 ++ g2) ->
+  dequiv n (pflat (stage n fl n cnt q (g1 ++ g2))).1
+           ((pflat (stage n fl n cnt q g1)).1
+            ++ (pflat (stage n fl n cnt q g2)).1).
+Admitted.
+
+(* the same, seen through the layout                                         *)
+Lemma dequiv_stage_cat (cnt q : nat) (fl : flips) (g1 g2 : seq (nat * nat)) :
+  0 < q -> 8 %| q -> cnt * q %| n %/ 8 ->
+  all (fun ab => (ab.1 < cnt) && (ab.2 < cnt)) (g1 ++ g2) ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (stage n fl n cnt q (g1 ++ g2))).1)
+           (cren (cinv (avx2_layout dvdn_e2n64))
+              (pflat (stage n fl n cnt q g1)).1
+            ++ cren (cinv (avx2_layout dvdn_e2n64))
+                 (pflat (stage n fl n cnt q g2)).1).
+Proof.
+move=> q_gt0 q8 cq gB.
+rewrite -cren_cat.
+by apply: dequiv_cren; apply: stage_cat_unren.
+Qed.
+
+(* the wires a stage starts from, in the order it lists them                  *)
+Definition stagew (cnt q : nat) (g : seq (nat * nat)) : seq nat :=
+  flatten [seq flatten [seq flatten
+     [seq [seq t * (cnt * q) + u * 8 + ab.1 * q + l | l <- iota 0 8] | ab <- g]
+                       | u <- iota 0 (q %/ 8)] | t <- iota 0 (n %/ (cnt * q))].
+
+(* a stage whose batch compares at ONE register distance, its comparisons     *)
+(* listed one by one: cinv_block keeps their distance and dflP gives them     *)
+(* the orientation                                                            *)
+(* comparisons listed one by one: cinv_block keeps their distance and dflP    *)
+(* gives them the orientation                                                 *)
+Lemma pflat_stage_sh (K cnt q d : nat) (fl : flips) (g : seq (nat * nat)) :
+  0 < q -> 8 %| q -> cnt * q %| n %/ 8 -> dflP K fl ->
+  all (fun ab => (ab.2 == ab.1 + d) && (ab.2 < cnt)) g ->
+  cren (cinv (avx2_layout dvdn_e2n64)) (pflat (stage n fl n cnt q g)).1
+  = [seq (if (K == n)
+             || odd (capp (cinv (avx2_layout dvdn_e2n64)) x %/ K)
+          then (capp (cinv (avx2_layout dvdn_e2n64)) x,
+                capp (cinv (avx2_layout dvdn_e2n64)) x + d * q)
+          else (capp (cinv (avx2_layout dvdn_e2n64)) x + d * q,
+                capp (cinv (avx2_layout dvdn_e2n64)) x))
+    | x <- stagew cnt q g].
+Proof.
+move=> q_gt0 q8 cq flP gD; have [flS flN] := flP.
+have qE := rowE.
+have qq := row8E.
+have cqn : cnt * q %| n by apply: dvdn_trans cq _; rewrite -{2}qE dvdn_mulr.
+have cq_gt0 : 0 < cnt * q.
+  case: (posnP (cnt * q)) cq => // ->; rewrite dvd0n => /eqP H.
+  by have := row_gt0; rewrite H.
+have q8E : q %/ 8 * 8 = q by have [c ->] := dvdnP q8; rewrite mulnK.
+have nE : n %/ (cnt * q) * (cnt * q) = n
+  by have [c cE] := dvdnP cqn; rewrite cE mulnK.
+rewrite pflat_stage /stagew.
+rewrite cren_flatten -map_comp map_flatten -map_comp.
+congr flatten; apply/eq_in_map => t; rewrite mem_iota add0n => /andP[_ tL].
+rewrite /comp pflat_blockn cren_flatten -map_comp map_flatten -map_comp.
+congr flatten; apply/eq_in_map => u; rewrite mem_iota add0n => /andP[_ uL].
+rewrite /comp pflat_vnet_cren map_flatten -map_comp.
+congr flatten; apply/eq_in_map => ab abI.
+have /andP[/eqP abE abL] := allP gD _ abI.
+have a1L : ab.1 < cnt by apply: leq_ltn_trans abL; rewrite abE leq_addr.
+rewrite /comp -map_comp; apply/eq_in_map => l.
+rewrite mem_iota add0n => /andP[_ lL].
+rewrite /comp.
+set x := t * (cnt * q) + u * 8 + ab.1 * q + l.
+have oB (a : nat) : a < cnt -> u * 8 + a * q + l < cnt * q.
+  move=> aL; have H : u * 8 + l < q by move: uL lL q8E; nia.
+  by move: H aL; nia.
+have xE : x = t * (cnt * q) + (u * 8 + ab.1 * q + l) by rewrite /x !addnA.
+have yE : t * (cnt * q) + u * 8 + ab.2 * q + l
+        = t * (cnt * q) + (u * 8 + ab.2 * q + l) by rewrite !addnA.
+have xL : x < n by rewrite xE; have := oB _ a1L; move: tL nE; nia.
+have yL : t * (cnt * q) + u * 8 + ab.2 * q + l < n.
+  rewrite yE.
+  have H := oB _ abL.
+  apply: leq_trans (_ : t.+1 * (cnt * q) <= n).
+    by rewrite mulSnr ltn_add2l.
+  by rewrite -nE leq_mul2r tL orbT.
+have mE : (u * 8 + ab.1 * q + l) %% 8 = (u * 8 + ab.2 * q + l) %% 8.
+  have [c cE] := dvdnP q8.
+  have E (a : nat) : (u * 8 + a * (c * 8) + l) %% 8 = l %% 8.
+    by rewrite mulnA -mulnDl modnMDl.
+  by rewrite cE !E.
+have Ep : capp (cinv (avx2_layout dvdn_e2n64))
+            (t * (cnt * q) + u * 8 + ab.2 * q + l)
+        = capp (cinv (avx2_layout dvdn_e2n64)) x + d * q.
+  have H := cinv_block (c := cnt * q) (t := t)
+              (o1 := u * 8 + ab.1 * q + l) (o2 := u * 8 + ab.2 * q + l)
+              cq (dvdn_mull _ q8) cq_gt0 (oB _ a1L) (oB _ abL) mE.
+  rewrite -xE -yE in H.
+  have yx : t * (cnt * q) + u * 8 + ab.2 * q + l = x + d * q.
+    rewrite /x; move: abE; move: (ab.1) (ab.2) => a1 a2 abE.
+    by rewrite abE mulnDl; lia.
+  rewrite yx.
+  by have := H xL yL; rewrite yx; lia.
+by rewrite Ep flN // /dfl; case: ((K == n) || _).
+Qed.
+
+(* the offsets a stage takes inside one block                                 *)
+Definition stcs (q : nat) (g : seq (nat * nat)) : seq nat :=
+  flatten [seq flatten [seq [seq u * 8 + ab.1 * q + l | l <- iota 0 8]
+                       | ab <- g]
+          | u <- iota 0 (q %/ 8)].
+
+Lemma stagewW (cnt q : nat) (g : seq (nat * nat)) :
+  stagew cnt q g
+  = flatten [seq [seq t * (cnt * q) + c | c <- stcs q g]
+            | t <- iota 0 (n %/ (cnt * q))].
+Proof.
+rewrite /stagew /stcs.
+congr flatten; apply/eq_map => t.
+rewrite map_flatten -map_comp; congr flatten; apply/eq_map => u.
+rewrite /comp map_flatten -map_comp; congr flatten; apply/eq_map => ab.
+by rewrite /comp -map_comp; apply/eq_map => l; rewrite /comp !addnA.
+Qed.
+
+(* WHAT IS LEFT: inside one block, the batch takes the offsets the level      *)
+(* starts from: the batch gives the register, the eight lanes of every group  *)
+(* of eight give the rest                                                     *)
+Lemma perm_stcs (cnt q d : nat) (g : seq (nat * nat)) :
+  0 < q -> 8 %| q -> d.*2 %| cnt ->
+  perm_eq [seq ab.1 | ab <- g] [seq a <- iota 0 cnt | a %% d.*2 < d] ->
+  perm_eq (stcs q g) [seq c <- iota 0 (cnt * q) | c %% (d * q).*2 < d * q].
+Admitted.
+
+(* so a stage starts from the wires its level starts from                     *)
+Lemma stagew_mem (cnt q d : nat) (g : seq (nat * nat)) :
+  0 < q -> 8 %| q -> d.*2 %| cnt -> cnt * q %| n %/ 8 ->
+  perm_eq [seq ab.1 | ab <- g] [seq a <- iota 0 cnt | a %% d.*2 < d] ->
+  stagew cnt q g =i [seq i <- iota 0 n | i %% (d * q).*2 < d * q].
+Proof.
+move=> q_gt0 q8 d2 cq gP.
+have qE := rowE.
+have cqn : cnt * q %| n by apply: dvdn_trans cq _; rewrite -{2}qE dvdn_mulr.
+apply: perm_mem.
+rewrite stagewW.
+apply: perm_block_offsets cqn _ _; first by apply: perm_stcs gP.
+move=> t c cL.
+have [e eE] : exists e, cnt = d.*2 * e by have [e eE] := dvdnP d2; exists e; lia.
+have -> : t * (cnt * q) + c = (t * e) * ((d * q).*2) + c
+  by rewrite eE -!muln2; lia.
+by rewrite modnMDl.
+Qed.
+
+(* and it starts from each of them once                                       *)
+Lemma stagew_uniq (cnt q d : nat) (g : seq (nat * nat)) :
+  0 < q -> 8 %| q -> d.*2 %| cnt -> cnt * q %| n %/ 8 ->
+  perm_eq [seq ab.1 | ab <- g] [seq a <- iota 0 cnt | a %% d.*2 < d] ->
+  uniq (stagew cnt q g).
+Proof.
+move=> q_gt0 q8 d2 cq gP.
+have qE := rowE.
+have cqn : cnt * q %| n by apply: dvdn_trans cq _; rewrite -{2}qE dvdn_mulr.
+rewrite stagewW.
+have H : perm_eq (flatten [seq [seq t * (cnt * q) + c | c <- stcs q g]
+                          | t <- iota 0 (n %/ (cnt * q))])
+                 [seq i <- iota 0 n | i %% (d * q).*2 < d * q].
+  apply: perm_block_offsets cqn _ _; first by apply: perm_stcs gP.
+  move=> t c cL.
+  have [e eE] : exists e, cnt = d.*2 * e
+    by have [e eE] := dvdnP d2; exists e; lia.
+  have -> : t * (cnt * q) + c = (t * e) * ((d * q).*2) + c
+    by rewrite eE -!muln2; lia.
+  by rewrite modnMDl.
+by rewrite (perm_uniq H) filter_uniq ?iota_uniq.
+Qed.
+
+(* so a stage at one register distance IS the level of that distance          *)
+Lemma dequiv_stage_g (K cnt q d : nat) (fl : flips) (g : seq (nat * nat)) :
+  0 < K -> 8 %| K -> 0 < d -> d.*2 %| cnt -> 8 %| q -> cnt * q %| n %/ 8 ->
+  dflP K fl ->
+  all (fun ab => (ab.2 == ab.1 + d) && (ab.2 < cnt)) g ->
+  perm_eq [seq ab.1 | ab <- g] [seq a <- iota 0 cnt | a %% d.*2 < d] ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (stage n fl n cnt q g)).1)
+           (dlevel n K (d * q)).
+Proof.
+move=> K_gt0 K8 d_gt0 d2 q8 cq flP gD gP.
+have q_gt0 : 0 < q.
+  by case: (posnP q) q8 cq => // ->; rewrite muln0 dvd0n => /eqP;
+     have := row_gt0; lia.
+rewrite (pflat_stage_sh (K := K) (d := d)) //.
+apply: dequiv_level => //.
+- by rewrite muln_gt0 d_gt0.
+- by rewrite dvdn_mull.
+- have [c cE] := dvdnP d2.
+  have [e eE] := dvdnP cq.
+  by apply/dvdnP; exists (e * c); rewrite eE cE -!mulnA; congr (_ * _);
+     rewrite mulnCA -!muln2; lia.
+- by apply: (stagew_uniq (d := d)).
+by apply: (stagew_mem (d := d)).
+Qed.
+
+(* one stage, at a distance narrower than a row: the batch compares at three  *)
+(* distances, the tiling puts it at every block, and the whole stage is the   *)
+(* three levels of those distances                                            *)
+Lemma dequiv_stage_mrg8 (K q : nat) (fl : flips) :
+  0 < K -> 8 %| K -> 8 %| q -> q * 8 %| n %/ 8 -> dflP K fl ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (stage n fl n 8 q mrg8)).1)
+           (dlevel n K (q * 4) ++ dlevel n K (q * 2) ++ dlevel n K q).
+Proof.
+move=> K_gt0 K8 q8 q8' flP.
+have q_gt0 : 0 < q.
+  by case: (posnP q) q8' => // ->; rewrite mul0n dvd0n => /eqP;
+     have := row_gt0; lia.
+have q8'' : 8 * q %| n %/ 8 by rewrite mulnC.
+have -> : mrg8 = [:: (0, 4); (1, 5); (2, 6); (3, 7)]
+                 ++ ([:: (0, 2); (1, 3); (4, 6); (5, 7)]
+                     ++ [:: (0, 1); (2, 3); (4, 5); (6, 7)]) :> seq (nat * nat)
+  by [].
+have H1 := @dequiv_stage_cat 8 q fl [:: (0, 4); (1, 5); (2, 6); (3, 7)]
+             ([:: (0, 2); (1, 3); (4, 6); (5, 7)]
+              ++ [:: (0, 1); (2, 3); (4, 5); (6, 7)]).
+apply: dequiv_trans (H1 _ _ _ _) _ => //.
+apply: dequiv_cat.
+  have -> : dlevel n K (q * 4) = dlevel n K (4 * q) by rewrite mulnC.
+  by apply: (dequiv_stage_g (d := 4) (cnt := 8)).
+have H2 := @dequiv_stage_cat 8 q fl [:: (0, 2); (1, 3); (4, 6); (5, 7)]
+             [:: (0, 1); (2, 3); (4, 5); (6, 7)].
+apply: dequiv_trans (H2 _ _ _ _) _ => //.
+apply: dequiv_cat.
+  have -> : dlevel n K (q * 2) = dlevel n K (2 * q) by rewrite mulnC.
+  by apply: (dequiv_stage_g (d := 2) (cnt := 8)).
+have -> : dlevel n K q = dlevel n K (1 * q) by rewrite mul1n.
+by apply: (dequiv_stage_g (d := 1) (cnt := 8)).
+Qed.
+
+(* the same, for the batch of four -- two levels                              *)
+Lemma dequiv_stage_mrg4 (K q : nat) (fl : flips) :
+  0 < K -> 8 %| K -> 8 %| q -> q * 4 %| n %/ 8 -> dflP K fl ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (stage n fl n 4 q mrg4)).1)
+           (dlevel n K (q * 2) ++ dlevel n K q).
+Proof.
+move=> K_gt0 K8 q8 q4 flP.
+have q_gt0 : 0 < q.
+  by case: (posnP q) q4 => // ->; rewrite mul0n dvd0n => /eqP;
+     have := row_gt0; lia.
+have q4' : 4 * q %| n %/ 8 by rewrite mulnC.
+have -> : mrg4 = [:: (0, 2); (1, 3)] ++ [:: (0, 1); (2, 3)] :> seq (nat * nat)
+  by [].
+have H := @dequiv_stage_cat 4 q fl [:: (0, 2); (1, 3)] [:: (0, 1); (2, 3)].
+apply: dequiv_trans (H _ _ _ _) _ => //.
+apply: dequiv_cat.
+  have -> : dlevel n K (q * 2) = dlevel n K (2 * q) by rewrite mulnC.
+  by apply: (dequiv_stage_g (d := 2) (cnt := 4)).
+have -> : dlevel n K q = dlevel n K (1 * q) by rewrite mul1n.
+by apply: (dequiv_stage_g (d := 1) (cnt := 4)).
+Qed.
+
+(* and for the batch of two -- one level                                      *)
+Lemma dequiv_stage_mrg2 (K q : nat) (fl : flips) :
+  0 < K -> 8 %| K -> 8 %| q -> q * 2 %| n %/ 8 -> dflP K fl ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (stage n fl n 2 q mrg2)).1)
+           (dlevel n K q).
+Proof.
+move=> K_gt0 K8 q8 q2 flP.
+have -> : dlevel n K q = dlevel n K (1 * q) by rewrite mul1n.
+apply: (dequiv_stage_g (d := 1) (cnt := 2)) => //.
+by rewrite mulnC.
+Qed.
+
+(* one sweep step: the stage of the three coarsest distances left, then the   *)
+(* same eight times finer -- and, once under a hundred and twenty-eight, the  *)
+(* stages the code writes out                                                 *)
+Lemma sweepsS (m f q : nat) (fl : flips) :
+  sweeps m f.+1 fl q =
+    if 128 <= q then stage m fl m 8 (q %/ 4) mrg8 ++ sweeps m f fl (q %/ 8)
+    else if q == 64 then stage m fl m 4 32 mrg4 ++ stage m fl m 4 8 mrg4
+    else if q == 32 then stage m fl m 8 8 mrg8
+    else if q == 16 then stage m fl m 4 8 mrg4
+    else if q == 8 then stage m fl m 2 8 mrg2 else [::].
+Proof. by []. Qed.
+
+(* so the sweeps are the levels from their distance down to eight            *)
+Lemma dequiv_sweeps1 (fuel s K : nat) (fl : flips) :
+  s <= fuel -> 3 <= s -> 0 < K -> 8 %| K -> `2^ s.+1 %| n %/ 8 -> dflP K fl ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (sweeps n fuel fl (`2^ s))).1)
+           (dcascade_hi n K s.+1 3).
+Proof.
+elim: fuel s => [|f IH] s sL s3 K_gt0 K8 sD flP; first by exfalso; lia.
+have quart (a : nat) : `2^ a.+2 %/ 4 = `2^ a.
+  by rewrite !e2Sn !addnn -!muln2 -mulnA [2 * 2]/= mulnK.
+have eight (a : nat) : `2^ a.+3 %/ 8 = `2^ a.
+  by rewrite !e2Sn !addnn -!muln2 -!mulnA [2 * (2 * 2)]/= mulnK.
+have hnil : dcascade_hi n K 3 3 = [::] by [].
+rewrite sweepsS.
+case: (leqP 7 s) => [s7|s6]; last first.
+  have : s = 3 \/ s = 4 \/ s = 5 \/ s = 6 by lia.
+  case=> [sE|[sE|[sE|sE]]]; move: sD; rewrite sE => sD.
+  - have -> : `2^ 3 = 8 by [].
+    rewrite dcascade_hiS // hnil cats0.
+    by apply: dequiv_stage_mrg2 => //.
+  - have -> : `2^ 4 = 16 by [].
+    rewrite dcascade_hiS // [dcascade_hi n K 4 3]dcascade_hiS // hnil cats0.
+    have -> : `2^ 3 = 8 by [].
+    have -> : dlevel n K 16 = dlevel n K (8 * 2) by [].
+    by apply: dequiv_stage_mrg4 => //.
+  - have -> : `2^ 5 = 32 by [].
+    rewrite dcascade_hiS // [dcascade_hi n K 5 3]dcascade_hiS //.
+    rewrite [dcascade_hi n K 4 3]dcascade_hiS // hnil cats0.
+    have -> : `2^ 4 = 16 by [].
+    have -> : `2^ 3 = 8 by [].
+    have -> : dlevel n K 32 = dlevel n K (8 * 4) by [].
+    have -> : dlevel n K 16 = dlevel n K (8 * 2) by [].
+    by apply: dequiv_stage_mrg8 => //.
+  have -> : `2^ 6 = 64 by [].
+  rewrite dcascade_hiS // [dcascade_hi n K 6 3]dcascade_hiS //.
+  rewrite [dcascade_hi n K 5 3]dcascade_hiS //.
+  rewrite [dcascade_hi n K 4 3]dcascade_hiS //.
+  rewrite hnil cats0.
+  have -> : `2^ 5 = 32 by [].
+  have -> : `2^ 4 = 16 by [].
+  have -> : `2^ 3 = 8 by [].
+  rewrite pflat_cat1; last by apply: pflat_nomove; apply: nomv_stage.
+  rewrite cren_cat catA.
+  apply: dequiv_cat.
+    have -> : dlevel n K 64 = dlevel n K (32 * 2) by [].
+    by apply: dequiv_stage_mrg4 => //.
+  have -> : dlevel n K 16 = dlevel n K (8 * 2) by [].
+  apply: dequiv_stage_mrg4 => //.
+  by apply: dvdn_trans sD; rewrite (_ : 8 * 4 = 32) // (_ : `2^ 7 = 128) //.
+have hs : (128 <= `2^ s) = true by rewrite -[128]/(`2^ 7) leq_e2n; lia.
+rewrite hs.
+have [u sE] : exists u, s = u.+3.+2 by exists (s - 5); lia.
+move: sL sD; rewrite sE => sL sD.
+move: s3 s7; rewrite sE => _ s7; move: sE => _.
+rewrite quart eight.
+rewrite dcascade_hiS; last by lia.
+rewrite [dcascade_hi n K u.+3.+2 3]dcascade_hiS; last by lia.
+rewrite [dcascade_hi n K u.+3.+1 3]dcascade_hiS; last by lia.
+rewrite !catA.
+rewrite pflat_cat1; last by apply: pflat_nomove; apply: nomv_stage.
+rewrite cren_cat.
+apply: dequiv_cat.
+  have -> : dlevel n K (`2^ u.+3.+2) = dlevel n K (`2^ u.+3 * 4).
+    by rewrite [`2^ u.+3.+2]e2Sn addnn [`2^ u.+3.+1]e2Sn addnn -!muln2 -mulnA.
+  have -> : dlevel n K (`2^ u.+3.+1) = dlevel n K (`2^ u.+3 * 2).
+    by rewrite [`2^ u.+3.+1]e2Sn addnn -muln2.
+  rewrite -catA.
+  apply: dequiv_stage_mrg8 => //.
+    by rewrite -[8]/(`2^ 3) dvdn_e2n.
+  by move: sD; rewrite -[8]/(`2^ 3) -e2nD addn3.
+apply: IH => //; first by lia.
+- by lia.
+by apply: dvdn_trans sD; rewrite dvdn_e2n; lia.
+Qed.
+
+(* under eight the sweeps compare nothing: the merge of a group of eight is   *)
+(* the wide sweep alone                                                       *)
+Lemma sweeps_nil (m f q : nat) (fl : flips) : q < 8 -> sweeps m f fl q = [::].
+Proof.
+move=> qL; case: f => //= f.
+have -> : (127 < q) = false by apply/negbTE; rewrite -leqNgt; lia.
+have -> : (q == 64) = false by apply/negbTE; apply/eqP => qE; lia.
+have -> : (q == 32) = false by apply/negbTE; apply/eqP => qE; lia.
+have -> : (q == 16) = false by apply/negbTE; apply/eqP => qE; lia.
+by have -> : (q == 8) = false by apply/negbTE; apply/eqP => qE; lia.
+Qed.
+
+(* so the sweeps of one merge size do that merge's levels above a group of    *)
+(* eight                                                                      *)
 Lemma dequiv_sweeps (e : nat) (fl : flips) :
-  3 <= e -> dflP (`2^ e) fl ->
+  3 <= e -> `2^ e %| n %/ 8 -> dflP (`2^ e) fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (pflat (sweeps n n fl (`2^ e %/ 2))).1)
            (dcascade_hi n (`2^ e) e 3).
-Admitted.
+Proof.
+move=> eL eD flP.
+case: (leqP 4 e) => [e4|e3]; last first.
+  have eE3 : e = 3 by lia.
+  have -> : `2^ e %/ 2 = 4 by rewrite eE3.
+  have -> : sweeps n n fl 4 = [::] by apply: sweeps_nil.
+  have -> : dcascade_hi n (`2^ e) e 3 = [::] by rewrite eE3.
+  exact: dequiv_refl.
+have eE : e.-1.+1 = e by lia.
+have qE : `2^ e %/ 2 = `2^ e.-1 by rewrite -eE e2Sn addnn -muln2 mulnK.
+rewrite qE -[X in dcascade_hi _ _ X _]eE.
+apply: (dequiv_sweeps1 (fuel := n) (s := e.-1) (K := `2^ e)).
+- have := ltn_ne2n e; have := dvdn_leq row_gt0 eD.
+  have := leq_div2r 8 (leqnn n); lia.
+- by lia.
+- by rewrite e2n_gt0.
+- by rewrite -[8]/(`2^ 3) dvdn_e2n; lia.
+- by rewrite eE.
+by [].
+Qed.
 
 (* so one doubling is one merge: its sweeps and the wide sweep that closes it *)
 Lemma dequiv_dbl_level (e : nat) (fl : flips) :
-  3 <= e -> dflP (`2^ e) fl ->
+  3 <= e -> `2^ e %| n %/ 8 -> dflP (`2^ e) fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              ((pflat (sweeps n n fl (`2^ e %/ 2))).1
               ++ (pflat (flatten [seq vnet n fl (t * 8) (n %/ 8) mrg8r
                                  | t <- iota 0 ((n %/ 8) %/ 8)])).1))
            (dcascade n (`2^ e) e).
 Proof.
-move=> eL flP.
+move=> eL eD flP.
 rewrite cren_cat (@dcascade_hiE n (`2^ e) e 3) //.
-apply: dequiv_cat; first exact: dequiv_sweeps.
+apply: dequiv_cat; first exact: (dequiv_sweeps eL eD flP).
 rewrite pflat_flatten -?map_comp;
   last by rewrite all_map; apply/allP => t _; exact: nomv_vnet.
 apply: dequiv_wide => //; first by rewrite e2n_gt0.
 by rewrite -[8]/(`2^ 3) dvdn_e2n.
 Qed.
 
-(* WHAT IS LEFT: the doublings themselves -- one merge size after the other,  *)
-(* each with the pattern the one before it left                               *)
+(* one doubling, as a program: the sweeps of the size, the merge itself, and  *)
+(* the doublings that follow unless the size is already a row                 *)
+Lemma pdoubleS_prog (m f p : nat) (fl : flips) :
+  (pdouble m f.+1 fl p).1 =
+    sweeps m m fl (p %/ 2) ++ (flip_merge m fl p).1
+    ++ (if p * 16 == m then [::]
+        else (pdouble m f (flip_merge m fl p).2 p.*2).1).
+Proof.
+rewrite /=; case: ifP => [_|_]; first by rewrite cats0.
+by case: (pdouble m f _ p.*2).
+Qed.
+
+(* the doublings themselves: one merge size after the other, each with the    *)
+(* pattern the one before it left                                             *)
 Lemma dequiv_pdouble (fuel e j : nat) (fl : flips) :
   3 <= e -> n %/ 8 = `2^ e * (`2^ j) -> 0 < j -> j <= fuel -> dflP (`2^ e) fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (pflat (pdouble n fuel fl (`2^ e)).1).1)
            (dmseg e j).
-Admitted.
+Proof.
+elim: fuel e j fl => [|f IH] e j fl eL qE j_gt0 jL flP; first by exfalso; lia.
+have p8 : 8 %| `2^ e by rewrite -[8]/(`2^ 3) dvdn_e2n.
+have e0 : 0 < `2^ e := e2n_gt0 e.
+have qq := rowE.
+have e21 : `2^ 1 = 2 by [].
+have dE : (`2^ e).*2 = `2^ e.+1 by rewrite e2Sn addnn.
+have E0 : cren (cinv (avx2_layout dvdn_e2n64)) (pflat ([::] : prog n)).1 = [::]
+  by [].
+have eD : `2^ e %| n %/ 8 by rewrite qE dvdn_mulr.
+have Hdbl := dequiv_dbl_level eL eD flP.
+rewrite pdoubleS_prog.
+rewrite pflat_cat1; last by apply: pflat_nomove; apply: nomv_sweeps.
+rewrite pflat_cat1; last by apply: pflat_nomove; apply: nomv_flip_merge.
+rewrite catA cren_cat.
+case: (boolP (`2^ e * 16 == n)) => [/eqP pE|pD].
+  have qE2 : n %/ 8 = `2^ e * 2.
+    by apply/eqP; rewrite -(eqn_pmul2r (isT : 0 < 8)) qq -pE -mulnA.
+  have H2 : `2^ j = 2 by apply/eqP; rewrite -(eqn_pmul2l e0) -qE qE2.
+  have jE : j = 1 by have := ltn_ne2n j; rewrite H2; lia.
+  rewrite jE dmsegE [dmseg _ 0]/= cats0 E0 cats0.
+  exact: Hdbl.
+have j2 : 2 <= j.
+  case: (leqP 2 j) => // j1.
+  have jE : j = 1 by lia.
+  move: qE; rewrite jE e21 => qE1.
+  by case/eqP: pD; move: qq qE1; lia.
+have [j' jE] : exists j', j = j'.+1 by exists j.-1; lia.
+rewrite jE dmsegE dE.
+apply: dequiv_cat Hdbl _.
+apply: (IH e.+1 j') => //.
+- by lia.
+- by rewrite qE jE !e2Sn mulnDr mulnDl.
+- by lia.
+- by lia.
+have -> : (flip_merge n fl (`2^ e)).2 = fl_tog (fmP n (`2^ e)) fl by [].
+apply: dflP_tog flP => i iL.
+rewrite -dE; apply: dfl_fmP => //.
+have E2 : (`2^ e).*2.*2 = `2^ e.+2 by rewrite !e2Sn !addnn.
+by rewrite E2 qE jE -e2nD dvdn_e2n; lia.
+Qed.
 
 Lemma merges_dbl :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64)) (pflat (avx2_dbl n).1).1)
@@ -2310,9 +2972,9 @@ Qed.
 (*  The four merges the tail still owes                                       *)
 (* -------------------------------------------------------------------------- *)
 
-(* WHAT IS LEFT: the ladder.  It is the same program in all four, and it      *)
-(* takes the same distances -- half a row down to eight -- whichever merge it *)
-(* is working for; only the pattern it carries says which.                    *)
+(* the ladder is the same program in all four, and it takes the same          *)
+(* distances -- half a row down to eight -- whichever merge it is working     *)
+(* for; only the pattern it carries says which                                *)
 Lemma qE16 : n %/ 16 = `2^ (k - 2).
 Proof.
 have E : n = `2^ (k - 2) * 16.
@@ -2320,14 +2982,137 @@ have E : n = `2^ (k - 2) * 16.
 by rewrite {1}E mulnK.
 Qed.
 
-(* WHAT IS LEFT: the ladder's own recursion -- a stage of three distances,    *)
-(* then the same again eight times finer                                      *)
-Lemma dequiv_ladder1 (fuel e K : nat) (fl : flips) :
-  e <= fuel -> 0 < K -> 8 %| K -> dflP K fl ->
+(* the finer half of the ladder, one step: a stage of two distances, then the *)
+(* same again four times finer                                                *)
+Lemma ladder2S (m f q : nat) (fl : flips) :
+  ladder2 m f.+1 fl q =
+    if 16 <= q then stage m fl m 4 (q %/ 2) mrg4 ++ ladder2 m f fl (q %/ 4)
+    else if q == 8 then stage m fl m 2 8 mrg2 else [::].
+Proof. by []. Qed.
+
+(* below eight it compares nothing                                           *)
+Lemma ladder2_nil (m f q : nat) (fl : flips) :
+  q < 16 -> q != 8 -> ladder2 m f fl q = [::].
+Proof.
+move=> qL q8; case: f => //= f.
+have -> : (15 < q) = false by apply/negbTE; rewrite -leqNgt.
+by rewrite (negPf q8).
+Qed.
+
+(* so that half is the levels from its distance down to eight                *)
+Lemma dequiv_ladder2 (fuel s K : nat) (fl : flips) :
+  s <= fuel -> 3 <= s -> 0 < K -> 8 %| K -> `2^ s.+1 %| n %/ 8 -> dflP K fl ->
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
-             (pflat (ladder1 n fuel fl (`2^ e))).1)
-           (dcascade_hi n K e.+1 3).
-Admitted.
+             (pflat (ladder2 n fuel fl (`2^ s))).1)
+           (dcascade_hi n K s.+1 3).
+Proof.
+elim: fuel s => [|f IH] s sL s3 K_gt0 K8 sD flP; first by exfalso; lia.
+have half (a : nat) : `2^ a.+1 %/ 2 = `2^ a by rewrite e2Sn addnn -muln2 mulnK.
+have quart (a : nat) : `2^ a.+2 %/ 4 = `2^ a.
+  by rewrite !e2Sn !addnn -!muln2 -mulnA [2 * 2]/= mulnK.
+have [u sE] : exists u, s = u.+3 by exists (s - 3); lia.
+move: sL sD; rewrite sE => sL sD.
+rewrite ladder2S.
+move: s3 => _; move: sE => _.
+case: u sL sD => [|u] sL sD.
+  have -> : (16 <= `2^ 3) = false by [].
+  have -> : (`2^ 3 == 8) = true by [].
+  have hnil : dcascade_hi n K 3 3 = [::] by [].
+  rewrite dcascade_hiS // hnil cats0.
+  have -> : `2^ 3 = 8 by [].
+  by apply: dequiv_stage_mrg2 => //.
+have hs : (16 <= `2^ u.+4) = true by rewrite -[16]/(`2^ 4) leq_e2n.
+rewrite hs half.
+rewrite dcascade_hiS; last by lia.
+rewrite [dcascade_hi n K u.+4 3]dcascade_hiS; last by lia.
+rewrite catA.
+rewrite pflat_cat1; last by apply: pflat_nomove; apply: nomv_stage.
+rewrite cren_cat.
+apply: dequiv_cat.
+  have -> : dlevel n K (`2^ u.+4) = dlevel n K (`2^ u.+3 * 2).
+    by rewrite [`2^ u.+4]e2Sn addnn -muln2.
+  apply: dequiv_stage_mrg4 => //.
+    by rewrite -[8]/(`2^ 3) dvdn_e2n.
+  by move: sD; rewrite -[4]/(`2^ 2) -e2nD addn2.
+rewrite quart.
+case: u sL sD hs => [|u] sL sD hs.
+  have -> : ladder2 n f fl (`2^ 2) = [::] by apply: ladder2_nil.
+  have -> : dcascade_hi n K 3 3 = [::] by [].
+  exact: dequiv_refl.
+apply: IH => //; first by lia.
+by apply: dvdn_trans sD; rewrite dvdn_e2n; lia.
+Qed.
+
+(* the coarser half, one step: a stage of three distances, then the same      *)
+(* eight times finer                                                          *)
+Lemma ladder1S (m f q : nat) (fl : flips) :
+  ladder1 m f.+1 fl q =
+    if (128 <= q) || (q == 32)
+    then stage m fl m 8 (q %/ 4) mrg8 ++ ladder1 m f fl (q %/ 8)
+    else ladder2 m f.+1 fl q.
+Proof. by []. Qed.
+
+Lemma ladder1_nil (m f q : nat) (fl : flips) :
+  q < 16 -> q != 8 -> ladder1 m f fl q = [::].
+Proof.
+move=> qL q8; case: f => //= f.
+have -> : (127 < q) = false by apply/negbTE; rewrite -leqNgt; lia.
+have -> : (q == 32) = false by apply/negbTE; apply/eqP => qE; lia.
+rewrite orbb; have -> : (15 < q) = false; first by apply/negbTE; rewrite -leqNgt.
+by rewrite (negPf q8).
+Qed.
+
+(* the ladder's own recursion: the levels from its distance down to eight    *)
+Lemma dequiv_ladder1 (fuel s K : nat) (fl : flips) :
+  s <= fuel -> 3 <= s -> 0 < K -> 8 %| K -> `2^ s.+1 %| n %/ 8 -> dflP K fl ->
+  dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
+             (pflat (ladder1 n fuel fl (`2^ s))).1)
+           (dcascade_hi n K s.+1 3).
+Proof.
+elim: fuel s => [|f IH] s sL s3 K_gt0 K8 sD flP; first by exfalso; lia.
+have quart (a : nat) : `2^ a.+2 %/ 4 = `2^ a.
+  by rewrite !e2Sn !addnn -!muln2 -mulnA [2 * 2]/= mulnK.
+have eight (a : nat) : `2^ a.+3 %/ 8 = `2^ a.
+  by rewrite !e2Sn !addnn -!muln2 -!mulnA [2 * (2 * 2)]/= mulnK.
+have e25 : `2^ 5 = 32 by [].
+have e26 : `2^ 6 = 64 by [].
+rewrite ladder1S.
+case: (boolP ((128 <= `2^ s) || (`2^ s == 32))) => [cond|cond]; last first.
+  by apply: dequiv_ladder2.
+have s5 : 5 <= s.
+  case/orP: cond => [h|/eqP h].
+    have e27 : `2^ 7 = 128 by [].
+    have h7 : `2^ 7 <= `2^ s by rewrite e27.
+    by move: h7; rewrite leq_e2n; lia.
+  have h5 : `2^ 5 <= `2^ s by rewrite h e25.
+  by move: h5; rewrite leq_e2n; lia.
+have [u sE] : exists u, s = u.+3.+2 by exists (s - 5); lia.
+move: sL sD cond; rewrite sE => sL sD cond.
+move: s3 s5 => _ _; move: sE => _.
+rewrite quart eight.
+rewrite dcascade_hiS; last by lia.
+rewrite [dcascade_hi n K u.+3.+2 3]dcascade_hiS; last by lia.
+rewrite [dcascade_hi n K u.+3.+1 3]dcascade_hiS; last by lia.
+rewrite !catA.
+rewrite pflat_cat1; last by apply: pflat_nomove; apply: nomv_stage.
+rewrite cren_cat.
+apply: dequiv_cat.
+  have -> : dlevel n K (`2^ u.+3.+2) = dlevel n K (`2^ u.+3 * 4).
+    by rewrite [`2^ u.+3.+2]e2Sn addnn [`2^ u.+3.+1]e2Sn addnn -!muln2 -mulnA.
+  have -> : dlevel n K (`2^ u.+3.+1) = dlevel n K (`2^ u.+3 * 2).
+    by rewrite [`2^ u.+3.+1]e2Sn addnn -muln2.
+  rewrite -catA.
+  apply: dequiv_stage_mrg8 => //.
+    by rewrite -[8]/(`2^ 3) dvdn_e2n.
+  by move: sD; rewrite -[8]/(`2^ 3) -e2nD addn3.
+case: u sL sD cond => [|[|u]] sL sD cond.
+- have -> : ladder1 n f fl (`2^ 2) = [::] by apply: ladder1_nil.
+  have -> : dcascade_hi n K 3 3 = [::] by [].
+  exact: dequiv_refl.
+- by move: cond; rewrite e26.
+apply: IH => //; first by lia.
+by apply: dvdn_trans sD; rewrite dvdn_e2n; lia.
+Qed.
 
 (* so the ladder, for any merge: half a row down to eight                    *)
 Lemma dequiv_ladder (K : nat) (fl : flips) : 0 < K -> 8 %| K -> dflP K fl ->
@@ -2336,9 +3121,18 @@ Lemma dequiv_ladder (K : nat) (fl : flips) : 0 < K -> 8 %| K -> dflP K fl ->
 Proof.
 move=> K_gt0 K8 flP.
 rewrite /ladder qE16.
+case: (leqP 5 k) => [k5|k4]; last first.
+  have kE : k = 4 by lia.
+  have -> : `2^ (k - 2) = 4 by rewrite kE.
+  have -> : ladder1 n n fl 4 = [::] by apply: ladder1_nil.
+  have -> : dcascade_hi n K k.-1 3 = [::] by rewrite kE.
+  exact: dequiv_refl.
 have -> : k.-1 = (k - 2).+1 by lia.
 apply: dequiv_ladder1 => //.
-by have := ltn_ne2n k; have : `2^ k <= n; [rewrite leq_e2n; lia | lia].
+- by have := ltn_ne2n k; have : `2^ k <= n; [rewrite leq_e2n; lia | lia].
+- by lia.
+have -> : (k - 2).+1 = k.-1 by lia.
+by rewrite -qE8.
 Qed.
 
 (* the merge of a row: the pass compares nothing, the ladder does it all      *)
@@ -2353,8 +3147,8 @@ rewrite cat0s.
 by apply: dequiv_ladder; rewrite ?row_gt0 ?dvdn_row //; exact: dflP_rfl4.
 Qed.
 
-(* WHAT IS LEFT: the pass of two, which compares a row apart -- it brings the *)
-(* two registers of every sixteen into matching lanes and compares there      *)
+(* the pass of two compares a row apart: it brings the two registers of every *)
+(* sixteen into matching lanes and compares there                             *)
 (* the comparisons a pass makes: the two registers of every sixteen           *)
 Lemma pflat_adj16 (fl : flips) :
   (pflat (adj16 n fl)).1
@@ -2364,6 +3158,22 @@ Lemma pflat_adj16 (fl : flips) :
                  | l <- iota 0 8]
             | t <- iota 0 (n %/ 16)].
 Proof. by rewrite /adj16 /vmm map_comp pflat_map_Vcmp. Qed.
+
+(* the same, renamed: what the batch compares, wire by wire, once a shuffle   *)
+(* has said where each lane is read                                           *)
+Lemma pflat_adj16_cren (s : cperm n) (fl : flips) :
+  cren s (pflat (adj16 n fl)).1
+  = flatten [seq [seq (if nth false fl (t * 16 + l)
+                       then (capp s (t * 16 + 8 + l), capp s (t * 16 + l))
+                       else (capp s (t * 16 + l), capp s (t * 16 + 8 + l)))
+                 | l <- iota 0 8]
+            | t <- iota 0 (n %/ 16)].
+Proof.
+rewrite pflat_adj16 cren_flatten -map_comp.
+congr flatten; apply/eq_map => t.
+rewrite /comp /cren -map_comp; apply/eq_map => l.
+by rewrite /comp; case: ifP.
+Qed.
 
 (* the pass of two, as one batch seen through one shuffle                    *)
 Lemma pflat_rev_pass2 (fl : flips) :
@@ -2376,13 +3186,291 @@ rewrite -[_ :: _ ++ _]cat1s pflat_cat /= pflat_cat.
 by rewrite ccomp_idl (pflat_nomove (nomv_adj16 _ _)) pflat_Vshuf1 cats0.
 Qed.
 
-(* WHAT IS LEFT: that batch, renamed, is the level a row apart              *)
+(* -------------------------------------------------------------------------- *)
+(*  The shuffles, as tables                                                   *)
+(* -------------------------------------------------------------------------- *)
+
+(* a shuffle of sixteen lanes reads position i from the place its table names *)
+Lemma bfun_tab16E (tb : seq nat) (p : perm_eq tb (iota 0 16)) (j : nat) :
+  bfun (k := 16) isT (tabf p) j = j %/ 16 * 16 + nth 0 tb (j %% 16).
+Proof. by []. Qed.
+
+Lemma capp_sh_perm (i : nat) : i < n ->
+  capp (sh_perm dvdn_e2n64) i = i %/ 16 * 16 + nth 0 tb_perm (i %% 16).
+Proof. by move=> iL; rewrite /sh_perm capp_btab. Qed.
+
+Lemma capp_sh_u64 (i : nat) : i < n ->
+  capp (sh_u64 dvdn_e2n64) i = i %/ 16 * 16 + nth 0 tb_u64 (i %% 16).
+Proof. by move=> iL; rewrite /sh_u64 capp_btab. Qed.
+
+Lemma n16E : n %/ 16 * 16 = n.
+Proof.
+have d16 : 16 %| n by apply: dvdn_trans dvdn_e2n64; apply/dvdnP; exists 4.
+by have [c cE] := dvdnP d16; rewrite cE mulnK.
+Qed.
+
+(* where a lane of a group of sixteen is                                      *)
+Lemma blk16 (t l : nat) : t < n %/ 16 -> l < 16 ->
+  [/\ t * 16 + l < n, (t * 16 + l) %/ 16 = t & (t * 16 + l) %% 16 = l].
+Proof.
+move=> tL lL; have qq := n16E; split; first by nia.
+- by rewrite divnMDl // divn_small ?addn0.
+by rewrite modnMDl modn_small.
+Qed.
+
+(* the pass of one shuffles twice before it compares, and again before it     *)
+(* compares the second time; here are the two tables that gives               *)
+Definition tb_pu : seq nat :=
+  [seq nth 0 tb_perm (nth 0 tb_u64 l) | l <- iota 0 16].
+
+Lemma tb_puE :
+  tb_pu = [:: 0; 1; 4; 5; 8; 9; 12; 13; 2; 3; 6; 7; 10; 11; 14; 15].
+Proof. by []. Qed.
+
+(* the second shuffle undoes the first, so the second batch is read exactly   *)
+(* where the pass of two reads its own                                        *)
+(* the same for the sixty-four lane shuffles, and the transpose read off its  *)
+(* table: the register a wire is in and the lane it is at change places       *)
+Lemma capp_sh_tr (i : nat) : i < n ->
+  capp (sh_tr dvdn_e2n64) i = i %/ 64 * 64 + nth 0 tb_tr (i %% 64).
+Proof. by move=> iL; rewrite /sh_tr capp_btab. Qed.
+
+Lemma nth_tb_tr (j : nat) : j < 64 -> nth 0 tb_tr j = j %% 8 * 8 + j %/ 8.
+Proof.
+by move=> jL; rewrite /tb_tr (nth_map 0) ?size_iota // nth_iota // add0n.
+Qed.
+
+Lemma tb_tr_invol (j : nat) : j < 64 -> nth 0 tb_tr (nth 0 tb_tr j) = j.
+Proof.
+have H0 : all (fun j => nth 0 tb_tr (nth 0 tb_tr j) == j) (iota 0 64) by [].
+by move=> jL; apply/eqP; apply: (allP H0); rewrite mem_iota.
+Qed.
+
+Lemma sh_trK (i : nat) : i < n ->
+  capp (sh_tr dvdn_e2n64) (capp (sh_tr dvdn_e2n64) i) = i.
+Proof.
+move=> iL.
+have d64 : 64 %| n := dvdn_e2n64.
+have [c cE] := dvdnP d64.
+have jL : i %% 64 < 64 by rewrite ltn_mod.
+have tL := nth_tab_lt tb_trP (i %% 64).
+rewrite capp_sh_tr // capp_sh_tr ?capp_lt //.
+  rewrite divnMDl // (divn_small tL) addn0 modnMDl (modn_small tL).
+  by rewrite tb_tr_invol // -divn_eq.
+have : i %/ 64 < c by rewrite ltn_divLR // -cE.
+by move: cE tL; nia.
+Qed.
+
+Lemma cinv_sh_tr (i : nat) : i < n ->
+  capp (cinv (sh_tr dvdn_e2n64)) i = capp (sh_tr dvdn_e2n64) i.
+Proof.
+move=> iL; apply: capp_cinvE => //; first by apply: capp_lt.
+by apply: sh_trK.
+Qed.
+
+Lemma n64E : n %/ 64 * 64 = n.
+Proof. by have [c cE] := dvdnP dvdn_e2n64; rewrite cE mulnK. Qed.
+
+Lemma blk64 (t j : nat) : t < n %/ 64 -> j < 64 ->
+  [/\ t * 64 + j < n, (t * 64 + j) %/ 64 = t & (t * 64 + j) %% 64 = j].
+Proof.
+move=> tL jL; have qq := n64E; split; first by nia.
+- by rewrite divnMDl // divn_small ?addn0.
+by rewrite modnMDl modn_small.
+Qed.
+
+Lemma sh_tr_wire (t a l : nat) : t < n %/ 64 -> a < 8 -> l < 8 ->
+  capp (sh_tr dvdn_e2n64) (t * 64 + a * 8 + l) = t * 64 + l * 8 + a.
+Proof.
+move=> tL aL lL.
+have jL : a * 8 + l < 64 by lia.
+have [L1 D1 M1] := blk64 tL jL.
+rewrite -addnA capp_sh_tr // -addnA D1 M1 nth_tb_tr //.
+by rewrite modnMDl (modn_small lL) divnMDl // (divn_small lL) addn0 addnA.
+Qed.
+
+Lemma tb_u64_lt (l : nat) : l < 16 -> nth 0 tb_u64 l < 16.
+Proof.
+have H : all (fun l => nth 0 tb_u64 l < 16) (iota 0 16) by [].
+by move=> lL; apply: (allP H); rewrite mem_iota.
+Qed.
+
+Lemma tb_u64_invol (l : nat) : l < 16 -> nth 0 tb_u64 (nth 0 tb_u64 l) = l.
+Proof.
+have H0 : all (fun l => nth 0 tb_u64 (nth 0 tb_u64 l) == l) (iota 0 16) by [].
+by move=> lL; apply/eqP; apply: (allP H0); rewrite mem_iota.
+Qed.
+
+
+(* the wires the pass of two starts from, in the order it lists them: the     *)
+(* lanes under four of every register, named where the shuffle reads them     *)
+Definition adjw : seq nat :=
+  flatten [seq [seq t * 16 + nth 0 tb_perm l | l <- iota 0 8]
+          | t <- iota 0 (n %/ 16)].
+
+(* the low lanes of a group of sixteen, and the pairing the shuffle makes     *)
+Lemma tb_perm_lo (l : nat) : l < 8 -> nth 0 tb_perm l %% 8 < 4.
+Proof.
+have H : all (fun l => nth 0 tb_perm l %% 8 < 4) (iota 0 8) by [].
+by move=> lL; apply: (allP H); rewrite mem_iota.
+Qed.
+
+Lemma tb_perm_hi (l : nat) : l < 8 ->
+  nth 0 tb_perm (8 + l) = nth 0 tb_perm l + 4.
+Proof.
+have H : all (fun l => nth 0 tb_perm (8 + l) == nth 0 tb_perm l + 4) (iota 0 8)
+  by [].
+by move=> lL; apply/eqP; apply: (allP H); rewrite mem_iota.
+Qed.
+
+Lemma tb_perm_lt (l : nat) : l < 16 -> nth 0 tb_perm l < 16.
+Proof.
+have H : all (fun l => nth 0 tb_perm l < 16) (iota 0 16) by [].
+by move=> lL; apply: (allP H); rewrite mem_iota.
+Qed.
+
+(* a comparison read through a renaming, whichever way round it is            *)
+Lemma pair_if (b : bool) (X Y : nat) (f : nat -> nat) :
+  (f (if b then (X, Y) else (Y, X)).1, f (if b then (X, Y) else (Y, X)).2)
+  = (if b then (f X, f Y) else (f Y, f X)).
+Proof. by case: b. Qed.
+
+(* the batch, renamed, comparison by comparison: through sh_perm it compares  *)
+(* lanes four apart, which cinv_adj4 sends a row apart, and the flips it      *)
+(* carries are the ones the merge asks for                                    *)
+Lemma pflat_adj16_sh (K : nat) (fl : flips) : dflP K fl ->
+  cren (cinv (avx2_layout dvdn_e2n64))
+       (cren (sh_perm dvdn_e2n64)
+             (pflat (adj16 n (fl_shuf 16 tb_perm fl))).1)
+  = [seq (if (K == n)
+             || odd (capp (cinv (avx2_layout dvdn_e2n64)) x %/ K)
+          then (capp (cinv (avx2_layout dvdn_e2n64)) x,
+                capp (cinv (avx2_layout dvdn_e2n64)) x + n %/ 8)
+          else (capp (cinv (avx2_layout dvdn_e2n64)) x + n %/ 8,
+                capp (cinv (avx2_layout dvdn_e2n64)) x))
+    | x <- adjw].
+Proof.
+move=> flP; have [flS flN] := flP.
+rewrite pflat_adj16_cren cren_flatten -map_comp /adjw map_flatten -map_comp.
+congr flatten; apply/eq_in_map => t; rewrite mem_iota add0n => /andP[_ tL].
+rewrite /comp /cren -!map_comp; apply/eq_in_map => l.
+rewrite mem_iota add0n => /andP[_ lL].
+have l16 : l < 16 by lia.
+have l816 : 8 + l < 16 by lia.
+have [L1 D1 M1] := blk16 tL l16.
+have [L2 D2 M2] := blk16 tL l816.
+have pL := tb_perm_lt l16.
+have [L3 D3 M3] := blk16 tL pL.
+rewrite /comp.
+have E8 : t * 16 + 8 + l = t * 16 + (8 + l) by rewrite addnA.
+rewrite E8 !capp_sh_perm // D1 M1 D2 M2 tb_perm_hi // addnA.
+rewrite pair_if.
+have Ep : capp (cinv (avx2_layout dvdn_e2n64)) (t * 16 + nth 0 tb_perm l + 4)
+        = capp (cinv (avx2_layout dvdn_e2n64)) (t * 16 + nth 0 tb_perm l)
+          + n %/ 8.
+  by rewrite cinv_adj4 // mod8_blk16 tb_perm_lo.
+rewrite Ep nth_fl_shuf ?flS // D1 M1 flN // /dfl.
+by case: ((K == n) || _).
+Qed.
+
+(* the pass starts from the lanes under four of every register                *)
+Lemma adjw_lane4 : perm_eq adjw [seq x <- iota 0 n | x %% 8 < 4].
+Proof.
+have -> : adjw = flatten [seq [seq t * 16 + c
+                              | c <- [seq nth 0 tb_perm l | l <- iota 0 8]]
+                         | t <- iota 0 (n %/ 16)].
+  by rewrite /adjw; congr flatten; apply/eq_map => t; rewrite -map_comp.
+apply: perm_block_offsets (dvdn16) _ _ => //.
+by move=> t c cL; rewrite mod8_blk16.
+Qed.
+
+(* the wires the level a row apart starts from --                             *)
+(* trc sends the lanes under four to the even rows                            *)
+(* which row a wire lands in: the one trc gives its lane                      *)
+Lemma cinv_row (x : nat) : x < n ->
+  capp (cinv (avx2_layout dvdn_e2n64)) x %/ (n %/ 8) = nth 0 trc (x %% 8).
+Proof.
+have qq := row8E; have qE := rowE; have q_gt0 := row_gt0.
+move=> xL.
+have rL : x %/ (n %/ 8) < 8 by rewrite ltn_divLR // mulnC qE.
+have bL : (x %% (n %/ 8)) %/ 8 < (n %/ 8) %/ 8.
+  by rewrite ltn_divLR // qq ltn_pmod.
+have tL := trc_lt rL.
+have H : 8 * ((x %% (n %/ 8)) %/ 8) + nth 0 trc (x %/ (n %/ 8)) < n %/ 8
+  by move: qq bL tL; nia.
+by rewrite capp_cinv_wire // divnMDl // (divn_small H) addn0.
+Qed.
+
+Lemma cinv_row2 (x : nat) : x < n ->
+  capp (cinv (avx2_layout dvdn_e2n64)) x %/ (n %/ 4) = nth 0 trc (x %% 8) %/ 2.
+Proof. by move=> xL; rewrite qE4 divnMA cinv_row. Qed.
+
+Lemma cinv_row4 (x : nat) : x < n ->
+  capp (cinv (avx2_layout dvdn_e2n64)) x %/ (n %/ 2) = nth 0 trc (x %% 8) %/ 4.
+Proof. by move=> xL; rewrite qE2 divnMA cinv_row. Qed.
+
+(* the lanes under four are the ones trc sends to an even row, and the lanes  *)
+(* under two of every four the ones it sends to an even pair of rows          *)
+Lemma trc_even (m : nat) : m < 8 -> odd (nth 0 trc m) = (4 <= m).
+Proof. by case: m => [|[|[|[|[|[|[|[|]]]]]]]]. Qed.
+
+Lemma trc_even2 (m : nat) : m < 8 -> odd (nth 0 trc m %/ 2) = (2 <= m %% 4).
+Proof. by case: m => [|[|[|[|[|[|[|[|]]]]]]]]. Qed.
+
+Lemma trc_even4 (m : nat) : m < 8 -> odd (nth 0 trc m %/ 4) = odd m.
+Proof. by case: m => [|[|[|[|[|[|[|[|]]]]]]]]. Qed.
+
+(* the layout may be read backwards                                          *)
+Lemma capp_layoutK (i : nat) : i < n ->
+  capp (cinv (avx2_layout dvdn_e2n64)) (capp (avx2_layout dvdn_e2n64) i) = i.
+Proof. by move=> iL; apply: capp_cinvE => //; apply: capp_lt. Qed.
+
+Lemma cinv_perm_lane4 :
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x
+          | x <- [seq x <- iota 0 n | x %% 8 < 4]]
+          [seq i <- iota 0 n | i %% (n %/ 8).*2 < n %/ 8].
+Proof.
+have q_gt0 := row_gt0.
+apply: uniq_perm; first 2 last.
+- move=> y; apply/idP/idP.
+    case/mapP => x; rewrite mem_filter mem_iota add0n.
+    move=> /andP[x4 /andP[_ xL]] ->.
+    rewrite mem_filter mem_iota add0n capp_lt // andbT.
+    by rewrite andbT cond_oddE // cinv_row // trc_even ?ltn_mod // -ltnNge.
+  rewrite mem_filter mem_iota add0n => /andP[yC /andP[_ yL]].
+  apply/mapP; exists (capp (avx2_layout dvdn_e2n64) y); last first.
+    by rewrite capp_layoutK.
+  rewrite mem_filter mem_iota add0n capp_lt // andbT.
+  have := cinv_row (capp_lt (avx2_layout dvdn_e2n64) yL).
+  rewrite capp_layoutK // => E.
+  move: yC; rewrite cond_oddE // E trc_even ?ltn_mod // -ltnNge.
+  by move=> ->; rewrite leq0n.
+- rewrite map_inj_in_uniq ?filter_uniq ?iota_uniq // => x y.
+  rewrite !mem_filter !mem_iota !add0n.
+  by move=> /andP[_ /andP[_ xL]] /andP[_ /andP[_ yL]]; apply: capp_inj.
+by rewrite filter_uniq ?iota_uniq.
+Qed.
+
+Lemma perm_adjw :
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- adjw]
+          [seq i <- iota 0 n | i %% (n %/ 8).*2 < n %/ 8].
+Proof.
+by apply: perm_trans cinv_perm_lane4; rewrite perm_map // adjw_lane4.
+Qed.
+
+(* so that batch, renamed, is the level a row apart                           *)
 Lemma merges_adj2 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (cren (sh_perm dvdn_e2n64)
                (pflat (adj16 n (fl_shuf 16 tb_perm (fl_tog (mrevP 2) rfl4)))).1))
            (dlevel n (n %/ 4) (n %/ 8)).
-Admitted.
+Proof.
+rewrite (pflat_adj16_sh (K := n %/ 4)); last exact: dflP_rfl2.
+apply: dequiv_level_gen; last exact: perm_adjw; first by rewrite row_gt0.
+have qE := rowE.
+have -> : (n %/ 8).*2 = n %/ 4 by rewrite qE4 -muln2.
+by apply/dvdnP; exists 4; rewrite qE4 -qE; lia.
+Qed.
 
 Lemma merges_pass2 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
@@ -2406,8 +3494,8 @@ apply: dequiv_ladder; last exact: dflP_rfl2.
 by rewrite qE4 dvdn_mulr ?dvdn_row.
 Qed.
 
-(* WHAT IS LEFT: the pass of one, which compares two rows apart and then a    *)
-(* row apart, through its two shuffles                                        *)
+(* the pass of one compares two rows apart and then a row apart, through its  *)
+(* two shuffles                                                               *)
 (* the pass of one, as two batches seen through its three shuffles            *)
 Lemma pflat_rev_pass1 (fl : flips) :
   (pflat (rev_pass dvdn_e2n64 fl 1).1).1
@@ -2430,7 +3518,276 @@ rewrite pflat_cat (pflat_nomove (nomv_adj16 _ _)) ccomp_idl.
 by rewrite !cren_id pflat_Vshuf1 cats0.
 Qed.
 
-(* WHAT IS LEFT: those two batches are the levels two rows and a row apart  *)
+(* the wires the pass of one starts from, in the order it lists them, and     *)
+(* where its shuffles read them: a whole batch two rows apart, then one a     *)
+(* row apart                                                                  *)
+Definition adjw0 : seq nat :=
+  flatten [seq [seq t * 16 + l | l <- iota 0 8] | t <- iota 0 (n %/ 16)].
+
+Definition adjw1a : seq nat :=
+  [seq capp (sh_perm dvdn_e2n64) (capp (sh_u64 dvdn_e2n64) x) | x <- adjw0].
+
+Definition adjw1b : seq nat :=
+  [seq capp (sh_perm dvdn_e2n64)
+       (capp (sh_u64 dvdn_e2n64) (capp (sh_u64 dvdn_e2n64) x)) | x <- adjw0].
+
+(* the pass of one reads its first batch through tb_pu                        *)
+Lemma adjw1aE : adjw1a
+  = flatten [seq [seq t * 16 + nth 0 tb_pu l | l <- iota 0 8]
+            | t <- iota 0 (n %/ 16)].
+Proof.
+rewrite /adjw1a /adjw0 map_flatten -map_comp.
+congr flatten; apply/eq_in_map => t; rewrite mem_iota add0n => /andP[_ tL].
+rewrite /comp -map_comp; apply/eq_in_map => l.
+rewrite mem_iota add0n => /andP[_ lL].
+have l16 : l < 16 by lia.
+have [L1 D1 M1] := blk16 tL l16.
+have u16 := tb_u64_lt l16.
+rewrite /comp capp_sh_u64 // D1 M1.
+have [L2 D2 M2] := blk16 tL u16.
+by rewrite capp_sh_perm // D2 M2 /tb_pu (nth_map 0) ?size_iota // nth_iota.
+Qed.
+
+(* and its second batch where the pass of two reads its own: the shuffle      *)
+(* between them is its own inverse                                            *)
+Lemma adjw1bE : adjw1b = adjw.
+Proof.
+rewrite /adjw1b /adjw0 /adjw map_flatten -map_comp.
+congr flatten; apply/eq_in_map => t; rewrite mem_iota add0n => /andP[_ tL].
+rewrite /comp -map_comp; apply/eq_in_map => l.
+rewrite mem_iota add0n => /andP[_ lL].
+have l16 : l < 16 by lia.
+have [L1 D1 M1] := blk16 tL l16.
+have u16 := tb_u64_lt l16.
+rewrite /comp [capp (sh_u64 dvdn_e2n64) (t * 16 + l)]capp_sh_u64 // D1 M1.
+have [L2 D2 M2] := blk16 tL u16.
+rewrite [capp (sh_u64 dvdn_e2n64) (t * 16 + _)]capp_sh_u64 // D2 M2.
+rewrite tb_u64_invol //.
+by rewrite capp_sh_perm // D1 M1.
+Qed.
+
+(* the offsets the pass of one reads its first batch at                      *)
+Lemma tb_pu_lo (l : nat) : l < 8 -> nth 0 tb_pu l %% 8 %% 4 < 2.
+Proof.
+have H : all (fun l => nth 0 tb_pu l %% 8 %% 4 < 2) (iota 0 8) by [].
+by move=> lL; apply: (allP H); rewrite mem_iota.
+Qed.
+
+Lemma tb_pu_hi (l : nat) : l < 8 -> nth 0 tb_pu (8 + l) = nth 0 tb_pu l + 2.
+Proof.
+have H : all (fun l => nth 0 tb_pu (8 + l) == nth 0 tb_pu l + 2) (iota 0 8)
+  by [].
+by move=> lL; apply/eqP; apply: (allP H); rewrite mem_iota.
+Qed.
+
+Lemma tb_pu_lt (l : nat) : l < 16 -> nth 0 tb_pu l < 16.
+Proof.
+have H : all (fun l => nth 0 tb_pu l < 16) (iota 0 16) by [].
+by move=> lL; apply: (allP H); rewrite mem_iota.
+Qed.
+
+(* the first batch, renamed: through tb_pu it compares lanes two apart, which *)
+(* cinv_adj2 sends two rows apart                                             *)
+Lemma pflat_adj1a (K : nat) (fl : flips) : dflP K fl ->
+  cren (cinv (avx2_layout dvdn_e2n64))
+    (cren (sh_perm dvdn_e2n64)
+      (cren (sh_u64 dvdn_e2n64)
+        (pflat (adj16 n (fl_shuf 16 tb_u64 (fl_shuf 16 tb_perm fl)))).1))
+  = [seq (if (K == n)
+             || odd (capp (cinv (avx2_layout dvdn_e2n64)) x %/ K)
+          then (capp (cinv (avx2_layout dvdn_e2n64)) x,
+                capp (cinv (avx2_layout dvdn_e2n64)) x + n %/ 4)
+          else (capp (cinv (avx2_layout dvdn_e2n64)) x + n %/ 4,
+                capp (cinv (avx2_layout dvdn_e2n64)) x))
+    | x <- adjw1a].
+Proof.
+move=> flP; have [flS flN] := flP.
+rewrite adjw1aE.
+rewrite pflat_adj16_cren !cren_flatten -!map_comp map_flatten -map_comp.
+congr flatten; apply/eq_in_map => t; rewrite mem_iota add0n => /andP[_ tL].
+rewrite /comp /cren -!map_comp; apply/eq_in_map => l.
+rewrite mem_iota add0n => /andP[_ lL].
+have l16 : l < 16 by lia.
+have l816 : 8 + l < 16 by lia.
+have [L1 D1 M1] := blk16 tL l16.
+have [L2 D2 M2] := blk16 tL l816.
+have u16 := tb_u64_lt l16.
+have [Lu Du Mu] := blk16 tL u16.
+have pL := tb_pu_lt l16.
+have [L3 D3 M3] := blk16 tL pL.
+rewrite /comp.
+have W (j : nat) : j < 16 ->
+    capp (sh_perm dvdn_e2n64) (capp (sh_u64 dvdn_e2n64) (t * 16 + j))
+    = t * 16 + nth 0 tb_pu j.
+  move=> jL.
+  have [Lj Dj Mj] := blk16 tL jL.
+  have uj := tb_u64_lt jL.
+  have [Lv Dv Mv] := blk16 tL uj.
+  rewrite capp_sh_u64 // Dj Mj capp_sh_perm // Dv Mv.
+  by rewrite /tb_pu (nth_map 0) ?size_iota // nth_iota.
+have Fl : nth false (fl_shuf 16 tb_u64 (fl_shuf 16 tb_perm fl)) (t * 16 + l)
+        = nth false fl (t * 16 + nth 0 tb_pu l).
+  rewrite nth_fl_shuf ?size_fl_shuf ?flS // D1 M1.
+  rewrite nth_fl_shuf ?flS // Du Mu.
+  by rewrite /tb_pu (nth_map 0) ?size_iota // nth_iota.
+have E8 : t * 16 + 8 + l = t * 16 + (8 + l) by rewrite addnA.
+rewrite !pair_if E8 !W // tb_pu_hi // addnA Fl flN // /dfl.
+have Ep : capp (cinv (avx2_layout dvdn_e2n64)) (t * 16 + nth 0 tb_pu l + 2)
+        = capp (cinv (avx2_layout dvdn_e2n64)) (t * 16 + nth 0 tb_pu l)
+          + n %/ 4.
+  by rewrite cinv_adj2 // mod8_blk16 tb_pu_lo.
+rewrite Ep.
+by case: ((K == n) || _).
+Qed.
+
+(* the first batch starts from the lanes trc keeps two apart                  *)
+Lemma adjw1a_lane2 : perm_eq adjw1a [seq x <- iota 0 n | x %% 8 %% 4 < 2].
+Proof.
+rewrite adjw1aE.
+have -> : flatten [seq [seq t * 16 + nth 0 tb_pu l | l <- iota 0 8]
+                  | t <- iota 0 (n %/ 16)]
+        = flatten [seq [seq t * 16 + c
+                       | c <- [seq nth 0 tb_pu l | l <- iota 0 8]]
+                  | t <- iota 0 (n %/ 16)].
+  by congr flatten; apply/eq_map => t; rewrite -map_comp.
+apply: perm_block_offsets (dvdn16) _ _ => //.
+by move=> t c cL; rewrite mod8_blk16.
+Qed.
+
+(* the wires the level two rows apart starts from *)
+Lemma cinv_perm_lane2 :
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x
+          | x <- [seq x <- iota 0 n | x %% 8 %% 4 < 2]]
+          [seq i <- iota 0 n | i %% (n %/ 4).*2 < n %/ 4].
+Proof.
+have q_gt0 : 0 < n %/ 4 by rewrite qE4 muln_gt0 row_gt0.
+apply: uniq_perm; first 2 last.
+- move=> y; apply/idP/idP.
+    case/mapP => x; rewrite mem_filter mem_iota add0n.
+    move=> /andP[x4 /andP[_ xL]] ->.
+    rewrite mem_filter mem_iota add0n capp_lt // andbT.
+    by rewrite andbT cond_oddE // cinv_row2 // trc_even2 ?ltn_mod // -ltnNge.
+  rewrite mem_filter mem_iota add0n => /andP[yC /andP[_ yL]].
+  apply/mapP; exists (capp (avx2_layout dvdn_e2n64) y); last first.
+    by rewrite capp_layoutK.
+  rewrite mem_filter mem_iota add0n capp_lt // andbT.
+  have := cinv_row2 (capp_lt (avx2_layout dvdn_e2n64) yL).
+  rewrite capp_layoutK // => E.
+  move: yC; rewrite cond_oddE // E trc_even2 ?ltn_mod // -ltnNge.
+  by move=> ->; rewrite leq0n.
+- rewrite map_inj_in_uniq ?filter_uniq ?iota_uniq // => x y.
+  rewrite !mem_filter !mem_iota !add0n.
+  by move=> /andP[_ /andP[_ xL]] /andP[_ /andP[_ yL]]; apply: capp_inj.
+by rewrite filter_uniq ?iota_uniq.
+Qed.
+
+(* and the even lanes the wires the level four rows apart starts from        *)
+Lemma cinv_perm_lane1 :
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x
+          | x <- [seq x <- iota 0 n | ~~ odd (x %% 8)]]
+          [seq i <- iota 0 n | i %% (n %/ 2).*2 < n %/ 2].
+Proof.
+have q_gt0 : 0 < n %/ 2 by rewrite qE2 muln_gt0 row_gt0.
+apply: uniq_perm; first 2 last.
+- move=> y; apply/idP/idP.
+    case/mapP => x; rewrite mem_filter mem_iota add0n.
+    move=> /andP[x4 /andP[_ xL]] ->.
+    rewrite mem_filter mem_iota add0n capp_lt // andbT.
+    by rewrite andbT cond_oddE // cinv_row4 // trc_even4 ?ltn_mod.
+  rewrite mem_filter mem_iota add0n => /andP[yC /andP[_ yL]].
+  apply/mapP; exists (capp (avx2_layout dvdn_e2n64) y); last first.
+    by rewrite capp_layoutK.
+  rewrite mem_filter mem_iota add0n capp_lt // andbT.
+  have := cinv_row4 (capp_lt (avx2_layout dvdn_e2n64) yL).
+  rewrite capp_layoutK // => E.
+  move: yC; rewrite cond_oddE // E trc_even4 ?ltn_mod //.
+  by move=> ->; rewrite leq0n.
+- rewrite map_inj_in_uniq ?filter_uniq ?iota_uniq // => x y.
+  rewrite !mem_filter !mem_iota !add0n.
+  by move=> /andP[_ /andP[_ xL]] /andP[_ /andP[_ yL]]; apply: capp_inj.
+by rewrite filter_uniq ?iota_uniq.
+Qed.
+
+Lemma perm_adjw1a :
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- adjw1a]
+          [seq i <- iota 0 n | i %% (n %/ 4).*2 < n %/ 4].
+Proof.
+by apply: perm_trans cinv_perm_lane2; rewrite perm_map // adjw1a_lane2.
+Qed.
+
+(* the second batch, renamed: the shuffle between the two batches is its own  *)
+(* inverse, so it is read where the pass of two reads its own                 *)
+Lemma pflat_adj1b (K : nat) (fl : flips) : dflP K fl ->
+  cren (cinv (avx2_layout dvdn_e2n64))
+    (cren (sh_perm dvdn_e2n64)
+      (cren (sh_u64 dvdn_e2n64)
+        (cren (sh_u64 dvdn_e2n64)
+          (pflat (adj16 n (fl_shuf 16 tb_u64
+                            (fl_shuf 16 tb_u64 (fl_shuf 16 tb_perm fl))))).1)))
+  = [seq (if (K == n)
+             || odd (capp (cinv (avx2_layout dvdn_e2n64)) x %/ K)
+          then (capp (cinv (avx2_layout dvdn_e2n64)) x,
+                capp (cinv (avx2_layout dvdn_e2n64)) x + n %/ 8)
+          else (capp (cinv (avx2_layout dvdn_e2n64)) x + n %/ 8,
+                capp (cinv (avx2_layout dvdn_e2n64)) x))
+    | x <- adjw1b].
+Proof.
+move=> flP; have [flS flN] := flP.
+rewrite adjw1bE.
+rewrite pflat_adj16_cren !cren_flatten -!map_comp.
+rewrite /adjw map_flatten -map_comp.
+congr flatten; apply/eq_in_map => t; rewrite mem_iota add0n => /andP[_ tL].
+rewrite /comp /cren -!map_comp; apply/eq_in_map => l.
+rewrite mem_iota add0n => /andP[_ lL].
+have l16 : l < 16 by lia.
+have l816 : 8 + l < 16 by lia.
+have [L1 D1 M1] := blk16 tL l16.
+have [L2 D2 M2] := blk16 tL l816.
+rewrite /comp.
+have u16 := tb_u64_lt l16.
+have [Lu Du Mu] := blk16 tL u16.
+have pL := tb_perm_lt l16.
+have [L3 D3 M3] := blk16 tL pL.
+have W (j : nat) : j < 16 ->
+    capp (sh_perm dvdn_e2n64)
+      (capp (sh_u64 dvdn_e2n64) (capp (sh_u64 dvdn_e2n64) (t * 16 + j)))
+    = t * 16 + nth 0 tb_perm j.
+  move=> jL.
+  have [Lj Dj Mj] := blk16 tL jL.
+  have uj := tb_u64_lt jL.
+  have [Lv Dv Mv] := blk16 tL uj.
+  rewrite [capp (sh_u64 dvdn_e2n64) (t * 16 + j)]capp_sh_u64 // Dj Mj.
+  rewrite [capp (sh_u64 dvdn_e2n64) (t * 16 + nth 0 tb_u64 j)]capp_sh_u64 //.
+  rewrite Dv Mv tb_u64_invol //.
+  by rewrite capp_sh_perm // Dj Mj.
+have Fl : nth false (fl_shuf 16 tb_u64
+                      (fl_shuf 16 tb_u64 (fl_shuf 16 tb_perm fl))) (t * 16 + l)
+        = nth false fl (t * 16 + nth 0 tb_perm l).
+  rewrite nth_fl_shuf ?size_fl_shuf ?flS // D1 M1.
+  rewrite nth_fl_shuf ?size_fl_shuf ?flS // Du Mu tb_u64_invol //.
+  by rewrite nth_fl_shuf ?flS // D1 M1.
+have E8 : t * 16 + 8 + l = t * 16 + (8 + l) by rewrite addnA.
+rewrite !pair_if E8 !W // tb_perm_hi // addnA Fl flN // /dfl.
+have Ep : capp (cinv (avx2_layout dvdn_e2n64)) (t * 16 + nth 0 tb_perm l + 4)
+        = capp (cinv (avx2_layout dvdn_e2n64)) (t * 16 + nth 0 tb_perm l)
+          + n %/ 8.
+  by rewrite cinv_adj4 // mod8_blk16 tb_perm_lo.
+rewrite Ep.
+by case: ((K == n) || _).
+Qed.
+
+(* the second batch starts from the lanes under four, as the pass of two does *)
+Lemma adjw1b_lane4 : perm_eq adjw1b [seq x <- iota 0 n | x %% 8 < 4].
+Proof. by rewrite adjw1bE; exact: adjw_lane4. Qed.
+
+Lemma perm_adjw1b :
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- adjw1b]
+          [seq i <- iota 0 n | i %% (n %/ 8).*2 < n %/ 8].
+Proof.
+by apply: perm_trans cinv_perm_lane4; rewrite perm_map // adjw1b_lane4.
+Qed.
+
+(* so those two batches are the levels two rows and a row apart               *)
 Lemma merges_adj1 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (cren (sh_perm dvdn_e2n64)
@@ -2443,7 +3800,21 @@ Lemma merges_adj1 :
                                    (fl_shuf 16 tb_perm
                                      (fl_tog (mrevP 1) rfl2)))))).1))))
            (dlevel n (n %/ 2) (n %/ 4) ++ dlevel n (n %/ 2) (n %/ 8)).
-Admitted.
+Proof.
+have qE := rowE.
+have flP : dflP (n %/ 2) (fl_tog (mrevP 1) rfl2) := dflP_rfl1.
+rewrite !cren_cat.
+apply: dequiv_cat.
+  rewrite (pflat_adj1a (K := n %/ 2)) //.
+  apply: dequiv_level_gen; last exact: perm_adjw1a.
+    by rewrite qE4b e2n_gt0.
+  have -> : (n %/ 4).*2 = n %/ 2 by rewrite qE2 qE4 -muln2 -mulnA.
+  by apply/dvdnP; exists 2; rewrite qE2 -qE; lia.
+rewrite (pflat_adj1b (K := n %/ 2)) //.
+apply: dequiv_level_gen; last exact: perm_adjw1b; first by rewrite row_gt0.
+have -> : (n %/ 8).*2 = n %/ 4 by rewrite qE4 -muln2.
+by apply/dvdnP; exists 4; rewrite qE4 -qE; lia.
+Qed.
 
 Lemma merges_pass1 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
@@ -2468,8 +3839,8 @@ apply: dequiv_ladder; last exact: dflP_rfl1.
 by rewrite qE2 dvdn_mulr ?dvdn_row.
 Qed.
 
-(* WHAT IS LEFT: the transpose sort, which does the three distances a row or  *)
-(* more apart by turning them into distances of eight and back                *)
+(* the transpose sort does the three distances a row or more apart by turning *)
+(* them into distances of eight and back                                      *)
 (* the transpose sort, as one batch of eight seen through its two transposes  *)
 Lemma pflat_tsort64 (fl : flips) :
   (pflat (tsort64 dvdn_e2n64 fl).1).1
@@ -2492,7 +3863,199 @@ rewrite pflat_cat (pflat_nomove Hf) ccomp_idl.
 by rewrite cren_id pflat_Vshuf1 cats0.
 Qed.
 
-(* WHAT IS LEFT: that batch, renamed, is the three levels of a row or more  *)
+(* one level as the program names it: the wires it starts from, renamed, with *)
+(* the orientation the merge asks for                                         *)
+Definition mklev (K q : nat) (P : seq nat) : seq (nat * nat) :=
+  [seq (if (K == n) || odd (capp (cinv (avx2_layout dvdn_e2n64)) x %/ K)
+        then (capp (cinv (avx2_layout dvdn_e2n64)) x,
+              capp (cinv (avx2_layout dvdn_e2n64)) x + q)
+        else (capp (cinv (avx2_layout dvdn_e2n64)) x + q,
+              capp (cinv (avx2_layout dvdn_e2n64)) x))
+  | x <- P].
+
+(* the wires the transpose sort's batch starts from, in the order it lists    *)
+(* them and where the two transposes read them: the registers listed in as'   *)
+(* of every group of sixty-four                                               *)
+Definition trw (as' : seq nat) : seq nat :=
+  flatten [seq flatten
+             [seq [seq capp (sh_trlo dvdn_e2n64)
+                         (capp (sh_trhi dvdn_e2n64) (t * 64 + a * 8 + l))
+                  | l <- iota 0 8]
+             | a <- as']
+          | t <- iota 0 (n %/ 64)].
+
+(* one group of sixty-four's worth of those wires                             *)
+Definition trwb (as' : seq nat) (t : nat) : seq nat :=
+  flatten [seq [seq capp (sh_trlo dvdn_e2n64)
+                      (capp (sh_trhi dvdn_e2n64) (t * 64 + a * 8 + l))
+               | l <- iota 0 8]
+          | a <- as'].
+
+Lemma trwE2 (as' : seq nat) :
+  trw as' = flatten [seq trwb as' t | t <- iota 0 (n %/ 64)].
+Proof. by []. Qed.
+
+(* WHAT IS LEFT: the batch, renamed, comparison by comparison, group by      *)
+(* group: its three register distances, eight lanes apart inside a group of  *)
+(* sixty-four, are four rows, two rows and one row apart                     *)
+Lemma pflat_tr64_shB :
+  cren (cinv (avx2_layout dvdn_e2n64))
+    (cren (sh_trlo dvdn_e2n64)
+      (cren (sh_trhi dvdn_e2n64)
+        (pflat (flatten
+          [seq vnet n (fl_shuf 64 tb_trhi
+                        (fl_tog t64P (fl_shuf 64 tb_trlo
+                           (avx2_rev dvdn_e2n64).2)))
+                    (t * 64) 8 mrg8r
+          | t <- iota 0 (n %/ 64)])).1))
+  = flatten [seq mklev n (n %/ 2) (trwb [:: 0; 2; 4; 6] t)
+                 ++ (mklev n (n %/ 4) (trwb [:: 0; 1; 4; 5] t)
+                     ++ mklev n (n %/ 8) (trwb [:: 0; 1; 2; 3] t))
+            | t <- iota 0 (n %/ 64)].
+Admitted.
+
+(* WHAT IS LEFT: and the program takes them group by group where the         *)
+(* schedule takes them distance by distance -- groups of sixty-four share no *)
+(* wire, so the order costs nothing                                          *)
+Lemma dequiv_tr64_reorder :
+  dequiv n (flatten [seq mklev n (n %/ 2) (trwb [:: 0; 2; 4; 6] t)
+                        ++ (mklev n (n %/ 4) (trwb [:: 0; 1; 4; 5] t)
+                            ++ mklev n (n %/ 8) (trwb [:: 0; 1; 2; 3] t))
+                   | t <- iota 0 (n %/ 64)])
+           (mklev n (n %/ 2) (trw [:: 0; 2; 4; 6])
+            ++ mklev n (n %/ 4) (trw [:: 0; 1; 4; 5])
+            ++ mklev n (n %/ 8) (trw [:: 0; 1; 2; 3])).
+Admitted.
+
+(* WHAT IS LEFT: the two transposes cancel against the layout.  The layout is *)
+(* sh_out (avx2_layoutE) and sh_trs_id says trlo o trhi o tr is the identity, *)
+(* so trlo o trhi is the inverse of tr, and reading a wire of the transpose   *)
+(* sort in the final naming is reading it through the inverse of tr o out --  *)
+(* a table of sixty-four, which is what the three lemmas below need.          *)
+Lemma cinv_layout_tr (x : nat) : x < n ->
+  capp (cinv (avx2_layout dvdn_e2n64))
+       (capp (sh_trlo dvdn_e2n64) (capp (sh_trhi dvdn_e2n64) x))
+  = capp (cinv (ccomp (sh_tr dvdn_e2n64) (sh_out dvdn_e2n64))) x.
+Proof.
+move=> xL.
+set S := ccomp (sh_tr dvdn_e2n64) (sh_out dvdn_e2n64).
+set z := capp (cinv S) x.
+have zL : z < n by apply: capp_lt.
+have E1 : capp S z = x by rewrite /z -cappM // ccomp_inv capp_id.
+have E2 : capp (sh_tr dvdn_e2n64) (capp (sh_out dvdn_e2n64) z) = x
+  by rewrite -cappM.
+apply: capp_cinvE => //.
+- by apply: capp_lt; apply: capp_lt.
+rewrite avx2_layoutE -E2.
+have := sh_trs_id.
+move=> /(congr1 (fun s => capp s (capp (sh_out dvdn_e2n64) z))).
+by rewrite capp_id !cappM ?capp_lt // => ->.
+Qed.
+
+(* so the two transposes the program performs are, in the final naming, the   *)
+(* single transpose sh_tr                                                     *)
+Lemma cinv_layout_trE (x : nat) : x < n ->
+  capp (cinv (avx2_layout dvdn_e2n64))
+       (capp (sh_trlo dvdn_e2n64) (capp (sh_trhi dvdn_e2n64) x))
+  = capp (cinv (avx2_layout dvdn_e2n64)) (capp (sh_tr dvdn_e2n64) x).
+Proof.
+move=> xL.
+rewrite cinv_layout_tr //.
+apply: capp_cinvE => //; first by apply: capp_lt; apply: capp_lt.
+rewrite avx2_layoutE.
+set S := ccomp (sh_tr dvdn_e2n64) (sh_out dvdn_e2n64).
+have zL : capp (cinv S) x < n by apply: capp_lt.
+rewrite /S cappM; last by apply: capp_lt; apply: capp_lt.
+have -> : capp (sh_out dvdn_e2n64)
+            (capp (cinv (sh_out dvdn_e2n64)) (capp (sh_tr dvdn_e2n64) x))
+        = capp (sh_tr dvdn_e2n64) x.
+  by rewrite -cappM ?capp_lt // ccomp_inv capp_id.
+by apply: sh_trK.
+Qed.
+
+(* so the wires of the transpose sort, in the final naming, are the wires of  *)
+(* its group of sixty-four with the register and the lane changed over        *)
+Lemma trwE (as' : seq nat) : all (fun a => a < 8) as' ->
+  [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- trw as']
+  = flatten [seq flatten
+       [seq [seq capp (cinv (avx2_layout dvdn_e2n64)) (t * 64 + l * 8 + a)
+            | l <- iota 0 8]
+       | a <- as']
+     | t <- iota 0 (n %/ 64)].
+Proof.
+move=> asB.
+rewrite /trw map_flatten -map_comp.
+congr flatten; apply/eq_in_map => t; rewrite mem_iota add0n => /andP[_ tL].
+rewrite /comp map_flatten -map_comp.
+congr flatten; apply/eq_in_map => a aI.
+have aL : a < 8 by apply: (allP asB).
+rewrite /comp -map_comp; apply/eq_in_map => l.
+rewrite mem_iota add0n => /andP[_ lL].
+have jL : a * 8 + l < 64 by lia.
+have [L1 _ _] := blk64 tL jL.
+rewrite /comp cinv_layout_trE; last by rewrite -addnA.
+by rewrite sh_tr_wire.
+Qed.
+
+(* the offsets a group of sixty-four is read at, register by register         *)
+Definition trcs (as' : seq nat) : seq nat :=
+  flatten [seq [seq l * 8 + a | l <- iota 0 8] | a <- as'].
+
+Lemma mod8_blk64 (t c : nat) : (t * 64 + c) %% 8 = c %% 8.
+Proof.
+have -> : t * 64 + c = (t * 8) * 8 + c by lia.
+by rewrite modnMDl.
+Qed.
+
+Lemma trwW (as' : seq nat) : all (fun a => a < 8) as' ->
+  [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- trw as']
+  = [seq capp (cinv (avx2_layout dvdn_e2n64)) x
+    | x <- flatten [seq [seq t * 64 + c | c <- trcs as']
+                   | t <- iota 0 (n %/ 64)]].
+Proof.
+move=> asB; rewrite trwE // map_flatten -map_comp.
+congr flatten; apply/eq_map => t.
+rewrite /comp /trcs map_flatten -!map_comp.
+rewrite map_flatten -map_comp; congr flatten; apply/eq_map => a.
+rewrite /comp -!map_comp; apply/eq_map => l.
+by rewrite /comp addnA.
+Qed.
+
+(* so each of the three sets of wires is the one its level starts from        *)
+Lemma perm_trwA :
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- trw [:: 0; 2; 4; 6]]
+          [seq i <- iota 0 n | i %% (n %/ 2).*2 < n %/ 2].
+Proof.
+rewrite trwW //.
+apply: perm_trans cinv_perm_lane1.
+rewrite perm_map //.
+apply: perm_block_offsets dvdn_e2n64 _ _ => //.
+by move=> t c cL; rewrite mod8_blk64.
+Qed.
+
+Lemma perm_trwB :
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- trw [:: 0; 1; 4; 5]]
+          [seq i <- iota 0 n | i %% (n %/ 4).*2 < n %/ 4].
+Proof.
+rewrite trwW //.
+apply: perm_trans cinv_perm_lane2.
+rewrite perm_map //.
+apply: perm_block_offsets dvdn_e2n64 _ _ => //.
+by move=> t c cL; rewrite mod8_blk64.
+Qed.
+
+Lemma perm_trwC :
+  perm_eq [seq capp (cinv (avx2_layout dvdn_e2n64)) x | x <- trw [:: 0; 1; 2; 3]]
+          [seq i <- iota 0 n | i %% (n %/ 8).*2 < n %/ 8].
+Proof.
+rewrite trwW //.
+apply: perm_trans cinv_perm_lane4.
+rewrite perm_map //.
+apply: perm_block_offsets dvdn_e2n64 _ _ => //.
+by move=> t c cL; rewrite mod8_blk64.
+Qed.
+
+(* so that batch, renamed, is the three levels of a row or more               *)
 Lemma merges_tr64 :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
              (cren (sh_trlo dvdn_e2n64)
@@ -2504,7 +4067,24 @@ Lemma merges_tr64 :
                              (t * 64) 8 mrg8r
                    | t <- iota 0 (n %/ 64)])).1)))
            (dlevel n n (n %/ 2) ++ dlevel n n (n %/ 4) ++ dlevel n n (n %/ 8)).
-Admitted.
+Proof.
+have qE := rowE.
+rewrite pflat_tr64_shB.
+apply: dequiv_trans dequiv_tr64_reorder _.
+apply: dequiv_cat.
+  rewrite /mklev; apply: dequiv_level_gen; last exact: perm_trwA.
+    by rewrite qE2b e2n_gt0.
+  by have -> : (n %/ 2).*2 = n by rewrite qE2 -muln2 -qE; lia.
+apply: dequiv_cat.
+  rewrite /mklev; apply: dequiv_level_gen; last exact: perm_trwB.
+    by rewrite qE4b e2n_gt0.
+  have -> : (n %/ 4).*2 = n %/ 2 by rewrite qE2 qE4 -muln2 -mulnA.
+  by apply/dvdnP; exists 2; rewrite qE2 -qE; lia.
+rewrite /mklev; apply: dequiv_level_gen; last exact: perm_trwC.
+  by rewrite row_gt0.
+have -> : (n %/ 8).*2 = n %/ 4 by rewrite qE4 -muln2.
+by apply/dvdnP; exists 4; rewrite qE4 -qE; lia.
+Qed.
 
 Lemma merges_tr :
   dequiv n (cren (cinv (avx2_layout dvdn_e2n64))
