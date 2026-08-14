@@ -3251,9 +3251,36 @@ Definition adjw : seq nat :=
   flatten [seq [seq t * 16 + nth 0 tb_perm l | l <- iota 0 8]
           | t <- iota 0 (n %/ 16)].
 
-(* WHAT IS LEFT: the batch, renamed, comparison by comparison.  Through       *)
-(* sh_perm it compares lanes four apart, which cinv_lane_shift sends a row    *)
-(* apart, and the flips it carries are the ones the merge asks for            *)
+(* the low lanes of a group of sixteen, and the pairing the shuffle makes     *)
+Lemma tb_perm_lo (l : nat) : l < 8 -> nth 0 tb_perm l %% 8 < 4.
+Proof.
+have H : all (fun l => nth 0 tb_perm l %% 8 < 4) (iota 0 8) by [].
+by move=> lL; apply: (allP H); rewrite mem_iota.
+Qed.
+
+Lemma tb_perm_hi (l : nat) : l < 8 ->
+  nth 0 tb_perm (8 + l) = nth 0 tb_perm l + 4.
+Proof.
+have H : all (fun l => nth 0 tb_perm (8 + l) == nth 0 tb_perm l + 4) (iota 0 8)
+  by [].
+by move=> lL; apply/eqP; apply: (allP H); rewrite mem_iota.
+Qed.
+
+Lemma tb_perm_lt (l : nat) : l < 16 -> nth 0 tb_perm l < 16.
+Proof.
+have H : all (fun l => nth 0 tb_perm l < 16) (iota 0 16) by [].
+by move=> lL; apply: (allP H); rewrite mem_iota.
+Qed.
+
+(* a comparison read through a renaming, whichever way round it is            *)
+Lemma pair_if (b : bool) (X Y : nat) (f : nat -> nat) :
+  (f (if b then (X, Y) else (Y, X)).1, f (if b then (X, Y) else (Y, X)).2)
+  = (if b then (f X, f Y) else (f Y, f X)).
+Proof. by case: b. Qed.
+
+(* the batch, renamed, comparison by comparison: through sh_perm it compares  *)
+(* lanes four apart, which cinv_adj4 sends a row apart, and the flips it      *)
+(* carries are the ones the merge asks for                                    *)
 Lemma pflat_adj16_sh (K : nat) (fl : flips) : dflP K fl ->
   cren (cinv (avx2_layout dvdn_e2n64))
        (cren (sh_perm dvdn_e2n64)
@@ -3265,7 +3292,29 @@ Lemma pflat_adj16_sh (K : nat) (fl : flips) : dflP K fl ->
           else (capp (cinv (avx2_layout dvdn_e2n64)) x + n %/ 8,
                 capp (cinv (avx2_layout dvdn_e2n64)) x))
     | x <- adjw].
-Admitted.
+Proof.
+move=> flP; have [flS flN] := flP.
+rewrite pflat_adj16_cren cren_flatten -map_comp /adjw map_flatten -map_comp.
+congr flatten; apply/eq_in_map => t; rewrite mem_iota add0n => /andP[_ tL].
+rewrite /comp /cren -!map_comp; apply/eq_in_map => l.
+rewrite mem_iota add0n => /andP[_ lL].
+have l16 : l < 16 by lia.
+have l816 : 8 + l < 16 by lia.
+have [L1 D1 M1] := blk16 tL l16.
+have [L2 D2 M2] := blk16 tL l816.
+have pL := tb_perm_lt l16.
+have [L3 D3 M3] := blk16 tL pL.
+rewrite /comp.
+have E8 : t * 16 + 8 + l = t * 16 + (8 + l) by rewrite addnA.
+rewrite E8 !capp_sh_perm // D1 M1 D2 M2 tb_perm_hi // addnA.
+rewrite pair_if.
+have Ep : capp (cinv (avx2_layout dvdn_e2n64)) (t * 16 + nth 0 tb_perm l + 4)
+        = capp (cinv (avx2_layout dvdn_e2n64)) (t * 16 + nth 0 tb_perm l)
+          + n %/ 8.
+  by rewrite cinv_adj4 // mod8_blk16 tb_perm_lo.
+rewrite Ep nth_fl_shuf ?flS // D1 M1 flN // /dfl.
+by case: ((K == n) || _).
+Qed.
 
 (* the pass starts from the lanes under four of every register                *)
 Lemma adjw_lane4 : perm_eq adjw [seq x <- iota 0 n | x %% 8 < 4].
