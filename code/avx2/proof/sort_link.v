@@ -3827,10 +3827,21 @@ Definition trw (as' : seq nat) : seq nat :=
              | a <- as']
           | t <- iota 0 (n %/ 64)].
 
-(* WHAT IS LEFT: the batch, renamed, comparison by comparison: its three      *)
-(* register distances, eight lanes apart inside a group of sixty-four, are    *)
-(* four rows, two rows and one row apart                                      *)
-Lemma pflat_tr64_sh :
+(* one group of sixty-four's worth of those wires                             *)
+Definition trwb (as' : seq nat) (t : nat) : seq nat :=
+  flatten [seq [seq capp (sh_trlo dvdn_e2n64)
+                      (capp (sh_trhi dvdn_e2n64) (t * 64 + a * 8 + l))
+               | l <- iota 0 8]
+          | a <- as'].
+
+Lemma trwE2 (as' : seq nat) :
+  trw as' = flatten [seq trwb as' t | t <- iota 0 (n %/ 64)].
+Proof. by []. Qed.
+
+(* WHAT IS LEFT: the batch, renamed, comparison by comparison, group by      *)
+(* group: its three register distances, eight lanes apart inside a group of  *)
+(* sixty-four, are four rows, two rows and one row apart                     *)
+Lemma pflat_tr64_shB :
   cren (cinv (avx2_layout dvdn_e2n64))
     (cren (sh_trlo dvdn_e2n64)
       (cren (sh_trhi dvdn_e2n64)
@@ -3840,9 +3851,23 @@ Lemma pflat_tr64_sh :
                            (avx2_rev dvdn_e2n64).2)))
                     (t * 64) 8 mrg8r
           | t <- iota 0 (n %/ 64)])).1))
-  = mklev n (n %/ 2) (trw [:: 0; 2; 4; 6])
-    ++ mklev n (n %/ 4) (trw [:: 0; 1; 4; 5])
-    ++ mklev n (n %/ 8) (trw [:: 0; 1; 2; 3]).
+  = flatten [seq mklev n (n %/ 2) (trwb [:: 0; 2; 4; 6] t)
+                 ++ (mklev n (n %/ 4) (trwb [:: 0; 1; 4; 5] t)
+                     ++ mklev n (n %/ 8) (trwb [:: 0; 1; 2; 3] t))
+            | t <- iota 0 (n %/ 64)].
+Admitted.
+
+(* WHAT IS LEFT: and the program takes them group by group where the         *)
+(* schedule takes them distance by distance -- groups of sixty-four share no *)
+(* wire, so the order costs nothing                                          *)
+Lemma dequiv_tr64_reorder :
+  dequiv n (flatten [seq mklev n (n %/ 2) (trwb [:: 0; 2; 4; 6] t)
+                        ++ (mklev n (n %/ 4) (trwb [:: 0; 1; 4; 5] t)
+                            ++ mklev n (n %/ 8) (trwb [:: 0; 1; 2; 3] t))
+                   | t <- iota 0 (n %/ 64)])
+           (mklev n (n %/ 2) (trw [:: 0; 2; 4; 6])
+            ++ mklev n (n %/ 4) (trw [:: 0; 1; 4; 5])
+            ++ mklev n (n %/ 8) (trw [:: 0; 1; 2; 3])).
 Admitted.
 
 (* WHAT IS LEFT: the two transposes cancel against the layout.  The layout is *)
@@ -3987,7 +4012,8 @@ Lemma merges_tr64 :
            (dlevel n n (n %/ 2) ++ dlevel n n (n %/ 4) ++ dlevel n n (n %/ 8)).
 Proof.
 have qE := rowE.
-rewrite pflat_tr64_sh.
+rewrite pflat_tr64_shB.
+apply: dequiv_trans dequiv_tr64_reorder _.
 apply: dequiv_cat.
   rewrite /mklev; apply: dequiv_level_gen; last exact: perm_trwA.
     by rewrite qE2b e2n_gt0.
