@@ -2191,6 +2191,23 @@ rewrite trc_lane2 // mulnDl in H.
 by move: H; rewrite qE4; lia.
 Qed.
 
+(* one lane on is four rows on, for the lanes trc keeps four apart            *)
+Lemma trc_lane1 (m : nat) : m < 8 -> ~~ odd m ->
+  nth 0 trc m.+1 = nth 0 trc m + 4.
+Proof. by case: m => [|[|[|[|[|[|[|[|]]]]]]]]. Qed.
+
+Lemma cinv_adj1 (x : nat) : x < n -> ~~ odd (x %% 8) ->
+  capp (cinv (avx2_layout dvdn_e2n64)) (x + 1)
+  = capp (cinv (avx2_layout dvdn_e2n64)) x + n %/ 2.
+Proof.
+move=> xL x2.
+have m8 : x %% 8 < 8 by rewrite ltn_mod.
+have hL : x %% 8 + 1 < 8 by case: (x %% 8) x2 m8 => [|[|[|[|[|[|[|[|]]]]]]]].
+have H := cinv_lane_shift xL hL.
+rewrite [x %% 8 + 1]addn1 trc_lane1 // mulnDl in H.
+by move: H; rewrite qE2; lia.
+Qed.
+
 (* whatever order a list of wires is given in, if renaming it gives exactly   *)
 (* the wires a level starts from then the comparisons it names ARE that       *)
 (* level: they share no wire, so the order costs nothing, and the flips give  *)
@@ -4150,19 +4167,6 @@ Lemma pflat_tr64_shB :
             | t <- iota 0 (n %/ 64)].
 Admitted.
 
-(* WHAT IS LEFT: and the program takes them group by group where the         *)
-(* schedule takes them distance by distance -- groups of sixty-four share no *)
-(* wire, so the order costs nothing                                          *)
-Lemma dequiv_tr64_reorder :
-  dequiv n (flatten [seq mklev n (n %/ 2) (trwb [:: 0; 2; 4; 6] t)
-                        ++ (mklev n (n %/ 4) (trwb [:: 0; 1; 4; 5] t)
-                            ++ mklev n (n %/ 8) (trwb [:: 0; 1; 2; 3] t))
-                   | t <- iota 0 (n %/ 64)])
-           (mklev n (n %/ 2) (trw [:: 0; 2; 4; 6])
-            ++ mklev n (n %/ 4) (trw [:: 0; 1; 4; 5])
-            ++ mklev n (n %/ 8) (trw [:: 0; 1; 2; 3])).
-Admitted.
-
 (* WHAT IS LEFT: the two transposes cancel against the layout.  The layout is *)
 (* sh_out (avx2_layoutE) and sh_trs_id says trlo o trhi o tr is the identity, *)
 (* so trlo o trhi is the inverse of tr, and reading a wire of the transpose   *)
@@ -4289,6 +4293,130 @@ apply: perm_trans cinv_perm_lane4.
 rewrite perm_map //.
 apply: perm_block_offsets dvdn_e2n64 _ _ => //.
 by move=> t c cL; rewrite mod8_blk64.
+Qed.
+
+Lemma capp_cinvK (s : cperm n) (z : nat) :
+  z < n -> capp s (capp (cinv s) z) = z.
+Proof. by move=> zL; rewrite -cappM ?capp_lt // ccomp_inv capp_id. Qed.
+
+(* the group of sixty-four a wire comes from, read off its final name         *)
+Definition trgrp (y : nat) : nat := capp (avx2_layout dvdn_e2n64) y %/ 64.
+
+Lemma trgrp_cinv (t j : nat) : t < n %/ 64 -> j < 64 ->
+  trgrp (capp (cinv (avx2_layout dvdn_e2n64)) (t * 64 + j)) = t.
+Proof.
+move=> tL jL; have [L1 D1 _] := blk64 tL jL.
+by rewrite /trgrp capp_cinvK.
+Qed.
+
+(* the levels the transpose sort makes are levels of the whole array, so the  *)
+(* orientation the merge asks for is the one the wire already has             *)
+Lemma mklev_n (q : nat) (P : seq nat) :
+  mklev n q P = [seq (capp (cinv (avx2_layout dvdn_e2n64)) x,
+                      capp (cinv (avx2_layout dvdn_e2n64)) x + q) | x <- P].
+Proof. by rewrite /mklev; apply/eq_map => x; rewrite eqxx. Qed.
+
+(* every comparison the batch of one group of sixty-four makes has both its   *)
+(* wires in that group: the batch compares registers d apart, and d lanes on  *)
+(* inside a register is the distance the level asks for                       *)
+Lemma mklev_trwb_colour (as' : seq nat) (t d q : nat) :
+  t < n %/ 64 -> all (fun a => a < 8) as' ->
+  all (fun a => a + d < 8) as' ->
+  (forall z, z < n -> z %% 8 \in as' ->
+     capp (cinv (avx2_layout dvdn_e2n64)) (z + d)
+     = capp (cinv (avx2_layout dvdn_e2n64)) z + q) ->
+  all (fun ab => [&& bnd n ab, trgrp ab.2 == trgrp ab.1 & trgrp ab.1 == t])
+      (mklev n q (trwb as' t)).
+Proof.
+move=> tL asB asD Hd.
+rewrite mklev_n; apply/allP => ab /mapP[x].
+rewrite /trwb => /allpairsP[[a l] []] aI.
+rewrite mem_iota add0n => /andP[_ lL] -> ->.
+have aL : a < 8 by apply: (allP asB).
+have adL : a + d < 8 by apply: (allP asD).
+move: aI lL; rewrite /fst /snd => aI lL.
+have jL : a * 8 + l < 64 by lia.
+have [L1 _ _] := blk64 tL jL.
+have xE : capp (cinv (avx2_layout dvdn_e2n64))
+            (capp (sh_trlo dvdn_e2n64) (capp (sh_trhi dvdn_e2n64)
+               (t * 64 + a * 8 + l)))
+        = capp (cinv (avx2_layout dvdn_e2n64)) (t * 64 + l * 8 + a).
+  by rewrite cinv_layout_trE ?sh_tr_wire // -addnA.
+have jL2 : l * 8 + a < 64 by lia.
+have [L2 _ _] := blk64 tL jL2.
+have zM : (t * 64 + l * 8 + a) %% 8 = a
+  by rewrite -addnA mod8_blk64 modnMDl (modn_small aL).
+have zdE : t * 64 + l * 8 + a + d = t * 64 + (l * 8 + (a + d))
+  by rewrite !addnA.
+have jL3 : l * 8 + (a + d) < 64 by lia.
+have [L3 _ _] := blk64 tL jL3.
+have Hz : capp (cinv (avx2_layout dvdn_e2n64)) (t * 64 + l * 8 + a + d)
+        = capp (cinv (avx2_layout dvdn_e2n64)) (t * 64 + l * 8 + a) + q.
+  by apply: Hd; rewrite ?zM // -addnA.
+rewrite xE -Hz zdE.
+rewrite -[X in trgrp (capp _ X) == t]addnA !trgrp_cinv // !eqxx /bnd /fst /snd.
+rewrite -[t * 64 + l * 8 + a]addnA trgrp_cinv // eqxx.
+by rewrite !capp_lt.
+Qed.
+
+(* three parts read block by block, or block after block part by part         *)
+Lemma dequiv_flatten_swap3 (w : nat -> nat) (A B C : nat -> seq (nat * nat))
+    (m : nat) :
+  (forall t, t < m ->
+     all (fun ab => [&& bnd n ab, w ab.2 == w ab.1 & w ab.1 == t]) (A t)) ->
+  (forall t, t < m ->
+     all (fun ab => [&& bnd n ab, w ab.2 == w ab.1 & w ab.1 == t]) (B t)) ->
+  (forall t, t < m ->
+     all (fun ab => [&& bnd n ab, w ab.2 == w ab.1 & w ab.1 == t]) (C t)) ->
+  dequiv n (flatten [seq A t ++ (B t ++ C t) | t <- iota 0 m])
+           (flatten [seq A t | t <- iota 0 m]
+            ++ (flatten [seq B t | t <- iota 0 m]
+                ++ flatten [seq C t | t <- iota 0 m])).
+Proof.
+move=> HA HB HC.
+pose F (j t : nat) := match j with 0 => A t | 1 => B t | _ => C t end.
+have Hall (j t : nat) : j < 3 -> t < m ->
+    all (fun ab => [&& bnd n ab, w ab.2 == w ab.1 & w ab.1 == t]) (F j t).
+  by move=> jL tL; case: j jL => [|[|[|j]]] //= _; [apply: HA|apply: HB|apply: HC].
+have E1 (t : nat) : A t ++ (B t ++ C t) = flatten [seq F j t | j <- iota 0 3]
+  by rewrite /F /= cats0.
+have E2 : flatten [seq A t | t <- iota 0 m]
+          ++ (flatten [seq B t | t <- iota 0 m]
+              ++ flatten [seq C t | t <- iota 0 m])
+        = flatten [seq flatten [seq F j t | t <- iota 0 m] | j <- iota 0 3]
+  by rewrite /F /= cats0.
+rewrite (eq_map E1) E2.
+apply: (@dequiv_flatten_swap w F m 3) => j t jL tL.
+  by apply/allP => ab abI; have /and3P[H1 _ _] := allP (Hall _ _ jL tL) _ abI.
+by apply/allP => ab abI; have /and3P[_ H2 H3] := allP (Hall _ _ jL tL) _ abI;
+   rewrite H2 H3.
+Qed.
+
+Lemma mklev_trw (q : nat) (as' : seq nat) :
+  mklev n q (trw as')
+  = flatten [seq mklev n q (trwb as' t) | t <- iota 0 (n %/ 64)].
+Proof. by rewrite trwE2 /mklev map_flatten -map_comp. Qed.
+
+(* and the program takes them group by group where the schedule takes them    *)
+(* distance by distance -- groups of sixty-four share no wire, so the order   *)
+(* costs nothing                                                              *)
+Lemma dequiv_tr64_reorder :
+  dequiv n (flatten [seq mklev n (n %/ 2) (trwb [:: 0; 2; 4; 6] t)
+                        ++ (mklev n (n %/ 4) (trwb [:: 0; 1; 4; 5] t)
+                            ++ mklev n (n %/ 8) (trwb [:: 0; 1; 2; 3] t))
+                   | t <- iota 0 (n %/ 64)])
+           (mklev n (n %/ 2) (trw [:: 0; 2; 4; 6])
+            ++ mklev n (n %/ 4) (trw [:: 0; 1; 4; 5])
+            ++ mklev n (n %/ 8) (trw [:: 0; 1; 2; 3])).
+Proof.
+rewrite !mklev_trw.
+apply: (@dequiv_flatten_swap3 trgrp) => t tL.
+- apply: (mklev_trwb_colour (d := 1)) => // z zL.
+  by rewrite !inE => /or4P[] /eqP zE; apply: cinv_adj1 => //; rewrite zE.
+- apply: (mklev_trwb_colour (d := 2)) => // z zL.
+  by rewrite !inE => /or4P[] /eqP zE; apply: cinv_adj2 => //; rewrite zE.
+apply: (mklev_trwb_colour (d := 4)) => // z zL.
+by rewrite !inE => /or4P[] /eqP zE; apply: cinv_adj4 => //; rewrite zE.
 Qed.
 
 (* so that batch, renamed, is the three levels of a row or more               *)
