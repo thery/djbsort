@@ -4216,25 +4216,6 @@ Lemma trwE2 (as' : seq nat) :
   trw as' = flatten [seq trwb as' t | t <- iota 0 (n %/ 64)].
 Proof. by []. Qed.
 
-(* WHAT IS LEFT: the batch, renamed, comparison by comparison, group by      *)
-(* group: its three register distances, eight lanes apart inside a group of  *)
-(* sixty-four, are four rows, two rows and one row apart                     *)
-Lemma pflat_tr64_shB :
-  cren (cinv (avx2_layout dvdn_e2n64))
-    (cren (sh_trlo dvdn_e2n64)
-      (cren (sh_trhi dvdn_e2n64)
-        (pflat (flatten
-          [seq vnet n (fl_shuf 64 tb_trhi
-                        (fl_tog t64P (fl_shuf 64 tb_trlo
-                           (avx2_rev dvdn_e2n64).2)))
-                    (t * 64) 8 mrg8r
-          | t <- iota 0 (n %/ 64)])).1))
-  = flatten [seq mklev n (n %/ 2) (trwb [:: 0; 2; 4; 6] t)
-                 ++ (mklev n (n %/ 4) (trwb [:: 0; 1; 4; 5] t)
-                     ++ mklev n (n %/ 8) (trwb [:: 0; 1; 2; 3] t))
-            | t <- iota 0 (n %/ 64)].
-Admitted.
-
 (* WHAT IS LEFT: the two transposes cancel against the layout.  The layout is *)
 (* sh_out (avx2_layoutE) and sh_trs_id says trlo o trhi o tr is the identity, *)
 (* so trlo o trhi is the inverse of tr, and reading a wire of the transpose   *)
@@ -4485,6 +4466,169 @@ apply: (@dequiv_flatten_swap3 trgrp) => t tL.
   by rewrite !inE => /or4P[] /eqP zE; apply: cinv_adj2 => //; rewrite zE.
 apply: (mklev_trwb_colour (d := 4)) => // z zL.
 by rewrite !inE => /or4P[] /eqP zE; apply: cinv_adj4 => //; rewrite zE.
+Qed.
+
+(* the transpose is an involution on a group of sixty-four                    *)
+Lemma tb_trK (c : nat) : c < 64 -> nth 0 tb_tr (nth 0 tb_tr c) = c.
+Proof.
+have H : all (fun c => nth 0 tb_tr (nth 0 tb_tr c) == c) (iota 0 64)
+  by vm_compute.
+by move=> cL; apply/eqP; apply: iota_allP H cL.
+Qed.
+
+Lemma tb_tr_lt (c : nat) : c < 64 -> nth 0 tb_tr c < 64.
+Proof. by apply: (iota_allP (Q := fun y => nth 0 tb_tr y < 64)). Qed.
+
+(* the batch of the transpose sort runs with nothing complemented: what the   *)
+(* last shuffle leaves is what the last merge asks for, and that shuffle only *)
+(* moves lanes inside a group of sixty-four                                   *)
+Lemma fl_tr64_false (fl : flips) (i : nat) : dflP (n %/ 2) fl -> i < n ->
+  nth false (fl_shuf 64 tb_trhi (fl_tog t64P (fl_shuf 64 tb_trlo fl))) i = false.
+Proof.
+move=> flP iL.
+have [S N] := dflP_tsort64 flP.
+rewrite tsort64_flE in S N.
+have SF : size (fl_shuf 64 tb_trhi (fl_tog t64P (fl_shuf 64 tb_trlo fl))) = n
+  by move: S; rewrite size_fl_shuf.
+have cL : i %% 64 < 64 by rewrite ltn_mod.
+have trcL := tb_tr_lt cL.
+have jL : i %/ 64 * 64 + nth 0 tb_tr (i %% 64) < n.
+  have H : i %/ 64 < n %/ 64 by rewrite ltn_divLR ?(divnK dvdn_e2n64).
+  by have := divnK dvdn_e2n64; nia.
+have := N _ jL.
+rewrite nth_fl_shuf ?SF // divnMDl // (divn_small trcL) addn0.
+rewrite modnMDl (modn_small trcL) tb_trK //.
+by rewrite -divn_eq dfl_nE.
+Qed.
+
+(* the batch mrg8r, cut into its three register distances                     *)
+Lemma tr64_lists (T : Type) (F : nat -> nat -> seq T) :
+  flatten [seq F ab.1 ab.2 | ab <- mrg8r]
+  = flatten [seq F a (a + 1) | a <- [:: 0; 2; 4; 6]]
+    ++ (flatten [seq F a (a + 2) | a <- [:: 0; 1; 4; 5]]
+        ++ flatten [seq F a (a + 4) | a <- [:: 0; 1; 2; 3]]).
+Proof. by rewrite /mrg8r /= !cats0 !catA. Qed.
+
+(* the level a batch names, register by register                              *)
+Lemma mklev_trwb (q t : nat) (as' : seq nat) :
+  mklev n q (trwb as' t)
+  = flatten [seq [seq (capp (cinv (avx2_layout dvdn_e2n64))
+                         (capp (sh_trlo dvdn_e2n64)
+                            (capp (sh_trhi dvdn_e2n64) (t * 64 + a * 8 + l))),
+                       capp (cinv (avx2_layout dvdn_e2n64))
+                         (capp (sh_trlo dvdn_e2n64)
+                            (capp (sh_trhi dvdn_e2n64) (t * 64 + a * 8 + l)))
+                       + q)
+                 | l <- iota 0 8]
+            | a <- as'].
+Proof.
+rewrite mklev_n /trwb map_flatten -map_comp.
+by congr flatten; apply/eq_map => a; rewrite /comp -map_comp.
+Qed.
+
+(* where the two transposes read the wire at register a and lane l            *)
+Lemma tr64_phi (t a l : nat) : t < n %/ 64 -> a < 8 -> l < 8 ->
+  capp (cinv (avx2_layout dvdn_e2n64))
+    (capp (sh_trlo dvdn_e2n64) (capp (sh_trhi dvdn_e2n64) (t * 64 + a * 8 + l)))
+  = capp (cinv (avx2_layout dvdn_e2n64)) (t * 64 + l * 8 + a).
+Proof.
+move=> tL aL lL.
+have jL : a * 8 + l < 64 by lia.
+have [L1 _ _] := blk64 tL jL.
+by rewrite cinv_layout_trE ?sh_tr_wire // -addnA.
+Qed.
+
+(* the batch of one group of sixty-four, renamed, comparison by comparison:   *)
+(* its three register distances, eight lanes apart inside the group, are one  *)
+(* row, two rows and four rows apart                                          *)
+Lemma pflat_tr64_block (fl : flips) (t : nat) :
+  dflP (n %/ 2) fl -> t < n %/ 64 ->
+  cren (cinv (avx2_layout dvdn_e2n64))
+    (cren (sh_trlo dvdn_e2n64)
+      (cren (sh_trhi dvdn_e2n64)
+        (pflat (vnet n (fl_shuf 64 tb_trhi (fl_tog t64P (fl_shuf 64 tb_trlo fl)))
+                  (t * 64) 8 mrg8r)).1))
+  = mklev n (n %/ 2) (trwb [:: 0; 2; 4; 6] t)
+    ++ (mklev n (n %/ 4) (trwb [:: 0; 1; 4; 5] t)
+        ++ mklev n (n %/ 8) (trwb [:: 0; 1; 2; 3] t)).
+Proof.
+move=> flP tL.
+rewrite pflat_vnet_fl !cren_flatten -!map_comp !mklev_trwb.
+rewrite (tr64_lists (fun a b => cren (cinv (avx2_layout dvdn_e2n64))
+  (cren (sh_trlo dvdn_e2n64)
+    (cren (sh_trhi dvdn_e2n64)
+      [seq (if nth false
+                 (fl_shuf 64 tb_trhi (fl_tog t64P (fl_shuf 64 tb_trlo fl)))
+                 (t * 64 + a * 8 + l)
+            then (t * 64 + b * 8 + l, t * 64 + a * 8 + l)
+            else (t * 64 + a * 8 + l, t * 64 + b * 8 + l))
+       | l <- iota 0 8])))).
+have blockE (a d q : nat) : a < 8 -> a + d < 8 ->
+    (forall z, z < n -> z %% 8 = a ->
+       capp (cinv (avx2_layout dvdn_e2n64)) (z + d)
+       = capp (cinv (avx2_layout dvdn_e2n64)) z + q) ->
+  cren (cinv (avx2_layout dvdn_e2n64))
+    (cren (sh_trlo dvdn_e2n64)
+      (cren (sh_trhi dvdn_e2n64)
+        [seq (if nth false
+                   (fl_shuf 64 tb_trhi (fl_tog t64P (fl_shuf 64 tb_trlo fl)))
+                   (t * 64 + a * 8 + l)
+              then (t * 64 + (a + d) * 8 + l, t * 64 + a * 8 + l)
+              else (t * 64 + a * 8 + l, t * 64 + (a + d) * 8 + l))
+         | l <- iota 0 8]))
+  = [seq (capp (cinv (avx2_layout dvdn_e2n64))
+            (capp (sh_trlo dvdn_e2n64)
+               (capp (sh_trhi dvdn_e2n64) (t * 64 + a * 8 + l))),
+          capp (cinv (avx2_layout dvdn_e2n64))
+            (capp (sh_trlo dvdn_e2n64)
+               (capp (sh_trhi dvdn_e2n64) (t * 64 + a * 8 + l))) + q)
+     | l <- iota 0 8].
+  move=> aL adL Hd.
+  rewrite /cren -!map_comp; apply/eq_in_map => l.
+  rewrite mem_iota add0n => /andP[_ lL]; rewrite /comp.
+  have jL : a * 8 + l < 64 by lia.
+  have [L1 _ _] := blk64 tL jL.
+  have L1' : t * 64 + a * 8 + l < n by rewrite -addnA.
+  rewrite (fl_tr64_false flP L1') [(_, _).1]/= [(_, _).2]/=.
+  rewrite !tr64_phi //.
+  congr (_, _).
+  have jL2 : l * 8 + a < 64 by lia.
+  have [L2 _ _] := blk64 tL jL2.
+  have L2' : t * 64 + l * 8 + a < n by rewrite -addnA.
+  have zM : (t * 64 + l * 8 + a) %% 8 = a
+    by rewrite -addnA mod8_blk64 modnMDl (modn_small aL).
+  rewrite -(Hd (t * 64 + l * 8 + a)) //.
+  by congr (capp _ _); lia.
+congr (_ ++ (_ ++ _)).
+- congr flatten; apply/eq_in_map => a; rewrite !inE => /or4P[] /eqP->;
+    apply: blockE => // z zL zM; apply: cinv_adj1 => //; by rewrite zM.
+- congr flatten; apply/eq_in_map => a; rewrite !inE => /or4P[] /eqP->;
+    apply: blockE => // z zL zM; apply: cinv_adj2 => //; by rewrite zM.
+congr flatten; apply/eq_in_map => a; rewrite !inE => /or4P[] /eqP->;
+  apply: blockE => // z zL zM; apply: cinv_adj4 => //; by rewrite zM.
+Qed.
+
+(* so the whole batch, group of sixty-four by group of sixty-four             *)
+Lemma pflat_tr64_shB :
+  cren (cinv (avx2_layout dvdn_e2n64))
+    (cren (sh_trlo dvdn_e2n64)
+      (cren (sh_trhi dvdn_e2n64)
+        (pflat (flatten
+          [seq vnet n (fl_shuf 64 tb_trhi
+                        (fl_tog t64P (fl_shuf 64 tb_trlo
+                           (avx2_rev dvdn_e2n64).2)))
+                    (t * 64) 8 mrg8r
+          | t <- iota 0 (n %/ 64)])).1))
+  = flatten [seq mklev n (n %/ 2) (trwb [:: 0; 2; 4; 6] t)
+                 ++ (mklev n (n %/ 4) (trwb [:: 0; 1; 4; 5] t)
+                     ++ mklev n (n %/ 8) (trwb [:: 0; 1; 2; 3] t))
+            | t <- iota 0 (n %/ 64)].
+Proof.
+rewrite pflat_flatten; last first.
+  by rewrite all_map; apply/allP => t _; exact: nomv_vnet.
+rewrite !cren_flatten -!map_comp.
+congr flatten; apply/eq_in_map => t; rewrite mem_iota add0n => /andP[_ tL].
+by rewrite /comp; apply: pflat_tr64_block dflP_revs tL.
 Qed.
 
 (* so that batch, renamed, is the three levels of a row or more               *)
