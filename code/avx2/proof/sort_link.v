@@ -49,144 +49,6 @@ Definition avx2_list : seq (nat * nat) :=
 Lemma nsw_pnet (l : seq (nat * nat)) : nsw n l = pnet n l.
 Proof. by []. Qed.
 
-(* one exchange respects concatenation, on either side                        *)
-Lemma dswap_catl (l l1 l2 : seq (nat * nat)) :
-  dswap n l1 l2 -> dswap n (l ++ l1) (l ++ l2).
-Proof. by case=> ps ab cd qs *; rewrite !catA; constructor. Qed.
-
-Lemma dswap_catr (l l1 l2 : seq (nat * nat)) :
-  dswap n l1 l2 -> dswap n (l1 ++ l) (l2 ++ l).
-Proof. by case=> ps ab cd qs *; rewrite -!catA /=; constructor. Qed.
-
-(* reordering respects concatenation, on either side                          *)
-Lemma dequiv_catl (l l1 l2 : seq (nat * nat)) :
-  dequiv n l1 l2 -> dequiv n (l ++ l1) (l ++ l2).
-Proof.
-elim=> [{}l1|{}l1 {}l2 l3 H _ IH]; first exact: dequiv_refl.
-by apply: dequiv_step IH; apply: dswap_catl.
-Qed.
-
-Lemma dequiv_catr (l l1 l2 : seq (nat * nat)) :
-  dequiv n l1 l2 -> dequiv n (l1 ++ l) (l2 ++ l).
-Proof.
-elim=> [{}l1|{}l1 {}l2 l3 H _ IH]; first exact: dequiv_refl.
-by apply: dequiv_step IH; apply: dswap_catr.
-Qed.
-
-Lemma dequiv_trans (l1 l2 l3 : seq (nat * nat)) :
-  dequiv n l1 l2 -> dequiv n l2 l3 -> dequiv n l1 l3.
-Proof.
-by move=> H; elim: H => // {}l1 {}l2 l4 H _ IH /IH; apply: dequiv_step H.
-Qed.
-
-Lemma dequiv_cat (l1 l1' l2 l2' : seq (nat * nat)) :
-  dequiv n l1 l1' -> dequiv n l2 l2' -> dequiv n (l1 ++ l2) (l1' ++ l2').
-Proof.
-by move=> H1 H2; apply: dequiv_trans (dequiv_catr _ H1) (dequiv_catl _ H2).
-Qed.
-
-(* a comparison may be moved forward past any run it shares no wire with      *)
-Lemma dequiv_move (ab : nat * nat) (ps qs rs : seq (nat * nat)) :
-  bnd n ab -> all (bnd n) qs -> all (dpair ab) qs ->
-  dequiv n (ps ++ ab :: qs ++ rs) (ps ++ qs ++ ab :: rs).
-Proof.
-move=> abB; elim: qs ps => [|cd qs IH] ps /=.
-  by move=> _ _; apply: dequiv_refl.
-move=> /andP[cdB qsB] /andP[abcd qsD].
-apply: dequiv_step (@dswap_step n ps ab cd (qs ++ rs) abB cdB abcd) _.
-by rewrite -cat_rcons -[in X in dequiv _ _ X]cat_rcons; apply: IH.
-Qed.
-
-(* comparisons that share no wire with the others may all be brought to the   *)
-(* front, in the order they already have                                      *)
-Lemma dequiv_part (p : nat * nat -> bool) (l : seq (nat * nat)) :
-  all (bnd n) l ->
-  all (fun ab => all (fun cd => (p ab != p cd) ==> dpair ab cd) l) l ->
-  dequiv n l ([seq ab <- l | p ab] ++ [seq ab <- l | ~~ p ab]).
-Proof.
-elim: l => [|a l IH] /=; first by move=> _ _; apply: dequiv_refl.
-move=> /andP[aB lB] /andP[/andP[_ aD] /allP lD].
-have lD' : all (fun ab => all (fun cd => (p ab != p cd) ==> dpair ab cd) l) l.
-  by apply/allP => ab abI; have /andP[_] := lD _ abI.
-case: (boolP (p a)) => pa /=; first by apply: (dequiv_catl [:: a]); apply: IH.
-apply: dequiv_trans (dequiv_catl [:: a] (IH lB lD')) _.
-apply: (@dequiv_move a [::] [seq ab <- l | p ab] [seq ab <- l | ~~ p ab]) => //=.
-  by apply/allP => cd; rewrite mem_filter => /andP[_ /(allP lB)].
-apply/allP => cd; rewrite mem_filter => /andP[pcd cdI].
-by have := allP aD _ cdI; rewrite (negbTE pa) pcd.
-Qed.
-
-(* so comparisons that share no wire unless they have the same name may be    *)
-(* gathered name by name, each group keeping the order it had                 *)
-Lemma dequiv_group (c : nat * nat -> nat) (cs : seq nat) (l : seq (nat * nat)) :
-  uniq cs -> all (bnd n) l ->
-  all (fun ab => all (fun cd => (c ab != c cd) ==> dpair ab cd) l) l ->
-  dequiv n l (flatten [seq [seq ab <- l | c ab == v] | v <- cs]
-              ++ [seq ab <- l | c ab \notin cs]).
-Proof.
-elim: cs l => [|v cs IH] l /=.
-  by move=> _ _ _; rewrite filter_predT; apply: dequiv_refl.
-move=> /andP[vNI csU] lB lD.
-apply: dequiv_trans (@dequiv_part (fun ab => c ab == v) l lB _) _.
-  apply/allP => ab abI; apply/allP => cd cdI; apply/implyP => H.
-  have /allP/(_ cd cdI)/implyP := allP lD _ abI; apply.
-  by apply: contra H => /eqP->.
-rewrite -catA; apply: dequiv_catl.
-have GB : all (bnd n) [seq ab <- l | c ab != v].
-  by apply/allP => x; rewrite mem_filter => /andP[_ /(allP lB)].
-have GD : all (fun ab => all (fun cd => (c ab != c cd) ==> dpair ab cd)
-                             [seq ab <- l | c ab != v])
-              [seq ab <- l | c ab != v].
-  apply/allP => ab; rewrite mem_filter => /andP[_ abI].
-  apply/allP => cd; rewrite mem_filter => /andP[_ cdI].
-  by have /allP/(_ cd cdI) := allP lD _ abI.
-have E1 : [seq [seq ab <- [seq ab <- l | c ab != v] | c ab == w] | w <- cs]
-          = [seq [seq ab <- l | c ab == w] | w <- cs].
-  apply/eq_in_map => w wI; rewrite -filter_predI; apply: eq_filter => ab /=.
-  have wv : w != v by apply/eqP => e; move: wI; rewrite e (negbTE vNI).
-  by case: (altP (c ab =P w)) => [cw|] //=; rewrite cw wv.
-have E2 : [seq ab <- [seq ab <- l | c ab != v] | c ab \notin cs]
-          = [seq ab <- l | c ab \notin v :: cs].
-  by rewrite -filter_predI; apply: eq_filter => ab /=; rewrite inE negb_or andbC.
-by have := IH _ csU GB GD; rewrite E1 E2.
-Qed.
-
-(* when a comparison keeps to one region -- its two wires carry the same      *)
-(* region number -- comparisons of different regions share no wire            *)
-Lemma dpair_regions (w : nat -> nat) (l : seq (nat * nat)) :
-  all (fun ab => w ab.2 == w ab.1) l ->
-  all (fun ab => all (fun cd => (w ab.1 != w cd.1) ==> dpair ab cd) l) l.
-Proof.
-move=> lW; apply/allP => ab abI; apply/allP => cd cdI; apply/implyP => H.
-have /eqP abE := allP lW _ abI; have /eqP cdE := allP lW _ cdI.
-rewrite /dpair; apply/and4P; split; apply: contra H => /eqP E.
-- by rewrite E.
-- by rewrite E cdE.
-- by rewrite -abE E.
-by rewrite -abE E cdE.
-Qed.
-
-(* the shape both halves of the reordering take: give every comparison the    *)
-(* number of the region it belongs to, check that comparisons of different    *)
-(* regions share no wire, and read each region off                            *)
-Lemma dequiv_regroup (c : nat * nat -> nat) (m : nat) (l : seq (nat * nat))
-    (f : nat -> seq (nat * nat)) :
-  all (bnd n) l -> all (fun ab => c ab < m) l ->
-  all (fun ab => all (fun cd => (c ab != c cd) ==> dpair ab cd) l) l ->
-  (forall g, g < m -> [seq ab <- l | c ab == g] = f g) ->
-  dequiv n l (flatten [seq f g | g <- iota 0 m]).
-Proof.
-move=> lB lM lD lf.
-have := @dequiv_group c (iota 0 m) l (iota_uniq _ _) lB lD.
-have -> : [seq ab <- l | c ab \notin iota 0 m] = [::].
-  rewrite -(filter_pred0 l); apply: eq_in_filter => ab abI /=.
-  by rewrite mem_iota /= add0n (allP lM _ abI).
-rewrite cats0 => H; apply: dequiv_trans H _.
-rewrite (_ : [seq [seq ab <- l | c ab == g] | g <- iota 0 m]
-             = [seq f g | g <- iota 0 m]); first exact: dequiv_refl.
-by apply/eq_in_map => g; rewrite mem_iota /= add0n; apply: lf.
-Qed.
-
 (* -------------------------------------------------------------------------- *)
 (*  The reordering, part by part                                              *)
 (* -------------------------------------------------------------------------- *)
@@ -691,31 +553,6 @@ Proof.
 apply/allP => x /mapP[ab abI ->] /=.
 have /and3P[/eqP Hm H1 H2] := allP pflat_head_shape _ abI.
 by apply/eqP; apply: layout_lane_grp H2 H1 _.
-Qed.
-
-(* the empty pieces of a flatten do not count                                 *)
-Lemma flat_nil (T : Type) (F : nat -> seq T) (l : seq nat) :
-  (forall t, t \in l -> F t = [::]) -> flatten [seq F t | t <- l] = [::].
-Proof.
-elim: l => //= a l IH H.
-by rewrite H ?mem_head // IH // => x xI; rewrite H // inE xI orbT.
-Qed.
-
-(* a flatten with one piece of its own picks that piece out                   *)
-Lemma flatten_pick (T : Type) (F : nat -> seq T) (v : seq T) (t0 M : nat) :
-  t0 < M -> (forall t, t < M -> F t = if t == t0 then v else [::]) ->
-  flatten [seq F t | t <- iota 0 M] = v.
-Proof.
-move=> t0L HF.
-have -> : iota 0 M = iota 0 t0 ++ t0 :: iota t0.+1 (M - t0.+1).
-  by rewrite -{1}[M](subnKC t0L) addSnnS iotaD add0n.
-rewrite map_cat flatten_cat /= HF // eqxx.
-rewrite flat_nil => [|x]; last first.
-  move=> xI; have xL : x < t0 by move: xI; rewrite mem_iota /= add0n.
-  by rewrite HF ?ltn_eqF // (ltn_trans xL t0L).
-rewrite cat0s flat_nil ?cats0 // => x.
-rewrite mem_iota => /andP[xG xL]; rewrite subnKC // in xL.
-by rewrite HF ?gtn_eqF.
 Qed.
 
 (* a flatten of pieces that are all one long, or all empty together           *)
@@ -1459,15 +1296,6 @@ rewrite (eq_in_filter (a2 := pred0)) ?filter_pred0 //.
 by move=> ab abI /=; have /andP[/eqP-> _] := allP H _ abI; rewrite (negbTE tD).
 Qed.
 
-(* reordering piece by piece                                                  *)
-Lemma dequiv_flatten (T : Type) (f f' : T -> seq (nat * nat)) (l : seq T) :
-  (forall x, dequiv n (f x) (f' x)) ->
-  dequiv n (flatten [seq f x | x <- l]) (flatten [seq f' x | x <- l]).
-Proof.
-move=> H; elim: l => /= [|x l IH]; first exact: dequiv_refl.
-by apply: dequiv_cat (H x) IH.
-Qed.
-
 (* inside a block the batches are independent too: a batch keeps to the       *)
 (* eight lanes it starts at, whatever row it reaches                          *)
 Lemma vnet_col (fl : flips) (base u q : nat) (gr : seq (nat * nat)) :
@@ -1490,147 +1318,6 @@ Qed.
 (* -------------------------------------------------------------------------- *)
 (*  The schedule, regrouped by block                                          *)
 (* -------------------------------------------------------------------------- *)
-
-(* a reordering may be undone                                                 *)
-Lemma dswap_sym (l1 l2 : seq (nat * nat)) : dswap n l1 l2 -> dswap n l2 l1.
-Proof.
-by case=> ps ab cd qs H1 H2 H3; constructor => //; apply: dpair_sym.
-Qed.
-
-Lemma dequiv_sym (l1 l2 : seq (nat * nat)) : dequiv n l1 l2 -> dequiv n l2 l1.
-Proof.
-elim=> [l|{}l1 {}l2 l3 H _ IH]; first exact: dequiv_refl.
-apply: dequiv_trans IH _.
-by apply: dequiv_step; [exact: dswap_sym H | exact: dequiv_refl].
-Qed.
-
-(* two listings of the same comparisons are a reordering of one another as    *)
-(* soon as a colouring keeps comparisons of different colours apart and both  *)
-(* listings read each colour the same way                                     *)
-Lemma dequiv_colour (c : nat * nat -> nat) (m : nat) (l1 l2 : seq (nat * nat)) :
-  all (bnd n) l1 -> all (fun ab => c ab < m) l1 ->
-  all (fun ab => all (fun cd => (c ab != c cd) ==> dpair ab cd) l1) l1 ->
-  all (bnd n) l2 -> all (fun ab => c ab < m) l2 ->
-  all (fun ab => all (fun cd => (c ab != c cd) ==> dpair ab cd) l2) l2 ->
-  (forall g, g < m -> [seq ab <- l1 | c ab == g] = [seq ab <- l2 | c ab == g]) ->
-  dequiv n l1 l2.
-Proof.
-move=> l1B l1M l1D l2B l2M l2D E.
-apply: dequiv_trans
-  (@dequiv_regroup c m l1 (fun g => [seq ab <- l2 | c ab == g]) l1B l1M l1D E) _.
-apply: dequiv_sym.
-by apply: (@dequiv_regroup c m l2 (fun g => [seq ab <- l2 | c ab == g])).
-Qed.
-
-(* a property of every piece is a property of the flatten                     *)
-Lemma all_flatten_map (T : eqType) (P : pred T) (G : nat -> seq T)
-    (l : seq nat) :
-  (forall t, t \in l -> all P (G t)) -> all P (flatten [seq G t | t <- l]).
-Proof.
-elim: l => //= t l IH H; rewrite all_cat H ?mem_head //=.
-by apply: IH => x xI; apply: H; rewrite inE xI orbT.
-Qed.
-
-(* the same, when the colour of a comparison is the colour of its wires       *)
-Lemma dequiv_colour_w (w : nat -> nat) (m : nat) (l1 l2 : seq (nat * nat)) :
-  all (bnd n) l1 -> all (fun ab => (w ab.2 == w ab.1) && (w ab.1 < m)) l1 ->
-  all (bnd n) l2 -> all (fun ab => (w ab.2 == w ab.1) && (w ab.1 < m)) l2 ->
-  (forall g, g < m ->
-     [seq ab <- l1 | w ab.1 == g] = [seq ab <- l2 | w ab.1 == g]) ->
-  dequiv n l1 l2.
-Proof.
-move=> l1B l1W l2B l2W E.
-apply: (@dequiv_colour (fun ab => w ab.1) m) => //.
-- by apply/allP => ab /(allP l1W) /andP[].
-- by apply: dpair_regions; apply/allP => ab /(allP l1W) /andP[].
-- by apply/allP => ab /(allP l2W) /andP[].
-by apply: dpair_regions; apply/allP => ab /(allP l2W) /andP[].
-Qed.
-
-(* a doubly indexed listing read block by block, or part by part: the two     *)
-(* orders are a reordering of one another when the comparisons of the block t *)
-(* all have colour t                                                          *)
-Lemma dequiv_flatten_swap (w : nat -> nat) (F : nat -> nat -> seq (nat * nat))
-    (m p : nat) :
-  (forall j t, j < p -> t < m -> all (bnd n) (F j t)) ->
-  (forall j t, j < p -> t < m ->
-     all (fun ab => (w ab.2 == w ab.1) && (w ab.1 == t)) (F j t)) ->
-  dequiv n (flatten [seq flatten [seq F j t | j <- iota 0 p] | t <- iota 0 m])
-           (flatten [seq flatten [seq F j t | t <- iota 0 m] | j <- iota 0 p]).
-Proof.
-move=> FB FW.
-have Ffil (j t g : nat) : j < p -> t < m ->
-    [seq ab <- F j t | w ab.1 == g] = if t == g then F j t else [::].
-  move=> jL tL; have /allP FWjt := FW _ _ jL tL.
-  case: (altP (t =P g)) => [tg|tg].
-    apply/all_filterP; apply/allP => ab abI.
-    by have /andP[_ /eqP->] := FWjt _ abI; rewrite tg.
-  rewrite -(filter_pred0 (F j t)); apply: eq_in_filter => ab abI /=.
-  by have /andP[_ /eqP->] := FWjt _ abI; rewrite (negbTE tg).
-apply: (@dequiv_colour_w w m).
-- apply: all_flatten_map => t; rewrite mem_iota add0n => /andP[_ tL].
-  by apply: all_flatten_map => j; rewrite mem_iota add0n => /andP[_ jL];
-     apply: FB.
-- apply: all_flatten_map => t; rewrite mem_iota add0n => /andP[_ tL].
-  apply: all_flatten_map => j; rewrite mem_iota add0n => /andP[_ jL].
-  apply/allP => ab abI; have /andP[H1 /eqP H2] := allP (FW _ _ jL tL) _ abI.
-  by rewrite H1 H2.
-- apply: all_flatten_map => j; rewrite mem_iota add0n => /andP[_ jL].
-  by apply: all_flatten_map => t; rewrite mem_iota add0n => /andP[_ tL];
-     apply: FB.
-- apply: all_flatten_map => j; rewrite mem_iota add0n => /andP[_ jL].
-  apply: all_flatten_map => t; rewrite mem_iota add0n => /andP[_ tL].
-  apply/allP => ab abI; have /andP[H1 /eqP H2] := allP (FW _ _ jL tL) _ abI.
-  by rewrite H1 H2.
-move=> g gL.
-rewrite !filter_flatten_seq -!map_comp.
-rewrite (@flatten_pick _ _ (flatten [seq F j g | j <- iota 0 p]) g m) //.
-  congr flatten; apply/eq_in_map => j; rewrite mem_iota add0n => /andP[_ jL].
-  rewrite /comp filter_flatten_seq -map_comp; symmetry.
-  apply: (@flatten_pick _ _ (F j g) g m) => // t tL.
-  by rewrite Ffil //; case: (altP (t =P g)) => [->|tg];
-     rewrite ?eqxx ?(negbTE tg).
-move=> t tL; rewrite filter_flatten_seq -map_comp.
-case: (altP (t =P g)) => [tg|tg].
-  congr flatten; apply/eq_in_map => j; rewrite mem_iota add0n => /andP[_ jL].
-  by rewrite /comp Ffil // tg eqxx.
-apply: flat_nil => j; rewrite mem_iota add0n => /andP[_ jL].
-by rewrite /comp Ffil // (negbTE tg).
-Qed.
-
-(* comparisons that share no wire may be put in any order at all              *)
-Lemma dequiv_reorder (l1 l2 : seq (nat * nat)) :
-  all (bnd n) l1 -> uniq l1 -> perm_eq l1 l2 ->
-  all (fun ab => all (fun cd => (ab != cd) ==> dpair ab cd) l1) l1 ->
-  dequiv n l1 l2.
-Proof.
-elim: l2 l1 => [|cd l2 IH] l1 l1B l1U l1P l1D.
-  by rewrite (perm_nilP l1P); apply: dequiv_refl.
-have cdI : cd \in l1 by rewrite (perm_mem l1P) mem_head.
-case: (splitPr cdI) l1B l1U l1P l1D => ps rs.
-move=> l1B l1U l1P l1D.
-have memT (x : nat * nat) : x \in ps ++ rs -> x \in ps ++ cd :: rs.
-  by rewrite !mem_cat inE => /orP[-> //|->]; rewrite !orbT.
-move: l1B; rewrite all_cat [all _ (_ :: _)]/= => /andP[psB /andP[cdB rsB]].
-move: l1U; rewrite cat_uniq [uniq (_ :: _)]/= [has _ (_ :: _)]/= negb_or.
-move=> /and3P[psU /andP[cdps psrs] /andP[cdrs rsU]].
-have Hdp : all (dpair cd) ps.
-  apply/allP => ab abI.
-  have abIl : ab \in ps ++ cd :: rs by rewrite mem_cat abI.
-  have cdIl : cd \in ps ++ cd :: rs by rewrite mem_cat inE eqxx orbT.
-  have := allP (allP l1D _ cdIl) _ abIl.
-  by rewrite (_ : (cd != ab) = true) //; apply/eqP => cdE; rewrite cdE abI in cdps.
-have step1 : dequiv n (ps ++ cd :: rs) (cd :: (ps ++ rs)).
-  by apply/dequiv_sym/(@dequiv_move cd [::] ps rs).
-apply: dequiv_trans step1 _; apply: (dequiv_catl [:: cd]).
-apply: IH.
-- by rewrite all_cat psB.
-- by rewrite cat_uniq psU psrs.
-- move: l1P; rewrite (perm_catCA ps [:: cd] rs) => l1P'.
-  by rewrite -(perm_cons cd).
-apply/allP => ab abI; apply/allP => ef efI.
-by have := allP (allP l1D _ (memT _ abI)) _ (memT _ efI).
-Qed.
 
 (* reading one block off a level, and off a cascade: the comparisons of a     *)
 (* block are those of the level or cascade of that block alone                *)
@@ -1700,7 +1387,7 @@ have Hsep (x y g1 g2 : nat) : g1 != g2 ->
        [rewrite leq_mul2r g12 orbT | rewrite mulSn; lia].
   by have : g2.+1 * m <= g1 * m;
      [rewrite leq_mul2r g21 orbT | rewrite mulSn; lia].
-apply: (@dequiv_regroup (fun ab => (ab.1 - b) %/ m) c
+apply: (@dequiv_regroup n (fun ab => (ab.1 - b) %/ m) c
           (dcascade_at n K e b (c * m))
           (fun g => dcascade_at n K e (b + g * m) m)).
 - apply/allP => ab abI; have /andP[/andP[H1 H2] /andP[H3 H4]] := allP Hb _ abI.
@@ -1799,15 +1486,6 @@ Proof.
 case: d => H; first exact: dpair_add.
 move: H; rewrite /dpair /= => /and4P[H1 H2 H3 H4].
 by apply/and4P; split; rewrite eqn_add2l.
-Qed.
-
-Lemma dequiv_flatten_in (T : eqType) (f f' : T -> seq (nat * nat)) (l : seq T) :
-  (forall x, x \in l -> dequiv n (f x) (f' x)) ->
-  dequiv n (flatten [seq f x | x <- l]) (flatten [seq f' x | x <- l]).
-Proof.
-elim: l => /= [_|x l IH H]; first exact: dequiv_refl.
-apply: dequiv_cat; first by apply: H; rewrite mem_head.
-by apply: IH => y yI; apply: H; rewrite inE yI orbT.
 Qed.
 
 (* -------------------------------------------------------------------------- *)
@@ -2050,7 +1728,7 @@ apply: dequiv_trans (_ : dequiv n _
                       else (G * 8 + nth 0 trc ab.2, G * 8 + nth 0 trc ab.1))
                 | ab <- mrg8r]
            | G <- iota 0 (n %/ 8)])) _.
-  apply: (@dequiv_regroup (fun ab => ab.1 %/ 8) (n %/ 8) _
+  apply: (@dequiv_regroup n (fun ab => ab.1 %/ 8) (n %/ 8) _
             (fun G => [seq (if (K == n) || odd (G * 8 %/ K)
                             then (G * 8 + nth 0 trc ab.1, G * 8 + nth 0 trc ab.2)
                             else (G * 8 + nth 0 trc ab.2, G * 8 + nth 0 trc ab.1))
@@ -2711,7 +2389,7 @@ rewrite (_ : (pflat (stage n fl n cnt q (g1 ++ g2))).1
                      | i <- iota 0 (n %/ (cnt * q) * (q %/ 8))]); last first.
   rewrite pflat_stage_flat //; congr flatten; apply/eq_map => i.
   by rewrite flatten2 /F !pflat_vnet_fl map_cat flatten_cat.
-apply: (@dequiv_flatten_swap (stgc cnt q) F _ 2) => j i jL iL.
+apply: (@dequiv_flatten_swap n (stgc cnt q) F _ 2) => j i jL iL.
 - have iLs : i %/ (q %/ 8) < n %/ (cnt * q) by rewrite ltn_divLR.
   have iMs : i %% (q %/ 8) < q %/ 8 by rewrite ltn_mod.
   rewrite /F; apply/allP => ab abI.
@@ -4394,39 +4072,6 @@ rewrite -[t * 64 + l * 8 + a]addnA trgrp_cinv // eqxx.
 by rewrite !capp_lt.
 Qed.
 
-(* three parts read block by block, or block after block part by part         *)
-Lemma dequiv_flatten_swap3 (w : nat -> nat) (A B C : nat -> seq (nat * nat))
-    (m : nat) :
-  (forall t, t < m ->
-     all (fun ab => [&& bnd n ab, w ab.2 == w ab.1 & w ab.1 == t]) (A t)) ->
-  (forall t, t < m ->
-     all (fun ab => [&& bnd n ab, w ab.2 == w ab.1 & w ab.1 == t]) (B t)) ->
-  (forall t, t < m ->
-     all (fun ab => [&& bnd n ab, w ab.2 == w ab.1 & w ab.1 == t]) (C t)) ->
-  dequiv n (flatten [seq A t ++ (B t ++ C t) | t <- iota 0 m])
-           (flatten [seq A t | t <- iota 0 m]
-            ++ (flatten [seq B t | t <- iota 0 m]
-                ++ flatten [seq C t | t <- iota 0 m])).
-Proof.
-move=> HA HB HC.
-pose F (j t : nat) := match j with 0 => A t | 1 => B t | _ => C t end.
-have Hall (j t : nat) : j < 3 -> t < m ->
-    all (fun ab => [&& bnd n ab, w ab.2 == w ab.1 & w ab.1 == t]) (F j t).
-  by move=> jL tL; case: j jL => [|[|[|j]]] //= _; [apply: HA|apply: HB|apply: HC].
-have E1 (t : nat) : A t ++ (B t ++ C t) = flatten [seq F j t | j <- iota 0 3]
-  by rewrite /F /= cats0.
-have E2 : flatten [seq A t | t <- iota 0 m]
-          ++ (flatten [seq B t | t <- iota 0 m]
-              ++ flatten [seq C t | t <- iota 0 m])
-        = flatten [seq flatten [seq F j t | t <- iota 0 m] | j <- iota 0 3]
-  by rewrite /F /= cats0.
-rewrite (eq_map E1) E2.
-apply: (@dequiv_flatten_swap w F m 3) => j t jL tL.
-  by apply/allP => ab abI; have /and3P[H1 _ _] := allP (Hall _ _ jL tL) _ abI.
-by apply/allP => ab abI; have /and3P[_ H2 H3] := allP (Hall _ _ jL tL) _ abI;
-   rewrite H2 H3.
-Qed.
-
 Lemma mklev_trw (q : nat) (as' : seq nat) :
   mklev n q (trw as')
   = flatten [seq mklev n q (trwb as' t) | t <- iota 0 (n %/ 64)].
@@ -4445,7 +4090,7 @@ Lemma dequiv_tr64_reorder :
             ++ mklev n (n %/ 8) (trw [:: 0; 1; 2; 3])).
 Proof.
 rewrite !mklev_trw.
-apply: (@dequiv_flatten_swap3 trgrp) => t tL.
+apply: (@dequiv_flatten_swap3 n trgrp) => t tL.
 - apply: (mklev_trwb_colour (d := 1)) => // z zL.
   by rewrite !inE => /or4P[] /eqP zE; apply: cinv_adj1 => //; rewrite zE.
 - apply: (mklev_trwb_colour (d := 2)) => // z zL.
