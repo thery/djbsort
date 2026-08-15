@@ -166,15 +166,117 @@ the output has a 1 where $v$ was and a 0 where $u$ was, in the wrong order. So
 a network that sorts all arrays of zeros and ones cannot fail.
 
 For four places this brings the check down from "all arrays of integers" to
-sixteen cases, which one can do by hand. In Rocq the property is stated
-directly in that form:
+sixteen cases, which one can do by hand. For a real array --- a thousand
+places, say --- there are still $2^1000$ cases, so one does not check them but
+proves the statement. Only the very small pieces, such as the fixed batches of
+five or twelve comparisons the AVX2 code contains, are settled by letting the
+machine try all cases.
+
+= Networks in Rocq
+
+Before going further we have to say how a network is written down in Rocq,
+because two ways of writing it are used, and the difference matters later.
+
+*The array.* An array of $m$ values is a `m.-tuple A`: exactly $m$ values,
+of some type `A` on which there is an order. `A` can be the integers, or the
+booleans of the previous section; nothing in the development depends on which.
+The places are numbered by `'I_m`, the whole numbers below $m$, so an array of
+four values has places 0, 1, 2 and 3.
+
+*The first way: a list of pairs.* This is what section 1 gave us, and it needs
+no machinery: `[:: (0,1); (2,3); (0,2); (1,3); (1,2)]` is @fournet. The
+function `pnet` turns such a list into a network, and pairs whose places fall
+outside the array are simply dropped.
+
+*The second way: a list of stages.* Hardware does not do one comparison at a
+time. A vector instruction does eight at once, and a picture like @fournet is
+naturally read in columns: at each step, several disjoint pairs are compared
+together. One such column is called a *connector*, and it is the type the
+mathematical side is built from:
+
+```coq
+Record connector (m : nat) := connector_of {
+  clink  : {ffun 'I_m -> 'I_m};
+  cflip  : {ffun 'I_m -> bool};
+  cfinv  : [forall i, clink (clink i) == i];
+  cflipinv : [forall i, cflip (clink i) == cflip i] }.
+```
+
+Word by word:
+
+- `clink` says, for each place, which place it is paired with. A place that is
+  paired with itself is left alone by this stage.
+- `cflip` says, for each place, which way round its pair goes: `false` for
+  "smaller value to the smaller place", `true` for the other way.
+- `cfinv` is a condition, not data: following `clink` twice comes back to
+  where you started. It says the pairing really is a set of disjoint pairs.
+- `cflipinv` is the other condition: the two ends of a pair agree on the
+  direction. It would make no sense for one end to want the smaller value and
+  the other end the larger.
+
+Running one stage is then what you would expect: each place looks at its
+partner and keeps the min or the max.
+
+```coq
+Definition cfun c t :=
+  [tuple let min := min (tnth t i) (tnth t (clink c i)) in
+         let max := max (tnth t i) (tnth t (clink c i)) in
+         if i <= clink c i
+         then if cflip c i then max else min
+         else if cflip c i then min else max | i < m].
+```
+
+Read it as: for every place `i`, take the two values `t i` and `t (clink c i)`;
+if `i` is the smaller of the two places, keep the min, unless the flip says
+otherwise; if it is the larger, keep the max, unless the flip says otherwise.
+Both ends of a pair use the same line of code, and they agree because of
+`cflipinv`.
+
+#figure(
+  cetz.canvas(length: 1cm, {
+    import cetz.draw: *
+    let h = 0.62
+    for i in range(4) {
+      line((0, -i * h), (4.6, -i * h), stroke: 0.5pt + luma(90))
+      content((-0.45, -i * h), text(size: 8pt)[#i])
+    }
+    // the stage: 0 with 2, 1 with 3
+    line((1.6, 0), (1.6, -2 * h), stroke: 0.7pt)
+    circle((1.6, 0), radius: 0.055, fill: black)
+    circle((1.6, -2 * h), radius: 0.055, fill: black)
+    line((2.3, -h), (2.3, -3 * h), stroke: 0.7pt)
+    circle((2.3, -h), radius: 0.055, fill: black)
+    circle((2.3, -3 * h), radius: 0.055, fill: black)
+    content((5.4, -0.6), text(size: 8.5pt)[one stage,], anchor: "west")
+    content((5.4, -1.05), text(size: 8.5pt)[both pairs at once], anchor: "west")
+  }),
+  caption: [One connector on four places: `clink` pairs 0 with 2 and 1 with 3,
+    and `cflip` is false everywhere. The two comparisons touch four different
+    places, so the machine may do them together.],
+) <stage>
+
+A *network* is then a list of stages, and running it means running them one
+after the other:
+
+```coq
+Definition network := seq (connector m).
+Definition nfun n t := foldl (fun t c => cfun c t) t n.
+```
+
+The two ways of writing a network fit together: a single pair $(i,j)$ is a
+stage that touches only two places (`cswap i j`), so a list of pairs is a
+network in which every stage does one comparison. That is exactly what `pnet`
+builds. The program side of the proof uses lists of pairs, because that is
+what a program performs; the mathematical side uses stages, because that is
+what one can do induction on.
+
+Now the property of interest can be written down, and it is the zero-one
+principle of the previous section, taken as the definition:
 
 ```coq
 Definition sorting :=
   [qualify n | [forall r : m.-tuple bool, sorted <=%O (nfun n r)]].
 ```
-
-Word by word:
 
 - `m.-tuple bool` is an array of exactly `m` booleans, so `r` ranges over
   arrays of zeros and ones;
@@ -183,10 +285,65 @@ Word by word:
 - `[forall r ...]` says this holds for every such array;
 - `n \is sorting` is then read "n is a sorting network".
 
-This is still $2^m$ cases, so for a real array --- a thousand places, say ---
-one does not check them but proves the statement. Only the very small pieces,
-such as the fixed batches of five or twelve comparisons the AVX2 code contains,
-are settled by letting the machine try all cases.
+Because of the zero-one principle this single line is as strong as sorting
+arrays of integers, and the library proves that once, for any network.
+
+== Why the mathematical networks sort
+
+The AVX2 code follows Batcher's *bitonic* sorter, and it is worth seeing why
+that works, since the whole right-hand side of the proof rests on it.
+
+A sequence is *bitonic* if it goes up and then down --- 1, 4, 7, 6, 2 --- or
+becomes such a sequence if you rotate it. Two sorted runs, one up and one
+down, always give a bitonic sequence when put end to end.
+
+Now take a bitonic sequence of $2m$ values and compare each place $i$ with the
+place $i + m$, keeping the smaller on the left. This one stage is the
+*half-cleaner*. After it, three things are true, and they are the heart of the
+matter:
+
++ every value in the left half is at most every value in the right half;
++ the left half is still bitonic;
++ the right half is still bitonic.
+
+So the problem falls apart: no value ever has to cross the middle again, and
+each half is a smaller copy of the same problem. Repeating the half-cleaner on
+halves, then on quarters, and so on, sorts the whole thing. That is
+`half_cleaner_rec`.
+
+#figure(
+  cetz.canvas(length: 1cm, {
+    import cetz.draw: *
+    let h = 0.5
+    for i in range(8) {
+      line((0, -i * h), (5.4, -i * h), stroke: 0.5pt + luma(90))
+      content((-0.45, -i * h), text(size: 7.5pt)[#i])
+    }
+    let comp(x, a, b) = {
+      line((x, -a * h), (x, -b * h), stroke: 0.7pt)
+      circle((x, -a * h), radius: 0.05, fill: black)
+      circle((x, -b * h), radius: 0.05, fill: black)
+    }
+    for i in range(4) { comp(1.0, i, i + 4) }
+    for i in (0, 1) { comp(2.6, i, i + 2); comp(2.6, i + 4, i + 6) }
+    for i in (0, 2, 4, 6) { comp(4.0, i, i + 1) }
+    content((1.0, 0.45), text(size: 7.5pt)[distance 4])
+    content((2.6, 0.45), text(size: 7.5pt)[distance 2])
+    content((4.0, 0.45), text(size: 7.5pt)[distance 1])
+  }),
+  caption: [Sorting a bitonic sequence of eight values: one half-cleaner at
+    distance four, then one in each half at distance two, then one in each
+    quarter. After the first column, nothing crosses the middle again.],
+) <cleaner>
+
+A full sorter follows: sort the first half upwards, sort the second half
+downwards, put them together --- the result is bitonic --- and then clean it
+with @cleaner. That is a recursion, and it is the network the AVX2 code
+implements.
+
+The portable code follows a different plan, Knuth's merge exchange, but the
+shape of the argument is the same: a network built by a recursion, proved to
+sort by induction, with the zero-one principle doing the work at the bottom.
 
 = The shape of the proof
 

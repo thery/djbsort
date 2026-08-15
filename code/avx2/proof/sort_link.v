@@ -4391,6 +4391,32 @@ Theorem sorted_avx2_prog (t : n.-tuple A) :
   sorted <=%O (pfun (@avx2_prog n dvdn_e2n64) t).
 Proof. by apply: sorted_pfun; exact: sorting_avx2. Qed.
 
+(* an array of ANY length is sorted the same way: pad it to `2^ k.+2 with a  *)
+(* value above everything, run the program, and drop the padding, which the  *)
+(* sort has pushed to the end                                                *)
+Theorem avx2_prog_pad (t : n.-tuple A) (s : seq A) (T : A) j :
+  (forall x, (x <= T)%O) -> t = s ++ nseq j T :> seq A ->
+  take (size s) (pfun (@avx2_prog n dvdn_e2n64) t) = sort <=%O s.
+Proof.
+move=> hT tE.
+rewrite (pfun_sort _ sorting_avx2) tE sort_cat_nseq_top //.
+by rewrite take_cat size_sort ltnn subnn take0 cats0.
+Qed.
+
+Corollary sorted_avx2_prog_pad (t : n.-tuple A) (s : seq A) (T : A) j :
+  (forall x, (x <= T)%O) -> t = s ++ nseq j T :> seq A ->
+  sorted <=%O (take (size s) (pfun (@avx2_prog n dvdn_e2n64) t)).
+Proof.
+by move=> hT tE; rewrite (avx2_prog_pad hT tE) (sort_sorted (@le_total _ _)).
+Qed.
+
+Corollary perm_avx2_prog_pad (t : n.-tuple A) (s : seq A) (T : A) j :
+  (forall x, (x <= T)%O) -> t = s ++ nseq j T :> seq A ->
+  perm_eq (take (size s) (pfun (@avx2_prog n dvdn_e2n64) t)) s.
+Proof.
+by move=> hT tE; rewrite (avx2_prog_pad hT tE); exact: (permEl (perm_sort _ _)).
+Qed.
+
 End Sorting.
 
 End Link.

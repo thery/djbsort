@@ -499,6 +499,26 @@ Corollary sorted_pfun (p : prog) t :
   pnetwork p \is sorting -> sorted <=%O (pfun p t).
 Proof. by move=> pS; rewrite pfun_pnetwork sorting_sorted. Qed.
 
+(* a move only rearranges the array                                          *)
+Lemma perm_pmove (s : 'S_m) (t : m.-tuple A) : perm_eq (pmove s t) t.
+Proof.
+rewrite perm_sym; apply/tuple_permP; exists (s^-1)%g.
+by rewrite -{1}(map_tnth_enum t); apply: eq_map => i; rewrite tnth_pmove permKV.
+Qed.
+
+(* so a program whose network sorts returns the sorted array itself, which is *)
+(* what padding arguments need                                                *)
+Corollary pfun_sort (p : prog) (t : m.-tuple A) :
+  pnetwork p \is sorting -> pfun p t = sort <=%O t :> seq A.
+Proof.
+move=> pS; apply: (sorted_eq (@le_trans _ _) (@le_anti _ _)).
+- exact: sorted_pfun.
+- exact: (sort_sorted (@le_total _ _)).
+apply: (perm_trans (_ : perm_eq (pfun p t) t)).
+  by rewrite pfun_pnetwork; apply: perm_trans (perm_nfun _ _) (perm_pmove _ _).
+by rewrite perm_sym; exact: (permEl (perm_sort _ _)).
+Qed.
+
 End Prog.
 
 (* -------------------------------------------------------------------------- *)
