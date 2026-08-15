@@ -1,0 +1,622 @@
+#set page(paper: "a4", margin: 2.4cm, numbering: "1")
+#set text(font: "New Computer Modern", size: 10.5pt)
+#set par(justify: true, leading: 0.62em)
+#set heading(numbering: "1.1")
+#show heading: it => block(above: 1.2em, below: 0.7em)[#it]
+#show raw: set text(font: "DejaVu Sans Mono", size: 8.6pt)
+#show figure.caption: set text(size: 9pt)
+// Every drawing sits in a light frame.
+#show figure: it => block(width: 100%)[
+  #block(width: 100%, stroke: 0.4pt + luma(140), inset: 9pt, radius: 2pt,
+         align(center, it.body))
+  #v(0.35em)
+  #align(center, it.caption)
+]
+
+#import "@preview/cetz:0.3.4"
+
+// File names link to the sources on GitHub.
+#let repo = "https://github.com/thery/djbsort/blob/main/"
+#let src(f) = link(repo + f, raw(f))
+
+// ---- drawing helpers ------------------------------------------------------
+
+// A network drawing: n wires, comparators given as (x, top, bottom).
+#let net(n, comps, width: 6, labels: (), marks: (), height: 0.62) = {
+  cetz.canvas(length: 1cm, {
+    import cetz.draw: *
+    for i in range(n) {
+      line((0, -i * height), (width, -i * height), stroke: 0.5pt + luma(90))
+      if labels.len() > 0 {
+        content((-0.45, -i * height), text(size: 8pt)[#labels.at(i)])
+      } else {
+        content((-0.45, -i * height), text(size: 8pt)[#i])
+      }
+    }
+    for c in comps {
+      let (x, a, b) = c
+      line((x, -a * height), (x, -b * height), stroke: 0.7pt)
+      circle((x, -a * height), radius: 0.055, fill: black)
+      circle((x, -b * height), radius: 0.055, fill: black)
+    }
+    for mk in marks {
+      let (x, i, s) = mk
+      content((x, -i * height + 0.3), text(size: 7.5pt, fill: rgb("#9a3412"))[#s])
+    }
+  })
+}
+
+#align(center)[
+  #text(size: 17pt)[*From C to Rocq*]
+
+  #v(0.3em)
+  #text(size: 11.5pt)[How a fast sorting routine is proved correct]
+
+  #v(0.4em)
+  #text(size: 10pt)[Laurent Théry]
+  #v(0.2em)
+  #text(size: 9.5pt)[INRIA, Stamp Team \
+    #link("mailto:Laurent.Thery@inria.fr")[Laurent.Thery\@inria.fr]]
+]
+
+#v(1.2em)
+
+#align(center)[#block(width: 88%, inset: (x: 0pt))[
+  #set text(size: 9.8pt)
+  #set par(justify: true)
+  *Abstract.* djbsort is a small C library that sorts arrays of 32-bit
+  integers. It is fast, and it is careful: the comparisons it makes never
+  depend on the values it is sorting. This note explains, step by step, how
+  its two implementations --- the portable one and the one written with AVX2
+  vector instructions --- have been proved to sort, in the Rocq prover. It is
+  written for readers who know neither sorting networks nor Rocq. Every idea
+  is introduced with a small example, and the real code is shown only after
+  the idea is clear.
+]]
+
+#v(0.8em)
+
+= The programs, and what makes them special
+
+A word first on the tool. Rocq --- until recently called Coq --- is a proof
+assistant. One writes definitions and statements in it, and then a proof, and
+the machine checks every step. Nothing is believed because it looks right.
+When a proof is finished, one can also ask the machine which assumptions it
+rests on; the answer for the proofs described here is "none".
+
+djbsort sorts an array. What it never does is ask "is this value smaller than
+that one?" and then take one road or the other. Instead it uses a single small
+step, applied to a fixed pair of places in the array:
+
+```c
+#define int32_MINMAX(a,b) \
+do { \
+  int32 ab = b ^ a;  int32 c = b - a; \
+  c ^= ab & (c ^ b); c >>= 31; c &= ab; \
+  a ^= c; b ^= c;    \
+} while(0)
+```
+
+The details do not matter here. What matters is the effect: after the step,
+`a` holds the smaller of the two values and `b` the larger. There is no `if`.
+The processor performs the same instructions whatever the data, which is what
+makes the routine constant-time, and useful in cryptography.
+
+We call one such step a *comparison*, and write it as a pair of places, for
+instance $(3, 5)$: compare what is in place 3 with what is in place 5, and put
+the smaller one in place 3.
+
+Because there is no branching on data, the *sequence of pairs* the program
+uses is decided in advance. It depends on the length of the array, and on
+nothing else. A program of this shape is called a *sorting network*, and the
+whole verification rests on that one observation.
+
+#figure(
+  net(4, ((1, 0, 1), (1, 2, 3), (2.2, 0, 2), (2.2, 1, 3), (3.4, 1, 2)),
+      width: 4.4),
+  caption: [A network on four places. Time runs left to right. Each vertical
+    bar is one comparison: the smaller value goes to the upper end, the larger
+    to the lower one. This one sorts any four values.],
+) <fournet>
+
+It is worth running one input through @fournet by hand, because everything
+later is about such lists of pairs. The network is
+$(0,1), (2,3), (0,2), (1,3), (1,2)$, and we start from $3, 1, 4, 2$:
+
+#align(center)[
+  #table(columns: 3, stroke: none, inset: (x: 9pt, y: 3pt),
+    align: (left, left, left),
+    table.hline(),
+    table.header(text(weight: "bold")[comparison], text(weight: "bold")[array],
+                 text(weight: "bold")[what happened]),
+    table.hline(stroke: 0.5pt),
+    [--], [3 1 4 2], [the input],
+    [$(0,1)$], [1 3 4 2], [3 and 1 were in the wrong order],
+    [$(2,3)$], [1 3 2 4], [4 and 2 were in the wrong order],
+    [$(0,2)$], [1 3 2 4], [1 is already the smaller],
+    [$(1,3)$], [1 3 2 4], [3 is already the smaller],
+    [$(1,2)$], [1 2 3 4], [the last two settle],
+    table.hline(),
+  )
+]
+
+= Why one can check a network with zeros and ones
+
+Suppose someone hands you a network on four places, like @fournet, and claims
+it sorts. How would you check it? Trying every possible input is hopeless:
+there are far too many arrays of four 32-bit integers.
+
+There is a classical way out, and it is the first idea of the whole
+development.
+
+#block(inset: (left: 1em, right: 1em), stroke: (left: 2pt + luma(200)),
+       above: 0.8em, below: 0.8em)[
+  *The zero-one principle.* If a network sorts every array made only of zeros
+  and ones, then it sorts every array of numbers.
+]
+
+Here is why, in one paragraph. Take any array that the network fails to sort,
+and look at the first place where the output is too large: some value $v$ ends
+up above some value $u$ with $u < v$. Now replace, in the original input,
+every value below $v$ by 0 and every value from $v$ upwards by 1, and run the
+network again. A comparison behaves in exactly the same way as before --- the
+smaller of two values stays the smaller after the replacement --- so the
+zeros and ones travel along the same wires as the values they came from. Hence
+the output has a 1 where $v$ was and a 0 where $u$ was, in the wrong order. So
+a network that sorts all arrays of zeros and ones cannot fail.
+
+For four places this brings the check down from "all arrays of integers" to
+sixteen cases, which one can do by hand. In Rocq the property is stated
+directly in that form:
+
+```coq
+Definition sorting :=
+  [qualify n | [forall r : m.-tuple bool, sorted <=%O (nfun n r)]].
+```
+
+Word by word:
+
+- `m.-tuple bool` is an array of exactly `m` booleans, so `r` ranges over
+  arrays of zeros and ones;
+- `nfun n r` runs the network `n` on the array `r`;
+- `sorted <=%O` says the result is in increasing order;
+- `[forall r ...]` says this holds for every such array;
+- `n \is sorting` is then read "n is a sorting network".
+
+This is still $2^m$ cases, so for a real array --- a thousand places, say ---
+one does not check them but proves the statement. Only the very small pieces,
+such as the fixed batches of five or twelve comparisons the AVX2 code contains,
+are settled by letting the machine try all cases.
+
+= The shape of the proof
+
+There are two objects, and they are not the same kind of thing.
+
+On one side there is a *network* that mathematics knows how to reason about,
+and that can be proved to sort by induction: Batcher's bitonic sorter for the
+AVX2 code, Knuth's merge exchange for the portable code. On the other side
+there is a *program*: loops, vector registers, shuffles, masks.
+
+The proof therefore has three parts: the network, the program, and a bridge
+saying that the program performs the comparisons of the network.
+
+#figure(
+  cetz.canvas(length: 1cm, {
+    import cetz.draw: *
+    let box(x, y, w, h, title, body) = {
+      rect((x, y), (x + w, y - h), stroke: 0.5pt, fill: luma(250), radius: 2pt)
+      content((x + w / 2, y - 0.42), text(size: 9.5pt, weight: "bold")[#title])
+      content((x + w / 2, y - h / 2 - 0.25), text(size: 8.5pt)[#body])
+    }
+    box(0, 0, 4.2, 2.1, [the program], [a list of instructions: \ compare, shuffle])
+    box(6.6, 0, 4.2, 2.1, [the network], [a list of comparisons, \ proved to sort])
+    line((4.35, -1.05), (6.45, -1.05), mark: (end: ">", start: ">"), stroke: 0.7pt)
+    content((5.4, -0.62), text(size: 8.5pt)[same comparisons])
+    content((5.4, -1.48), text(size: 8.5pt)[different order])
+  }),
+  caption: [The two sides and the bridge between them. The left box is what
+    the machine runs; the right box is what one can reason about; the bridge
+    says they perform the same comparisons.],
+) <layers>
+
+The left box is built once and for all as a small language. The right box is
+classical mathematics. Almost all the work is in the bridge, and the rest of
+this note is about the five techniques it needs.
+
+= Technique one: writing the program down
+
+A program is written as a list of instructions. There are only three of them:
+
+```coq
+Inductive item : Type :=
+  | Cmp   of nat * nat            (* one compare-exchange *)
+  | Vcmp  of seq (nat * nat)      (* one vector compare-exchange: its lanes *)
+  | Vshuf of cperm m.             (* one vector lane shuffle *)
+```
+
+- `Cmp (3, 5)` is the scalar step of section 1: compare places 3 and 5.
+- `Vcmp` is the same thing done by the vector unit. One AVX2 instruction
+  compares eight pairs at once, so the instruction carries the list of the
+  eight pairs it performs.
+- `Vshuf` moves values about without comparing anything. This is what a lane
+  shuffle or a transpose does.
+
+A list of such instructions is a `prog`. There are then two ways to read a
+program, and the difference between them is the heart of the matter.
+
+*Running it.* `pfun p t` takes an array `t` and returns the array after the
+program has run. This is what the machine does.
+
+*Reading it.* `pflat p` walks through the program and collects the pairs it
+compares, ignoring the shuffles. That gives a plain list of comparisons ---
+exactly the right-hand box of @layers.
+
+The catch is that a shuffle changes what "place 3" means. Suppose a program
+first exchanges the values in places 1 and 2, and then compares places 0 and 1.
+In terms of the values, the comparison is between the value that started in
+place 0 and the one that started in place 2.
+
+#figure(
+  cetz.canvas(length: 1cm, {
+    import cetz.draw: *
+    let w = 0.7
+    let cell(x, y, l, fill) = {
+      rect((x, y), (x + w, y - w), stroke: 0.4pt, fill: fill)
+      content((x + w / 2, y - w / 2), text(size: 9pt)[#l])
+    }
+    let pale = rgb("#eef2f7")
+    let hot = rgb("#f7dcd7")
+    // place numbers
+    for i in range(4) {
+      content((i * w + w / 2, 0.35), text(size: 7.5pt, fill: luma(90))[#i])
+    }
+    content((-1.5, -w / 2), text(size: 9pt)[before], anchor: "west")
+    cell(0, 0, [a], pale); cell(w, 0, [b], hot); cell(2 * w, 0, [c], hot)
+    cell(3 * w, 0, [d], pale)
+    line((4 * w + 0.35, -w / 2), (4 * w + 1.0, -w / 2),
+         mark: (end: ">"), stroke: 0.7pt)
+    content((4 * w + 1.2, -w / 2),
+            text(size: 9pt)[the shuffle swaps places 1 and 2], anchor: "west")
+    content((-1.5, -1.6 - w / 2), text(size: 9pt)[after], anchor: "west")
+    cell(0, -1.6, [a], pale); cell(w, -1.6, [c], hot)
+    cell(2 * w, -1.6, [b], hot); cell(3 * w, -1.6, [d], pale)
+    line((w / 2, -2.55), (w + w / 2, -2.55), stroke: 0.8pt)
+    circle((w / 2, -2.55), radius: 0.06, fill: black)
+    circle((w + w / 2, -2.55), radius: 0.06, fill: black)
+    content((4 * w + 1.2, -1.6 - w / 2),
+            text(size: 9pt)[the code then compares places 0 and 1,],
+            anchor: "west")
+    content((4 * w + 1.2, -2.55),
+            text(size: 9pt)[which hold the values #raw("a") and #raw("c")],
+            anchor: "west")
+  }),
+  caption: [A shuffle changes the meaning of a place. The comparison that the
+    code writes as $(0, 1)$ is, in terms of values, the pair $(a, c)$.],
+) <shuffle>
+
+So `pflat` does not record the pair the code writes down. It records the pair
+*renamed by all the moves made so far*. In the example it records $(0, 2)$,
+because the value called `c` began life in place 2. Every comparison is then
+named in one fixed way, and the list can be compared with a network.
+
+There is one more twist, and it is the reason the AVX2 proof is arranged the
+way it is. The program ends with a big shuffle: the values come out of the
+vector registers in an order that has to be undone. Rather than track that at
+every step, all comparisons are named by *the place the value ends up in* when
+the program finishes. Nothing is lost: it is a change of names, applied
+everywhere.
+
+= Technique two: the same comparisons in a different order
+
+Now both sides are lists of comparisons, and one would like them to be equal.
+They are not, and they cannot be.
+
+The network wants to work *distance by distance*: compare everything a
+thousand apart, then everything five hundred apart, and so on. The program
+cannot afford that. A vector instruction handles eight pairs at once, and it
+is only worth issuing if all eight are ready. So the code works *region by
+region*: it takes a block of the array, does every distance inside that block
+while the values are still in registers, and only then moves on.
+
+Both orders contain the same comparisons. The question is whether the order
+matters.
+
+#figure(
+  grid(columns: (auto, 1.4cm, auto),
+    net(4, ((1, 0, 1), (2.2, 2, 3)), width: 3.2),
+    [],
+    net(4, ((1, 2, 3), (2.2, 0, 1)), width: 3.2),
+  ),
+  caption: [The same two comparisons in the two possible orders. They touch
+    four different places, so nothing can change: whichever is done first, the
+    result is the same.],
+) <swap>
+
+That is the whole idea, and it is worth stating plainly.
+
+#block(inset: (left: 1em, right: 1em), stroke: (left: 2pt + luma(200)),
+       above: 0.8em, below: 0.8em)[
+  *Two comparisons that share no place may be swapped.* Doing $(0,1)$ then
+  $(2,3)$ gives the same array as doing $(2,3)$ then $(0,1)$.
+]
+
+In Rocq, "sharing no place" is a small test on two pairs, and one swap is one
+step of a relation between lists:
+
+```coq
+Definition dpair (ab cd : nat * nat) : bool :=
+  [&& ab.1 != cd.1, ab.1 != cd.2, ab.2 != cd.1 & ab.2 != cd.2].
+
+Inductive dswap (n : nat) : seq (nat * nat) -> seq (nat * nat) -> Prop :=
+  dswap_step ps ab cd qs of
+    bnd n ab & bnd n cd & dpair ab cd :
+      dswap n (ps ++ ab :: cd :: qs) (ps ++ cd :: ab :: qs).
+
+Inductive dequiv (n : nat) : seq (nat * nat) -> seq (nat * nat) -> Prop :=
+| dequiv_refl l : dequiv n l l
+| dequiv_step l1 l2 l3 of dswap n l1 l2 & dequiv n l2 l3 : dequiv n l1 l3.
+```
+
+- `dpair ab cd` says the two pairs have no place in common.
+- `dswap n l1 l2` says: the two lists are the same except that somewhere in
+  the middle two neighbouring comparisons, which share no place, have changed
+  order. `bnd n` only says that the places are inside the array.
+- `dequiv n l1 l2` says: one list can be turned into the other by a run of
+  such swaps.
+
+And the payoff, proved once:
+
+```coq
+Lemma nfun_dequiv n (l1 l2 : seq (nat * nat)) (t : n.-tuple A) :
+  dequiv n l1 l2 -> nfun (pnet n l1) t = nfun (pnet n l2) t.
+```
+
+In words: lists related by `dequiv` compute the same function. So if the
+program's list is a reordering of the network's list, and the network sorts,
+then the program sorts.
+
+== Doing it without moving one comparison at a time
+
+Swapping neighbours is fine on paper, but the two orders differ by millions of
+swaps. Writing them out is not an option. What is needed is a way to justify a
+whole rearrangement at once, and here it is.
+
+Give every comparison a *colour*, with two conditions:
+
++ two comparisons of different colours never share a place;
++ both lists, read from left to right, contain each colour in the same order.
+
+Then the two lists are related by `dequiv`. The reason is short: a comparison
+only ever has to move past comparisons of another colour, and those it may
+move past freely, by the rule above.
+
+#figure(
+  grid(columns: (auto, 1.2cm, auto),
+    net(4, ((0.8, 0, 1), (1.8, 0, 1), (2.8, 2, 3), (3.8, 2, 3)),
+        width: 4.6, marks: ((0.8, 0, "1"), (1.8, 0, "2"), (2.8, 2, "3"),
+                            (3.8, 2, "4"))),
+    [],
+    net(4, ((0.8, 0, 1), (1.8, 2, 3), (2.8, 0, 1), (3.8, 2, 3)),
+        width: 4.6, marks: ((0.8, 0, "1"), (1.8, 2, "3"), (2.8, 0, "2"),
+                            (3.8, 2, "4"))),
+  ),
+  caption: [Colour by the half of the array a comparison lives in. The left
+    listing does the top half first; the right listing alternates. Different
+    colours never share a place, and each colour is read in the same order
+    (1 then 2, 3 then 4), so the two compute the same thing.],
+) <colour>
+
+This is exactly the situation of @layers: the program goes region by region,
+the network goes distance by distance, and the colour of a comparison is the
+region it belongs to. In Rocq the statement is
+
+```coq
+Lemma dequiv_colour n (c : nat * nat -> nat) (m : nat) (l1 l2 : seq (nat * nat)) :
+  ... (* both lists are in range, and every colour is below m *)
+  (forall g, g < m -> [seq ab <- l1 | c ab == g] = [seq ab <- l2 | c ab == g]) ->
+  dequiv n l1 l2.
+```
+
+where `c` is the colouring, and the last line is condition 2: filtering either
+list by a colour gives the same list. This single lemma settles the reordering
+in both programs. Only the colouring changes: for the portable code it is the
+position a chain of comparisons starts at; for the AVX2 code it is the group of
+eight, or of sixty-four, that a value belongs to.
+
+= Technique three: sorting downwards without any downward code
+
+Networks like the bitonic sorter do not only sort upwards. Half of the work is
+sorting a block *downwards*, so that the two halves together can be merged.
+
+The code contains no downward comparison. It does something cleverer: before
+a block is sorted downwards, every value in it is complemented --- all bits
+flipped, which reverses the order --- then the block is sorted upwards as
+usual, and complemented back at the end. Complementing twice does nothing, so
+the complements of neighbouring stages cancel, and in the real code the flips
+are folded into a running *mask*: a pattern that says, for each place, whether
+the value sitting there is currently complemented.
+
+Here it is on two values. Sorting $(3, 7)$ downwards should give $(7, 3)$.
+Complement the two values, which turns 3 into $-4$ and 7 into $-8$: the pair
+is $(-4, -8)$. Sort it upwards: $(-8, -4)$. Complement back: $(7, 3)$, which
+is what was wanted. The sort itself never knew about the direction.
+
+The proof therefore has to carry that pattern. It is written as a predicate:
+
+```coq
+Definition dflP (K : nat) (fl : flips) : Prop :=
+  size fl = n /\ forall i, i < n -> nth false fl i = dfl K i.
+```
+
+which reads: the mask `fl` has one bit per place, and its bit at place `i` is
+the bit the merge of size `K` asks for. The proof then shows that each pass of
+the program keeps this invariant: a shuffle carries the mask with the data, a
+mask instruction exclusive-ors a pattern into it, and after the last merge the
+mask is all false --- nothing is complemented, which is what "sorted upwards"
+requires.
+
+= Technique four: a loop nest is a recursion
+
+Textbooks write the bitonic sorter recursively: sort the two halves in
+opposite directions, then merge. The code does no such thing. It runs a loop
+nest, and its innermost line is the one everybody recognises:
+
+```c
+for (k = 2; k <= n; k *= 2)
+  for (j = k/2; j >= 1; j /= 2)
+    for (i = 0; i < n; i++)
+      if ((i & j) == 0)
+        compare(i, i ^ j, ascending: (i & k) == 0);
+```
+
+Two whole numbers decide everything: the partner of place `i` is `i` with one
+bit turned over, and the direction is another bit of `i`. Nothing else.
+
+Are the loop nest and the recursion the same network? Yes, and this is now a
+theorem rather than a belief. Take eight places. The loop nest runs, in order:
+
+#align(center)[
+  #table(columns: 4, stroke: none, inset: (x: 9pt, y: 3pt),
+    align: (left, left, left, left),
+    table.hline(),
+    table.header(text(weight: "bold")[round], text(weight: "bold")[distances],
+                 text(weight: "bold")[what it achieves],
+                 text(weight: "bold")[in the recursion]),
+    table.hline(stroke: 0.5pt),
+    [k = 2], [1], [pairs sorted, alternately up and down], [the two halves of a half],
+    [k = 4], [2, 1], [runs of four, alternately up and down], [the two halves],
+    [k = 8], [4, 2, 1], [the whole array sorted], [the final merge],
+    table.hline(),
+  )
+]
+
+The first two rounds are the two halves of the array being sorted in opposite
+directions --- which is what the recursion asks for --- and the last round is
+the merge. The bit `i & k` is what makes the second half go the other way. In
+Rocq this is proved as an equality of networks, stage by stage, flips included:
+
+```coq
+Theorem isort_pbsort k : isort k = pbsort false k.
+```
+
+`isort` is the loop nest, written down as a network; `pbsort` is the recursive
+sorter, proved to sort by induction. Before this theorem, the correspondence
+was checked by running both and comparing traces, for small sizes only.
+
+= Technique five: reading the loops of the portable code
+
+The portable code is Knuth's merge exchange, and it has the same difficulty in
+a different dress. Its inner loop walks a *chain*: it takes one place, and
+compares it with places further and further away, halving the distance each
+time. The network wants the opposite grouping: all the longest comparisons
+first, then all the next longest, and so on.
+
+So the two lists are the same comparisons in a different order once more, and
+the same colouring machinery applies. Two facts do all the work:
+
+- a doubled sweep and the alternating one differ only by comparisons on even
+  places against comparisons on odd places, which never share a place;
+- pulling the longest comparison out of every chain is legitimate, because a
+  later chain's long comparison shares no place with an earlier chain's short
+  ones.
+
+Both are instances of the lemmas of section 5, and both used to be proved from
+scratch, at the level of functions rather than lists. The programs are quite
+different; the argument is the same one twice.
+
+= What is proved, and what is not
+
+The three main statements are these.
+
+#align(center)[
+  #table(columns: 2, stroke: none, inset: (x: 8pt, y: 4pt), align: (left, left),
+    table.hline(),
+    table.header(text(weight: "bold")[statement], text(weight: "bold")[what it says]),
+    table.hline(stroke: 0.5pt),
+    raw("sorted_avx2_prog"),
+    [running the model of the AVX2 program returns a sorted array],
+    raw("sorting_int32_sort_network"),
+    [the comparison sequence of the portable code sorts, for every length],
+    raw("isort_pbsort"),
+    [the loop nest of the generic AVX2 sort *is* the bitonic network],
+    table.hline(),
+  )
+]
+
+Each of them is closed: asking Rocq `Print Assumptions` on any of them answers
+_closed under the global context_, which means no axiom and no unfinished
+proof is involved.
+
+The three statements do not cover the same ground, and it is worth being
+precise. The portable statement holds for every length. The AVX2 statement is
+about arrays whose length is a power of two and at least sixty-four, which is
+the case the vector code is written for; shorter arrays are handled by a
+separate piece of that code, and lengths that are not powers of two by padding
+the array with a value above everything else and dropping the padding
+afterwards, which is proved once and for all in
+#src("code/avx2/proof/sort_generic.v").
+
+What is *not* proved is the step from the C text to the model of it. In the
+portable track that gap is written down honestly, as the only assumption in
+the development:
+
+```coq
+Parameter sortc_trace : nat -> seq (nat * nat).
+Axiom sortc_faithful : forall n, sortc_trace n = me_pairs n.
+```
+
+which says: the comparisons the C source really performs are the ones the
+proof works with. Closing it needs a semantics for C, which is a separate
+undertaking. In the meantime the transcription is checked by running both and
+comparing the traces, for many sizes, with the small OCaml programs in
+#src("code/avx2/ml/") and #src("code/portable4/ml/"). The AVX2 track has no
+such axiom written down yet; its model of #src("code/avx2/c/sort_short.c") is
+compared against the C in the same, informal, way.
+
+= The files
+
+#align(center)[
+  #table(columns: 3, stroke: none, inset: (x: 8pt, y: 3.5pt),
+    align: (left, right, left),
+    table.hline(),
+    table.header(text(weight: "bold")[file], text(weight: "bold")[lines],
+                 text(weight: "bold")[what is in it]),
+    table.hline(stroke: 0.5pt),
+    src("code/common/nsort.v"), [804], [networks, and what it means to sort],
+    src("code/common/nbitonic.v"), [664], [the bitonic sorter],
+    src("code/common/nalgebra.v"), [1730], [the algebra of comparisons: `dequiv` and its toolkit],
+    src("code/common/nprog.v"), [731], [programs: `Cmp`, `Vcmp`, `Vshuf`, and `pflat`],
+    src("code/portable4/proof/nbjsort.v"), [1291], [Knuth's merge exchange],
+    src("code/portable4/proof/int32_knuth.v"), [602], [the portable code is that network],
+    src("code/avx2/proof/sort_generic.v"), [592], [the bitonic network, and the loop nest],
+    src("code/avx2/proof/sort_transpose.v"), [722], [the transpose realisation],
+    src("code/avx2/proof/sort_prog.v"), [596], [djbsort's AVX2 code, as a program],
+    src("code/avx2/proof/sort_link.v"), [4396], [the bridge for the AVX2 code],
+    table.hline(),
+  )
+]
+
+The bridge is by far the largest file, which is the honest summary of this
+note: proving that a network sorts is textbook work, and proving that a real
+program performs that network is where the effort goes.
+
+= What to take away
+
+The recipe, in five steps.
+
++ *Make the program branch-free.* Then the comparisons it performs are fixed
+  in advance, and the program is a network.
++ *Use zeros and ones.* Sorting is settled by the two-valued case, which is
+  what makes induction on networks work at all.
++ *Write the program down in a small language,* and read off the comparisons
+  it performs, renaming as the shuffles move values about.
++ *Prove that the order does not matter,* by colouring the comparisons so that
+  different colours never touch the same place.
++ *Deal with the tricks separately:* complementing values instead of sorting
+  downwards, and a loop nest instead of a recursion. Each is a small theorem
+  once it is stated in the right way.
+
+The last step is the one that keeps its shape across very different programs.
+The AVX2 code and the portable code look nothing alike, and both come down to
+the same sentence: the program compares the same pairs as the network, in an
+order that costs nothing.
