@@ -7,4 +7,5 @@ more_tuple.v
 nsort.v
 nbitonic.v
 nalgebra.v
+nprune.v
 nprog.v
