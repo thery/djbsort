@@ -21,6 +21,8 @@ Import Order POrderTheory TotalTheory.
 (*    sorted_hcr_prune  and the bitonic merge, pruned, still sorts an array   *)
 (*                      that falls and then rises -- which is what the code   *)
 (*                      does for a length that is not a power of two          *)
+(*    sorted_merge_cat  the same, as the code's recursion uses it: sort the   *)
+(*                      first block downwards, the rest upwards, then merge   *)
 (*                                                                            *)
 (******************************************************************************)
 
@@ -210,4 +212,21 @@ have Hs : sorted <=%O (nfun (pnet N ps) (padt N t)).
   by apply: (sorted_half_cleaner_rec false).
 rewrite (nfun_pnet_padt _ allps) (val_padt _ nLN) in Hs.
 exact: (subseq_sorted le_trans (prefix_subseq _ _) Hs).
+Qed.
+
+(* the shape the code's recursion has: whatever it did first, if it left the *)
+(* array falling and then rising, the pruned merge finishes the sort         *)
+Theorem sorted_merge_cat (p n q : nat) (l : seq (nat * nat)) (t : n.-tuple bool) :
+  n <= `2^ p ->
+  sorted >=%O (take q (nfun (pnet n l) t)) ->
+  sorted <=%O (drop q (nfun (pnet n l) t)) ->
+  sorted <=%O
+    (nfun (pnet n (l ++ [seq ab <- nstages (half_cleaner_rec false p)
+                        | ab.2 < n])) t).
+Proof.
+move=> nLN takeS dropS.
+rewrite /pnet pmap_cat -/(pnet n l) -/(pnet n _) nfun_cat.
+apply: (sorted_hcr_prune (s1 := take q (nfun (pnet n l) t))
+                         (s2 := drop q (nfun (pnet n l) t))) => //.
+by rewrite cat_take_drop.
 Qed.
