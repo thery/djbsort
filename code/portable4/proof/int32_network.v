@@ -1,6 +1,6 @@
 From mathcomp Require Import all_boot order perm algebra.zmodp.
 From mathcomp Require Import zify.
-Require Import more_tuple nsort nbitonic nalgebra nprune.
+Require Import more_tuple nsort nbitonic nalgebra nprune nrec nlevel.
 
 Import Order POrderTheory TotalTheory.
 
@@ -88,9 +88,8 @@ Fixpoint halves (fuel x : nat) : seq nat :=
 (* (i bitand p) = r, compare/exchange (i, i+d) -- using                       *)
 (*    (i bitand p) = 0  <->  ~~ odd (i %/ p)     (r = 0, the base pass)       *)
 (*    (i bitand p) = p  <->     odd (i %/ p)     (r = p, the merge cascade)   *)
-Definition level_pairs (N p d : nat) (b : bool) : seq (nat * nat) :=
-  [seq (i, i + d) |
-     i <- [seq i <- iota 0 N | (i + d < N) && (odd (i %/ p) == b)]].
+(* level_pairs itself now lives in common/nlevel.v, where the merge is        *)
+(* proved to be its levels.                                                   *)
 
 (* The merge cascade at base distance p, IN sort.c's EXACT ORDER.             *)
 (* For each base position j (p-bit of j clear, lines 40/50), sort.c keeps     *)
