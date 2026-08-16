@@ -20,6 +20,11 @@ Import Order POrderTheory TotalTheory.
 (*                    p-bit of i equal to b, in increasing i                  *)
 (*    nstages_half_cleaner_rec                                                *)
 (*                    the merge IS those levels, largest distance first       *)
+(*    mm a b len      what minmax_vector(&x[a], &x[b], len) compares          *)
+(*    level_pairs_blocks                                                      *)
+(*                    and one level is the whole blocks of 2d wires, one      *)
+(*                    after the other, then a ragged tail -- the shape stage  *)
+(*                    followed by minmax_vector has                           *)
 (*                                                                            *)
 (*  It is the first step towards reading the merge loop of sort_short.c,      *)
 (*  which walks one distance at a time and, at each of them, does the whole   *)
@@ -228,3 +233,122 @@ Proof.
 move=> nLN; rewrite nstages_half_cleaner_rec filter_flatten -map_comp.
 by congr flatten; apply/eq_in_map => d _ /=; apply: filter_level_pairs.
 Qed.
+
+(* -------------------------------------------------------------------------- *)
+(*  One level, as code runs it: whole blocks, then a ragged tail              *)
+(* -------------------------------------------------------------------------- *)
+
+(* what minmax_vector(&x[a], &x[b], len) compares *)
+Definition mm (a b len : nat) : seq (nat * nat) :=
+  [seq (a + i, b + i) | i <- iota 0 len].
+
+Lemma filter_iota_ltn (a b : nat) :
+  [seq i <- iota 0 a | i < b] = iota 0 (minn a b).
+Proof.
+elim: a => [|a IH]; first by rewrite min0n.
+rewrite -addn1 iotaD filter_cat IH add0n /=.
+have [aLb|bLa] := ltnP a b.
+  by rewrite addn1 (minn_idPl aLb) -addn1 iotaD add0n.
+by rewrite cats0 (minn_idPr _) //; lia.
+Qed.
+
+(* the whole blocks: a level lists them one after the other *)
+Lemma filter_level_blocks (d M n : nat) : 0 < d -> M * d.*2 <= n ->
+  [seq i <- iota 0 (M * d.*2) | (i + d < n) && (odd (i %/ d) == false)]
+    = flatten [seq iota (m * d.*2) d | m <- iota 0 M].
+Proof.
+move=> d_gt0; elim: M => [|M IH] MLn; first by rewrite mul0n.
+have MLn' : M * d.*2 <= n.
+  by apply: leq_trans MLn; rewrite leq_pmul2r ?double_gt0.
+rewrite mulSnr iotaD add0n filter_cat IH //.
+rewrite -addn1 iotaD map_cat flatten_cat /= cats0; congr (_ ++ _).
+have -> : iota (M * d.*2) d.*2 = [seq M * d.*2 + s | s <- iota 0 d.*2].
+  by rewrite -iotaDl addn0.
+rewrite filter_map.
+have -> : [seq s <- iota 0 d.*2
+             | preim (fun s => M * d.*2 + s)
+                 (fun i => (i + d < n) && (odd (i %/ d) == false)) s]
+        = [seq s <- iota 0 d.*2 | s < d].
+  apply: eq_in_filter => s; rewrite mem_iota /= add0n => sLd2.
+  have -> : M * d.*2 + s = (M * 2) * d + s by rewrite -mulnA mul2n.
+  rewrite divnMDl // oddD oddM /= andbF /=.
+  have [sLd|dLs] := ltnP s d.
+    rewrite divn_small //= eqxx andbT.
+    by move: MLn; rewrite mulSnr -addnn; lia.
+  have s1 : s = 1 * d + (s - d) by rewrite mul1n subnKC.
+  have sE : s %/ d = 1.
+    rewrite {1}s1 divnMDl // divn_small ?addn0 //.
+    by move: sLd2; rewrite -addnn; lia.
+  by rewrite sE andbF.
+by rewrite filter_iota_ltn (minn_idPr _) ?add0n -?addnn ?leq_addl //
+           -iotaDl addn0.
+Qed.
+
+Lemma mmE (a d len : nat) :
+  mm a (a + d) len = [seq (j, j + d) | j <- iota a len].
+Proof.
+rewrite /mm.
+have -> : iota a len = [seq a + i | i <- iota 0 len] by rewrite -iotaDl addn0.
+rewrite -map_comp; apply: eq_map => i /=.
+by rewrite [a + d + i]addnAC.
+Qed.
+
+Lemma filter_level_iota (n d : nat) : 0 < d ->
+  [seq i <- iota 0 n | (i + d < n) && (odd (i %/ d) == false)]
+    = flatten [seq iota (m * d.*2) d | m <- iota 0 (n %/ d.*2)]
+        ++ iota (n %/ d.*2 * d.*2) (n - d - n %/ d.*2 * d.*2).
+Proof.
+move=> d_gt0.
+have d2_gt0 : 0 < d.*2 by rewrite double_gt0.
+set M := n %/ d.*2; set r := n %% d.*2.
+have nE : n = M * d.*2 + r by rewrite -divn_eq.
+have nE' : n = M * 2 * d + r by rewrite {1}nE -mulnA mul2n.
+have rLd2 : r < d.*2 by rewrite ltn_mod.
+have MLn : M * d.*2 <= n by rewrite [X in _ <= X]nE leq_addr.
+rewrite [X in iota 0 X]nE iotaD add0n filter_cat filter_level_blocks //.
+congr (_ ++ _).
+have -> : iota (M * d.*2) r = [seq M * d.*2 + s | s <- iota 0 r].
+  by rewrite -iotaDl addn0.
+rewrite filter_map.
+have -> : [seq s <- iota 0 r
+             | preim (fun s => M * d.*2 + s)
+                 (fun i => (i + d < n) && (odd (i %/ d) == false)) s]
+        = [seq s <- iota 0 r | s < r - d].
+  apply: eq_in_filter => s; rewrite mem_iota /= add0n => sLr.
+  have -> : M * d.*2 + s = (M * 2) * d + s by rewrite -mulnA mul2n.
+  rewrite divnMDl // oddD oddM /= andbF /=.
+  have [sLd|dLs] := ltnP s d.
+    by rewrite divn_small //= eqxx andbT; move: nE'; lia.
+  have s1 : s = 1 * d + (s - d) by rewrite mul1n subnKC.
+  have sE : s %/ d = 1.
+    rewrite {1}s1 divnMDl // divn_small ?addn0 //.
+    by move: rLd2 sLr; rewrite -addnn; lia.
+  rewrite sE andbF; symmetry; apply/negbTE; rewrite -leqNgt.
+  by move: rLd2 dLs; rewrite -addnn; lia.
+rewrite filter_iota_ltn (minn_idPr (leq_subr _ _)) -iotaDl addn0.
+by congr iota; move: nE; lia.
+Qed.
+
+(* one level, as code runs it: the whole blocks one after the other, then     *)
+(* the ragged tail -- the shape of stage followed by minmax_vector            *)
+Theorem level_pairs_blocks (n d : nat) : 0 < d ->
+  level_pairs n d d false
+    = flatten [seq mm (m * d.*2) (m * d.*2 + d) d | m <- iota 0 (n %/ d.*2)]
+        ++ mm (n %/ d.*2 * d.*2) (n %/ d.*2 * d.*2 + d)
+              (n - d - n %/ d.*2 * d.*2).
+Proof.
+move=> d_gt0.
+rewrite /level_pairs filter_level_iota // map_cat mmE; congr (_ ++ _).
+rewrite map_flatten -!map_comp.
+by congr flatten; apply: eq_map => m /=; rewrite mmE.
+Qed.
+
+(* eleven wires at distance two: two whole blocks, then a tail of one *)
+Example level_pairs_11_2 :
+  level_pairs 11 2 2 false = [:: (0, 2); (1, 3); (4, 6); (5, 7); (8, 10)].
+Proof. by []. Qed.
+
+Example level_pairs_blocks_11_2 :
+  level_pairs 11 2 2 false
+    = flatten [seq mm (m * 4) (m * 4 + 2) 2 | m <- iota 0 2] ++ mm 8 10 1.
+Proof. by []. Qed.
