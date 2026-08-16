@@ -8,4 +8,5 @@ nsort.v
 nbitonic.v
 nalgebra.v
 nprune.v
+nrec.v
 nprog.v
