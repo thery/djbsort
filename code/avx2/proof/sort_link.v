@@ -4386,6 +4386,10 @@ rewrite (nfun_dequiv _ dequiv_avx2) nfun_dpairs; last by apply: leq_trans k_ge4.
 by rewrite (sorted_dsort false).
 Qed.
 
+(* the same, said of the list of pairs itself                                 *)
+Lemma sorting_avx2_list : pnet n avx2_list \is sorting.
+Proof. by have := sorting_avx2; rewrite /pnetwork -/avx2_list nsw_pnet. Qed.
+
 (* and hence the program sorts                                                *)
 Theorem sorted_avx2_prog (t : n.-tuple A) :
   sorted <=%O (pfun (@avx2_prog n dvdn_e2n64) t).

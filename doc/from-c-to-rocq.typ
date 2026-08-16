@@ -677,13 +677,83 @@ the same colouring machinery applies. Two facts do all the work:
   later chain's long comparison shares no place with an earlier chain's short
   ones.
 
-Both are instances of the lemmas of section 5, and both used to be proved from
+Both are instances of the lemmas of section 6, and both used to be proved from
 scratch, at the level of functions rather than lists. The programs are quite
 different; the argument is the same one twice.
 
+= Technique six: a length that is not a power of two
+
+A network is built for a fixed number of wires, and every sorter in this note
+has a power of two of them. Real code has to sort eleven elements as well.
+There are two ways out, and djbsort uses both.
+
+The first is *padding*. Fill the tail with a value above everything else, sort
+the lot, and drop the padding: the sort has pushed it to the end, so what is
+left in front is the answer. This is what the C does for a short array, and
+what `avx2_prog_pad` says.
+
+The second is *splitting at the top bit*, which is what `int32_sort_short`
+does for a long one. Eleven is $8 + 2 + 1$. Sort the first eight downwards,
+sort the remaining three the same way --- the routine calls itself --- and the
+array now falls and then rises. That is exactly the shape a bitonic merge
+undoes, so one merge finishes the job. Peel the top bit again and again and
+the blocks of the recursion are simply the bits of $n$, from the highest down.
+
+But a merge of eleven wires is not a network either. The code uses the merge
+of the next power of two, sixteen, and drops every comparison that reaches
+past place ten. Why that is sound is worth spelling out, because it is the one
+place where the padding idea reappears as an argument rather than as code.
+Imagine the five missing places filled with a value above everything. A
+comparison between two real places behaves as before. A comparison that
+reaches into the imaginary region compares a real value with the top value,
+puts the smaller --- the real one --- at the low place, and the top value at
+the high one, which is imaginary: nothing in the array has moved. So the
+pruned merge does to the eleven places exactly what the full merge would do to
+the padded sixteen, and the full merge sorts. That is `nfun_pnet_padt`, and
+the statement it gives is
+
+```coq
+Theorem sorted_hcr_prune (p n : nat) (s1 s2 : seq bool) (t : n.-tuple bool) :
+  n <= `2^ p -> sorted >=%O s1 -> sorted <=%O s2 -> t = s1 ++ s2 :> seq bool ->
+  sorted <=%O
+    (nfun (pnet n [seq ab <- nstages (half_cleaner_rec false p) | ab.2 < n]) t).
+```
+
+which reads: an array that falls and then rises is sorted by the merge of the
+next power of two, with the comparisons that leave the array filtered out.
+
+There is a trap in that argument. It only works when a comparison sends the
+smaller value to the *lower* place. Every comparison of the merge does. The
+comparisons of the block sorter do not --- half of them run downwards, which
+is the mask trick of section 7 seen from the list side. So the two ways out
+are not interchangeable: the merge may be pruned, the blocks must be padded.
+
+Sorting a block downwards, at the level of lists, is one line: turn every
+comparison round. Where the upward sorter compares $(a, b)$ --- smaller to
+$a$ --- the downward one compares $(b, a)$. That this really sorts downwards
+is the same complement argument as in section 7, now in two lines: flipping
+every value turns one comparison round, and flipping an ascending list gives a
+descending one.
+
+Put together, one recursive call is
+
+```coq
+Theorem sorting_smerge (p q m : nat) (l1 l2 : seq (nat * nat)) :
+  q + m <= `2^ p ->
+  all (fun ab => (ab.1 < q) && (ab.2 < q)) l1 ->
+  pnet q l1 \is sorting -> pnet m l2 \is sorting ->
+  pnet (q + m) (smerge p q m l1 l2) \is sorting.
+```
+
+--- whatever sorts the first block and whatever sorts the rest, the merge on
+top of them sorts the whole --- and the recursion is that lemma applied to the
+bits of $n$. Running it with djbsort's own AVX2 comparisons as the block
+sorter gives `sorting_avx2_short`, in
+#src("code/avx2/proof/sort_short.v"): a sorting network for every length.
+
 = What is proved, and what is not
 
-The three main statements are these.
+The four main statements are these.
 
 #align(center)[
   #table(columns: 2, stroke: none, inset: (x: 8pt, y: 4pt), align: (left, left),
@@ -696,6 +766,8 @@ The three main statements are these.
     [the comparison sequence of the portable code sorts, for every length],
     raw("isort_pbsort"),
     [the loop nest of the generic AVX2 sort *is* the bitonic network],
+    raw("sorting_avx2_short"),
+    [the AVX2 program, inside the recursion of section 10, sorts every length],
     table.hline(),
   )
 ]
@@ -704,14 +776,19 @@ Each of them is closed: asking Rocq `Print Assumptions` on any of them answers
 _closed under the global context_, which means no axiom and no unfinished
 proof is involved.
 
-The three statements do not cover the same ground, and it is worth being
-precise. The portable statement holds for every length. The AVX2 statement is
-about arrays whose length is a power of two and at least sixty-four, which is
-the case the vector code is written for; shorter arrays are handled by a
-separate piece of that code, and lengths that are not powers of two by padding
-the array with a value above everything else and dropping the padding
-afterwards, which is proved once and for all in
-#src("code/avx2/proof/sort_generic.v").
+The statements do not cover the same ground, and it is worth being precise.
+The portable statement holds for every length. `sorted_avx2_prog` is about
+arrays whose length is a power of two and at least sixty-four, which is the
+case the vector code is written for; a length that is not a power of two is
+dealt with in two ways, both proved --- padding the array with a value above
+everything else and dropping the padding afterwards, and the recursion of
+section 10, whose blocks are the bits of the length.
+
+One gap is left inside that last statement. From sixty-four elements up, the
+blocks are sorted by djbsort's own comparisons. Below that, the C runs a
+straight line it keeps for eight, sixteen and thirty-two elements, which has
+not been modelled; a bitonic sort of the same width stands in for it, so at
+those three widths the theorem is about a network the C does not run.
 
 What is *not* proved is the step from the C text to the model of it. In the
 portable track that gap is written down honestly, as the only assumption in
@@ -742,13 +819,16 @@ compared against the C in the same, informal, way.
     src("code/common/nsort.v"), [804], [networks, and what it means to sort],
     src("code/common/nbitonic.v"), [664], [the bitonic sorter],
     src("code/common/nalgebra.v"), [1730], [the algebra of comparisons: `dequiv` and its toolkit],
-    src("code/common/nprog.v"), [731], [programs: `Cmp`, `Vcmp`, `Vshuf`, and `pflat`],
+    src("code/common/nprog.v"), [751], [programs: `Cmp`, `Vcmp`, `Vshuf`, and `pflat`],
+    src("code/common/nprune.v"), [232], [padding, and the merge with comparisons dropped],
+    src("code/common/nrec.v"), [454], [the recursion for a length that is not a power of two],
     src("code/portable4/proof/nbjsort.v"), [1291], [Knuth's merge exchange],
     src("code/portable4/proof/int32_knuth.v"), [602], [the portable code is that network],
     src("code/avx2/proof/sort_generic.v"), [592], [the bitonic network, and the loop nest],
     src("code/avx2/proof/sort_transpose.v"), [722], [the transpose realisation],
     src("code/avx2/proof/sort_prog.v"), [596], [djbsort's AVX2 code, as a program],
-    src("code/avx2/proof/sort_link.v"), [4396], [the bridge for the AVX2 code],
+    src("code/avx2/proof/sort_link.v"), [4426], [the bridge for the AVX2 code],
+    src("code/avx2/proof/sort_short.v"), [85], [that code inside the recursion, at every length],
     table.hline(),
   )
 ]
