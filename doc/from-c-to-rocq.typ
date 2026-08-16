@@ -751,6 +751,29 @@ bits of $n$. Running it with djbsort's own AVX2 comparisons as the block
 sorter gives `sorting_avx2_short`, in
 #src("code/avx2/proof/sort_short.v"): a sorting network for every length.
 
+One more change of view is needed before the code can be read against this.
+The merge is *written* as a recursion --- one cleaner across the whole array,
+then two copies of itself on the halves --- and no code runs it that way. Code
+runs one distance at a time, across the whole array: every comparison at
+distance $n/2$, then every one at $n/4$, down to 1. The two descriptions are
+the same list, and #src("code/common/nlevel.v") proves it:
+
+```coq
+Theorem nstagesl_half_cleaner_rec (p : nat) :
+  [seq cpairs c | c <- half_cleaner_rec false p]
+    = [seq level_pairs (`2^ p) d d false | d <- dists p].
+```
+
+where `level_pairs N d d false` is one level: every pair $(i, i + d)$ with
+$i + d < N$ and the $d$-bit of $i$ clear, in increasing $i$. Two small facts
+carry the induction: one cleaner *is* one level, and putting two copies of an
+array side by side doubles each level exactly (which needs $2d$ to divide the
+half-width --- true here because every distance is a power of two). Pruning
+then just shortens each level, so the merge on an awkward length is
+`flatten [seq level_pairs n d d false | d <- dists p]`. That list is what the
+loops of #src("code/avx2/c/sort_short.c") have to be matched against, and
+matching them is the next piece of work.
+
 = What is proved, and what is not
 
 The four main statements are these.
@@ -832,6 +855,7 @@ hide the work instead of leaving it in plain sight.
     src("code/common/nprog.v"), [751], [programs: `Cmp`, `Vcmp`, `Vshuf`, and `pflat`],
     src("code/common/nprune.v"), [232], [padding, and the merge with comparisons dropped],
     src("code/common/nrec.v"), [454], [the recursion for a length that is not a power of two],
+    src("code/common/nlevel.v"), [230], [the merge, one distance at a time],
     src("code/portable4/proof/nbjsort.v"), [1291], [Knuth's merge exchange],
     src("code/portable4/proof/int32_knuth.v"), [602], [the portable code is that network],
     src("code/avx2/proof/sort_generic.v"), [592], [the bitonic network, and the loop nest],
