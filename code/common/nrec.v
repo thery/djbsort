@@ -18,6 +18,8 @@ Import Order POrderTheory TotalTheory.
 (*    pshift q ps    the pairs ps, moved up q wires: a network on the last    *)
 (*                   wires of an array                                        *)
 (*    rpairs ps      every comparison turned round: it sorts downwards        *)
+(*    smerge         one recursive call: the first block sorted downwards,    *)
+(*                   the rest upwards, then the pruned merge                  *)
 (*    srec ks        the recursion itself, ks the exponents of the bits of n  *)
 (*    sorting_srec   and it is a sorting network on `2^ k1 + ... + `2^ kp     *)
 (*                   wires                                                    *)
@@ -307,6 +309,34 @@ Proof.
 by rewrite /e2bits /e2sum big_rev -/(e2sum _) (bexps_sum _ (leqnn n)) mul1n.
 Qed.
 
+(* -------------------------------------------------------------------------- *)
+(*  One step: two sorted blocks, then the pruned merge                        *)
+(* -------------------------------------------------------------------------- *)
+
+(* the shape of one recursive call of the code: sort the first q wires        *)
+(* downwards with l1, the last m with l2, then merge the lot                  *)
+Definition smerge (p q m : nat) (l1 l2 : seq (nat * nat)) : seq (nat * nat) :=
+  (rpairs l1 ++ pshift q l2)
+    ++ [seq ab <- nstages (half_cleaner_rec false p) | ab.2 < q + m].
+
+Theorem sorting_smerge (p q m : nat) (l1 l2 : seq (nat * nat)) :
+  q + m <= `2^ p ->
+  all (fun ab => (ab.1 < q) && (ab.2 < q)) l1 ->
+  pnet q l1 \is sorting -> pnet m l2 \is sorting ->
+  pnet (q + m) (smerge p q m l1 l2) \is sorting.
+Proof.
+move=> nLp bl1 s1 s2; apply/forallP => t.
+apply: (@sorted_merge_cat p _ q) => //.
+  rewrite [t]tcat_take_drop nfun_pnet_cat.
+  rewrite (nfun_pnet_plow _ _ (all_rpairs bl1)) nfun_pnet_pshift.
+  rewrite take_cat size_tuple ltnn subnn take0 cats0.
+  by apply: sorted_rpairs.
+rewrite [t]tcat_take_drop nfun_pnet_cat.
+rewrite (nfun_pnet_plow _ _ (all_rpairs bl1)) nfun_pnet_pshift.
+rewrite drop_cat size_tuple ltnn subnn drop0.
+by apply: (forallP s2).
+Qed.
+
 Section Rec.
 
 (* a sorting network on `2^ k wires, for every k *)
@@ -317,10 +347,8 @@ Hypothesis up_sorting : forall k, pnet (`2^ k) (up k) \is sorting.
 
 (* sort the first block downwards, recurse on the rest, then merge          *)
 Fixpoint srec (ks : seq nat) : seq (nat * nat) :=
-  if ks is k :: ks1 then
-    (rpairs (up k) ++ pshift (`2^ k) (srec ks1))
-      ++ [seq ab <- nstages (half_cleaner_rec false k.+1)
-         | ab.2 < `2^ k + e2sum ks1]
+  if ks is k :: ks1
+  then smerge k.+1 (`2^ k) (e2sum ks1) (up k) (srec ks1)
   else [::].
 
 Theorem sorting_srec (ks : seq nat) :
@@ -329,19 +357,10 @@ Proof.
 elim: ks => [|k ks IH].
   move=> _; rewrite /e2sum big_nil /=.
   by apply/forallP => t; rewrite [t]tuple0.
-move=> pks.
-have dks : sorted (fun x y : nat => y < x) ks := path_sorted pks.
-have ksLk : e2sum ks <= `2^ k := e2sum_decr pks.
-rewrite e2sum_cons; apply/forallP => t.
-apply: (@sorted_merge_cat k.+1 _ (`2^ k)); first by rewrite e2Sn leq_add2l.
-  rewrite [t]tcat_take_drop nfun_pnet_cat.
-  rewrite (nfun_pnet_plow _ _ (all_rpairs (up_bnd k))) nfun_pnet_pshift.
-  rewrite take_cat size_tuple ltnn subnn take0 cats0.
-  by apply: sorted_rpairs; apply: up_sorting.
-rewrite [t]tcat_take_drop nfun_pnet_cat.
-rewrite (nfun_pnet_plow _ _ (all_rpairs (up_bnd k))) nfun_pnet_pshift.
-rewrite drop_cat size_tuple ltnn subnn drop0.
-by apply: (forallP (IH dks)).
+move=> pks; rewrite e2sum_cons.
+apply: sorting_smerge; [|exact: up_bnd|exact: up_sorting|].
+  by rewrite e2Sn leq_add2l; apply: e2sum_decr pks.
+by apply: IH; apply: path_sorted pks.
 Qed.
 
 (* every length being a sum of distinct powers of two, an array of any        *)
