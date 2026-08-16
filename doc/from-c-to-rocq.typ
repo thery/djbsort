@@ -803,9 +803,19 @@ which says: the comparisons the C source really performs are the ones the
 proof works with. Closing it needs a semantics for C, which is a separate
 undertaking. In the meantime the transcription is checked by running both and
 comparing the traces, for many sizes, with the small OCaml programs in
-#src("code/avx2/ml/") and #src("code/portable4/ml/"). The AVX2 track has no
-such axiom written down yet; its model of #src("code/avx2/c/sort_short.c") is
-compared against the C in the same, informal, way.
+#src("code/avx2/ml/") and #src("code/portable4/ml/").
+
+The AVX2 track now says the same thing about itself, in
+#src("code/avx2/proof/sort_c.v"), and it is worth noticing what that
+assumption is careful *not* to say. It covers lengths that are a power of two
+and at least sixty-four --- the range where the model really is a
+transcription of the code, instruction by instruction --- and, through
+padding, everything that the code sorts by padding. It says nothing about the
+loops #src("code/avx2/c/sort_short.c") runs for a longer array of an awkward
+length. Their model is the scheme of section 10, which is mathematics rather
+than a transcription: that the code's merge loop performs that scheme's pruned
+merge is a proof still to be done, and writing it down as an axiom here would
+hide the work instead of leaving it in plain sight.
 
 = The files
 
@@ -829,6 +839,7 @@ compared against the C in the same, informal, way.
     src("code/avx2/proof/sort_prog.v"), [596], [djbsort's AVX2 code, as a program],
     src("code/avx2/proof/sort_link.v"), [4426], [the bridge for the AVX2 code],
     src("code/avx2/proof/sort_short.v"), [85], [that code inside the recursion, at every length],
+    src("code/avx2/proof/sort_c.v"), [86], [what is still assumed about the C source],
     table.hline(),
   )
 ]
