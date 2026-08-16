@@ -21,3 +21,4 @@ code/avx2/ml/sort
 code/avx2/ml/sort_generic
 code/avx2/ml/sort_transpose
 code/avx2/ml/trace_check
+rocq_mcp_cache_*.v
