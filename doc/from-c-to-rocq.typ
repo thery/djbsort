@@ -770,9 +770,43 @@ carry the induction: one cleaner *is* one level, and putting two copies of an
 array side by side doubles each level exactly (which needs $2d$ to divide the
 half-width --- true here because every distance is a power of two). Pruning
 then just shortens each level, so the merge on an awkward length is
-`flatten [seq level_pairs n d d false | d <- dists p]`. That list is what the
-loops of #src("code/avx2/c/sort_short.c") have to be matched against, and
-matching them is the next piece of work.
+`flatten [seq level_pairs n d d false | d <- dists p]`.
+
+That list is what the loops of #src("code/avx2/c/sort_short.c") have to be
+matched against, and the first half of the match is settled. Look at what the
+code does at one distance:
+
+```c
+long long j = stage(x,n,8,q,N_mrg8);
+minmax_vector(&x[j], &x[j + 4*q], n - 4*q - j);
+```
+
+`stage` runs the whole blocks while they fit and returns where it stopped;
+`minmax_vector` then handles whatever ragged piece is left, with a length
+computed from $n$. A level has exactly that shape, and it is an equality of
+lists, not merely of sets --- both sides list the comparisons by increasing
+low place:
+
+```coq
+Theorem level_pairs_blocks (n d : nat) : 0 < d ->
+  level_pairs n d d false
+    = flatten [seq mm (m * d.*2) (m * d.*2 + d) d | m <- iota 0 (n %/ d.*2)]
+        ++ mm (n %/ d.*2 * d.*2) (n %/ d.*2 * d.*2 + d)
+              (n - d - n %/ d.*2 * d.*2).
+```
+
+where `mm a b len` is what `minmax_vector(&x[a], &x[b], len)` compares.
+Eleven wires at distance two, for instance, are two whole blocks and then a
+tail of one comparison: $(0,2), (1,3)$, $(4,6), (5,7)$, and $(8,10)$. The
+truncated subtraction does real work here: when fewer than $d$ places are
+left the tail length comes out as zero, which is exactly what the C does when
+`n - 4*q - j` goes negative and `minmax_vector` returns without comparing
+anything.
+
+What is left of the match is the vector layer: the code does not walk a block
+one comparison at a time but eight lanes at a time, and it fuses three
+distances into one pass over the array. Both are reorderings of
+wire-disjoint comparisons, which is the machinery of section 6.
 
 = What is proved, and what is not
 
@@ -855,7 +889,7 @@ hide the work instead of leaving it in plain sight.
     src("code/common/nprog.v"), [751], [programs: `Cmp`, `Vcmp`, `Vshuf`, and `pflat`],
     src("code/common/nprune.v"), [232], [padding, and the merge with comparisons dropped],
     src("code/common/nrec.v"), [454], [the recursion for a length that is not a power of two],
-    src("code/common/nlevel.v"), [230], [the merge, one distance at a time],
+    src("code/common/nlevel.v"), [354], [the merge, one distance at a time],
     src("code/portable4/proof/nbjsort.v"), [1291], [Knuth's merge exchange],
     src("code/portable4/proof/int32_knuth.v"), [602], [the portable code is that network],
     src("code/avx2/proof/sort_generic.v"), [592], [the bitonic network, and the loop nest],
