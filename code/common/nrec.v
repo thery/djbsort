@@ -21,6 +21,8 @@ Import Order POrderTheory TotalTheory.
 (*    srec ks        the recursion itself, ks the exponents of the bits of n  *)
 (*    sorting_srec   and it is a sorting network on `2^ k1 + ... + `2^ kp     *)
 (*                   wires                                                    *)
+(*    e2bits n       those exponents for a given n, so that                   *)
+(*                   sorting_srec_bits reads: any length at all               *)
 (*    bpairs k       the bitonic sort of nbitonic.v as a list of pairs, one   *)
 (*                   block sorter the recursion can be run with               *)
 (*                                                                            *)
@@ -254,6 +256,57 @@ rewrite e2sum_cons (leq_trans (leq_add (leqnn _) (IH _ pks))) //.
 by rewrite -e2Sn leq_e2n.
 Qed.
 
+(* the exponents of the bits of n, lowest first, k the weight of bit 0;      *)
+(* f is a fuel, n itself will do                                             *)
+Fixpoint bexps (f k n : nat) : seq nat :=
+  if f is f1.+1 then
+    if n is 0 then [::] else
+    if odd n then k :: bexps f1 k.+1 n./2 else bexps f1 k.+1 n./2
+  else [::].
+
+Lemma bexps_sum (f k n : nat) : n <= f -> e2sum (bexps f k n) = `2^ k * n.
+Proof.
+elim: f k n => [k n|f IH k n].
+  by rewrite leqn0 => /eqP->; rewrite muln0 /e2sum big_nil.
+case: n => [_|n1 nLf]; first by rewrite muln0 /e2sum big_nil.
+have n1Lf : n1.+1./2 <= f by rewrite -divn2 -ltnS (leq_trans (ltn_Pdiv _ _)).
+have nE := odd_double_half n1.+1.
+rewrite /bexps -/bexps -[in RHS]nE.
+case: (boolP (odd n1.+1)) => [oddn|evn].
+  rewrite e2sum_cons (IH _ _ n1Lf) e2Sn.
+  by rewrite -!addnn; lia.
+by rewrite (IH _ _ n1Lf) e2Sn -!addnn; lia.
+Qed.
+
+Lemma bexps_path (f j k n : nat) :
+  k < j -> path (fun x y : nat => x < y) k (bexps f j n).
+Proof.
+elim: f j k n => [//|f IH] j k n kLj.
+case: n => [//|n1].
+rewrite /bexps -/bexps; case: (odd _); last by apply: IH; apply: ltnW.
+by rewrite /= kLj; apply: IH.
+Qed.
+
+Lemma bexps_sorted (f j n : nat) :
+  sorted (fun x y : nat => x < y) (bexps f j n).
+Proof.
+elim: f j n => [//|f IH] j n.
+case: n => [//|n1].
+by rewrite /bexps -/bexps; case: (odd _); last exact: IH; apply: bexps_path.
+Qed.
+
+(* every length is a sum of distinct powers of two, the exponents decreasing *)
+Definition e2bits (n : nat) : seq nat := rev (bexps n 0 n).
+
+Lemma e2bits_sorted (n : nat) :
+  sorted (fun x y : nat => y < x) (e2bits n).
+Proof. by rewrite /e2bits rev_sorted; apply: bexps_sorted. Qed.
+
+Lemma e2bits_sum (n : nat) : e2sum (e2bits n) = n.
+Proof.
+by rewrite /e2bits /e2sum big_rev -/(e2sum _) (bexps_sum _ (leqnn n)) mul1n.
+Qed.
+
 Section Rec.
 
 (* a sorting network on `2^ k wires, for every k *)
@@ -290,6 +343,11 @@ rewrite (nfun_pnet_plow _ _ (all_rpairs (up_bnd k))) nfun_pnet_pshift.
 rewrite drop_cat size_tuple ltnn subnn drop0.
 by apply: (forallP (IH dks)).
 Qed.
+
+(* every length being a sum of distinct powers of two, an array of any        *)
+(* length at all                                                              *)
+Corollary sorting_srec_bits (n : nat) : pnet n (srec (e2bits n)) \is sorting.
+Proof. by have := sorting_srec (e2bits_sorted n); rewrite e2bits_sum. Qed.
 
 End Rec.
 
@@ -331,9 +389,7 @@ apply/forallP => t; rewrite /bpairs (nfun_pnet_nstages _ (nnoflip_bsort k)).
 by apply: (forallP (sorting_bsort k)).
 Qed.
 
-(* so the recursion sorts every length that is a sum of distinct powers of    *)
-(* two -- that is, every length                                               *)
-Corollary sorting_srec_bpairs (ks : seq nat) :
-  sorted (fun x y : nat => y < x) ks ->
-  pnet (e2sum ks) (srec bpairs ks) \is sorting.
-Proof. exact: (sorting_srec bpairs_bnd bpairs_sorting). Qed.
+(* so the recursion, run with it, sorts an array of any length at all *)
+Corollary sorting_srec_bpairs (n : nat) :
+  pnet n (srec bpairs (e2bits n)) \is sorting.
+Proof. exact: (sorting_srec_bits bpairs_bnd bpairs_sorting n). Qed.
