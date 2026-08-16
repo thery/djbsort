@@ -57,6 +57,26 @@ have -> : insub y = None :> option 'I_n by apply/insubF; rewrite ltnNge nLy.
 by case: (insub x).
 Qed.
 
+(* the comparisons of a list that stay inside an array of n wires; the rest   *)
+(* are dropped by pnet anyway, so this changes no network                     *)
+Definition pbnd (n : nat) (l : seq (nat * nat)) : seq (nat * nat) :=
+  [seq ab <- l | (ab.1 < n) && (ab.2 < n)].
+
+Lemma all_pbnd (n : nat) (l : seq (nat * nat)) :
+  all (fun ab => (ab.1 < n) && (ab.2 < n)) (pbnd n l).
+Proof. by apply/allP => ab; rewrite mem_filter => /andP[]. Qed.
+
+Lemma pnet_pbnd (n : nat) (l : seq (nat * nat)) : pnet n (pbnd n l) = pnet n l.
+Proof.
+elim: l => [|[a b] l IH] //.
+have [/andP[aLn bLn]|H] := boolP ((a < n) && (b < n)); last first.
+  have -> : pbnd n ((a, b) :: l) = pbnd n l by rewrite /pbnd /= (negPf H).
+  by rewrite IH pnet_consN.
+have -> : pbnd n ((a, b) :: l) = (a, b) :: pbnd n l
+  by rewrite /pbnd /= aLn bLn.
+by rewrite !(pnet_cons _ aLn bLn) IH.
+Qed.
+
 Section Split.
 
 Variables q m : nat.
@@ -406,6 +426,26 @@ Lemma bpairs_sorting (k : nat) : pnet (`2^ k) (bpairs k) \is sorting.
 Proof.
 apply/forallP => t; rewrite /bpairs (nfun_pnet_nstages _ (nnoflip_bsort k)).
 by apply: (forallP (sorting_bsort k)).
+Qed.
+
+(* cut down to any number of wires, it is a sorting network there too --     *)
+(* the comparisons of a bitonic sort all point upwards, so dropping those     *)
+(* that leave the array is sound (sorting_pnet_prune)                         *)
+Definition psort (m : nat) : seq (nat * nat) := [seq ab <- bpairs m | ab.2 < m].
+
+Lemma psort_bnd (m : nat) :
+  all (fun ab => (ab.1 < m) && (ab.2 < m)) (psort m).
+Proof.
+apply/allP => ab; rewrite mem_filter => /andP[bLm abIn].
+have /allP/(_ _ abIn)/andP[H1 _] := all_nstages (bsort m).
+by rewrite bLm (ltn_trans H1 bLm).
+Qed.
+
+Lemma sorting_psort (m : nat) : pnet m (psort m) \is sorting.
+Proof.
+apply: (@sorting_pnet_prune (`2^ m)); first by rewrite ltnW // ltn_ne2n.
+  exact: all_nstages.
+exact: bpairs_sorting.
 Qed.
 
 (* so the recursion, run with it, sorts an array of any length at all *)
