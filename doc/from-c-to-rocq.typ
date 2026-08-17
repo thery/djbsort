@@ -1051,9 +1051,31 @@ transcription in #src("code/avx2/ml/trace_short.ml"), which runs the same
 instructions on wire numbers instead of values --- and they are the same
 comparisons in a different order: the code sorts the two halves in two
 registers at once, so it alternates between them, while `bsl` does one half
-and then the other. Two comparisons in different halves share no place, so
-that difference is again the reordering of section 6. Fitting the two together
-at sixteen and thirty-two wires is what is left of this part.
+and then the other.
+
+Two comparisons in different halves share no place, so that difference is once
+more the reordering of section 6, and it comes out of a single lemma:
+
+```coq
+Lemma dequiv_cut (n b : nat) (l : seq (nat * nat)) :
+  all (bnd n) l -> all (fun ab => (ab.1 < b) == (ab.2 < b)) l ->
+  dequiv n l ([seq ab <- l | ab.1 < b] ++ [seq ab <- l | ~~ (ab.1 < b)]).
+```
+
+--- a list no comparison of which crosses a line may be read as: everything
+below the line, then everything above. The colour of a comparison is which
+side of the line it sits on.
+
+With it the trace at sixteen becomes the sorter in three cuts, at 8 and then
+at 4 and at 12, and the trace at thirty-two in four --- the same three inside
+its first block, and one inside its merge, because the code merges each half
+whole while the levels want the two halves interleaved. Every step in between
+is a list identity settled by evaluation, which is what `bsl` was written for.
+The result is `dequiv_c16` and `dequiv_c32`, hence `sorting_c16` and
+`sorting_c32`, and the blocks of sixteen and thirty-two wires in section 10's
+recursion are now sorted by the code's own comparisons. Below sixteen the C
+has no straight line at all --- it bubble-sorts anything of eight elements or
+less --- so there a sorter of the same width still stands in.
 
 = What is proved, and what is not
 
@@ -1125,9 +1147,9 @@ largest distance down to the point where it stops, and everything in it is
 closed like the statements above. What is left is the phase after the loop,
 where the distances have become small enough that the code merges whole
 registers with shuffles instead of sweeping the array --- the `L` of
-`sorted_mturns` --- and, at the other end, fitting the straight lines of
-section 12 to the trace of the C, so that the small widths are covered by the
-code's own comparisons rather than by a sorter of the same width.
+`sorted_mturns`. At the other end the straight lines are now covered: sixteen
+and thirty-two wires are sorted by the code's own comparisons (section 12),
+and below that the C has no straight line to model.
 
 = The files
 
@@ -1145,7 +1167,7 @@ code's own comparisons rather than by a sorter of the same width.
     src("code/common/nprune.v"), [232], [padding, and the merge with comparisons dropped],
     src("code/common/nrec.v"), [454], [the recursion for a length that is not a power of two],
     src("code/common/nlevel.v"), [625], [the merge one distance at a time, and eight lanes at a time],
-    src("code/common/nbsl.v"), [120], [the bitonic sorter as a list, for the small widths],
+    src("code/common/nbsl.v"), [361], [the bitonic sorter as a list, and the C's straight lines],
     src("code/common/nmloop.v"), [872], [the merge loop of the AVX2 code],
     src("code/portable4/proof/nbjsort.v"), [1291], [Knuth's merge exchange],
     src("code/portable4/proof/int32_knuth.v"), [602], [the portable code is that network],
