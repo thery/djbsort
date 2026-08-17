@@ -1,6 +1,6 @@
 From mathcomp Require Import all_boot order perm.
 From mathcomp Require Import zify.
-Require Import more_tuple nsort nbitonic nalgebra nprune nrec.
+Require Import more_tuple nsort nbitonic nalgebra nprune nrec nbsl.
 Require Import sort_link.
 
 Import Order POrderTheory TotalTheory.
@@ -16,10 +16,11 @@ Import Order POrderTheory TotalTheory.
 (*                                                                            *)
 (*    ablock j    what the block of `2^ j wires is sorted by: the AVX2        *)
 (*                program's own comparisons from j = 6 up, which is where the *)
-(*                code has them (64 elements and more).  Below that the C     *)
-(*                runs the straight line it keeps for 8, 16 and 32 wires,     *)
-(*                which is not modelled yet, and a bitonic sort of the same   *)
-(*                width stands in.                                            *)
+(*                code has them (64 elements and more), and the straight      *)
+(*                lines the C keeps for 16 and 32 (c16, c32 of nbsl.v, taken  *)
+(*                from its trace).  Below sixteen the C has no such line --   *)
+(*                it bubble-sorts anything of eight or less -- and a bitonic  *)
+(*                sort of the same width stands in.                           *)
 (*    avx2_short n / sorting_avx2_short                                       *)
 (*                the whole recursion, and it is a sorting network, at every  *)
 (*                length n                                                    *)
@@ -48,17 +49,25 @@ Proof. exact: sorting_avx2_list. Qed.
 (* Those that leave the block are dropped, which changes no network           *)
 (* (pnet_pbnd) and gives the bound the recursion asks for.                    *)
 Definition ablock (j : nat) : seq (nat * nat) :=
-  if j is i.+3.+3 then pbnd (`2^ i.+3.+3) (alist i) else psort (`2^ j).
+  match j with
+  | 4 => c16
+  | 5 => c32
+  | i.+3.+3 => pbnd (`2^ i.+3.+3) (alist i)
+  | _ => psort (`2^ j)
+  end.
 
 Lemma ablock_bnd (j : nat) :
   all (fun ab => (ab.1 < `2^ j) && (ab.2 < `2^ j)) (ablock j).
 Proof.
-by case: j => [|[|[|[|[|[|i]]]]]]; rewrite /ablock ?psort_bnd ?all_pbnd.
+by case: j => [|[|[|[|[|[|i]]]]]]; rewrite /ablock ?psort_bnd ?all_pbnd //;
+   vm_compute.
 Qed.
 
 Lemma ablock_sorting (j : nat) : pnet (`2^ j) (ablock j) \is sorting.
 Proof.
 case: j => [|[|[|[|[|[|i]]]]]]; rewrite /ablock ?sorting_psort //.
+- exact: sorting_c16.
+- exact: sorting_c32.
 by rewrite pnet_pbnd; apply: sorting_alist.
 Qed.
 
