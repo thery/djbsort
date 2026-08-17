@@ -803,10 +803,147 @@ left the tail length comes out as zero, which is exactly what the C does when
 `n - 4*q - j` goes negative and `minmax_vector` returns without comparing
 anything.
 
-What is left of the match is the vector layer: the code does not walk a block
-one comparison at a time but eight lanes at a time, and it fuses three
-distances into one pass over the array. Both are reorderings of
-wire-disjoint comparisons, which is the machinery of section 6.
+The other half of the match --- what the code does *inside* a block, where it
+works eight lanes at a time and fuses three distances into one pass --- is the
+next section.
+
+= Technique seven: eight lanes at a time
+
+A level at distance $d$ compares place $i$ with place $i + d$. The code never
+walks it that way.
+
+*One distance, eight at a time.* It loads eight consecutive places into one
+register, the eight places $q$ further on into another, and compares the two
+registers: one instruction, eight comparisons. Then it moves eight lanes on.
+The lane groups come in increasing order, so this is not even a reordering ---
+the list the code emits is the level itself, comparison for comparison:
+
+```coq
+Theorem level_pairs_vstage (n q : nat) : 0 < q -> 8 %| q ->
+  level_pairs n q q false
+    = vstage n 2 q [:: (0, 1)]
+      ++ mm (n %/ q.*2 * q.*2) (n %/ q.*2 * q.*2 + q)
+            (n - q - n %/ q.*2 * q.*2).
+```
+
+*Three distances at once.* With eight registers in hand the code does not stop
+at one distance. `N_mrg8` is a table of twelve compare-exchanges *between
+registers*, and running it does the work of three levels while the values stay
+where they are. That is where the reordering is.
+
+#figure(
+  net(8, ((0.6, 0, 4), (0.85, 1, 5), (1.1, 2, 6), (1.35, 3, 7),
+          (2.1, 0, 2), (2.35, 1, 3), (2.6, 4, 6), (2.85, 5, 7),
+          (3.6, 0, 1), (3.85, 2, 3), (4.1, 4, 5), (4.35, 6, 7)),
+      width: 5),
+  caption: [The table `N_mrg8`: twelve comparisons between eight registers.
+    It is the bitonic merge on eight wires, one distance at a time. Each wire
+    here is $q$ consecutive places of the array, so each comparison drawn is
+    $q$ comparisons of the array, and the three columns are the levels at
+    $4q$, at $2q$ and at $q$.],
+) <mrg8>
+
+Two observations turn that picture into a proof.
+
+The first: the tables *are* merges. The merge on eight wires, read one
+distance at a time, is `P_mrg8` of the C source, letter for letter --- and the
+same holds at four registers and at two:
+
+```coq
+Example nstages_hcr_3 :
+  nstages (half_cleaner_rec false 3)
+    = [:: (0, 4); (1, 5); (2, 6); (3, 7); (0, 2); (1, 3); (4, 6); (5, 7);
+          (0, 1); (2, 3); (4, 5); (6, 7)].
+Proof. by rewrite nstages_half_cleaner_rec. Qed.
+```
+
+The second: a register stands for $q$ consecutive places, and blowing every
+wire of a level up into $q$ places gives a level again, at $q$ times the
+distance --- comparison by comparison and, inside each, lane by lane:
+
+```coq
+Theorem level_pairs_scale (N d q : nat) : 0 < d -> 0 < q ->
+  level_pairs (N * q) (d * q) (d * q) false
+    = flatten [seq mm (ab.1 * q) (ab.2 * q) q | ab <- level_pairs N d d false].
+```
+
+Together they say that the batch, run on a block of $8q$ places, is the levels
+at $4q$, $2q$ and $q$ of that block. What is left to justify is the order
+inside the block: the code goes lane group by lane group, the levels go
+comparison by comparison. Colour a comparison by its lane group --- for a
+place $x$, that is `x %% q %/ 8` --- and section 6 settles it, for *any* table
+of comparisons between registers:
+
+```coq
+Theorem vblock_dequiv (n base q c : nat) (g : seq (nat * nat)) :
+  0 < q -> 8 %| q -> q %| base -> base + c * q <= n ->
+  all (fun ab => (ab.1 < c) && (ab.2 < c)) g ->
+  dequiv n (vblock base q q g)
+           (flatten [seq mm (base + ab.1 * q) (base + ab.2 * q) q | ab <- g]).
+```
+
+*One turn of the loop.* Now the loop itself can be read. It takes three
+distances at a time:
+
+```c
+while (q >= 64) {
+  q >>= 2;
+  long long j = stage(x,n,8,q,N_mrg8);
+  minmax_vector(&x[j], &x[j + 4*q], n - 4*q - j);
+  if (j + 4*q <= n) { blockn(x,j,q,q,4,N_mrg4); j += 4*q; }
+  minmax_vector(&x[j], &x[j + 2*q], n - 2*q - j);
+  if (j + 2*q <= n) { blockn(x,j,q,q,2,N_mrg2); j += 2*q; }
+  minmax_vector(&x[j], &x[j + q], n - q - j);
+  q >>= 1;
+}
+```
+
+The stage runs the whole blocks of $8q$ places, and each of them fuses the
+three levels. The six lines after it pick up what the stage could not reach:
+the level at $2q$ may have one whole block more than the stage ran, the level
+at $q$ up to three, and all three levels have a ragged tail. The counts are
+arithmetic on what $n$ leaves over $8q$: writing $r$ for that remainder, the
+level at $2q$ has $2(n div 8q) + r div 4q$ whole blocks and the level at $q$
+has $4(n div 8q) + r div 2q$, and the leftover blocks the code runs are
+exactly the extra ones.
+
+Then the order, and here the picture is simple. Everything the stage does lies
+below the place $j$ it stopped at; everything after it starts at $j$ or later.
+Two comparisons on opposite sides of $j$ share no place, so three moves of
+whole blocks --- each past a block it shares no place with --- put the turn
+into level order: first all of the level at $4q$, then all of the level at
+$2q$, then all of the level at $q$.
+
+One detail refuses to fit that frame. When the length handed to
+`minmax_vector` is not a multiple of eight, the routine does the *last* eight
+first and then walks the whole eights from the start, so eight of its
+comparisons are performed twice. A reordering cannot account for that: two
+lists that differ by a repeat are not rearrangements of one another. What is
+true is that they compute the same function, because a comparison done twice
+is the comparison:
+
+```coq
+Definition nequiv (n : nat) (l1 l2 : seq (nat * nat)) : Prop :=
+  forall (d : disp_t) (A : orderType d) (t : n.-tuple A),
+    nfun (pnet n l1) t = nfun (pnet n l2) t.
+
+Lemma nequiv_dup (n a b : nat) (l : seq (nat * nat)) : a < n -> b < n ->
+  nequiv n ((a, b) :: (a, b) :: l) ((a, b) :: l).
+```
+
+Every reordering is an `nequiv`, and so is dropping a repeat. With those, one
+turn of the loop is three levels of the merge:
+
+```coq
+Theorem mbody_levels (n q : nat) : 0 < q -> 8 %| q ->
+  nequiv n (mbody n q)
+           (level_pairs n (4 * q) (4 * q) false
+            ++ level_pairs n (2 * q) (2 * q) false
+            ++ level_pairs n q q false).
+```
+
+where `mbody n q` is the turn written out --- the stage, the two leftover
+blocks and the three tails, in the order the C runs them.
 
 = What is proved, and what is not
 
@@ -871,8 +1008,12 @@ padding, everything that the code sorts by padding. It says nothing about the
 loops #src("code/avx2/c/sort_short.c") runs for a longer array of an awkward
 length. Their model is the scheme of section 10, which is mathematics rather
 than a transcription: that the code's merge loop performs that scheme's pruned
-merge is a proof still to be done, and writing it down as an axiom here would
-hide the work instead of leaving it in plain sight.
+merge is a proof, not an assumption, and writing it down as an axiom would
+hide the work instead of leaving it in plain sight. That proof is under way.
+One turn of the loop is done --- `mbody_levels` of section 11, closed like the
+statements above --- and what is left is the induction over the turns and the
+last phase, where the distances have become small enough that the code merges
+whole registers instead of sweeping the array.
 
 = The files
 
@@ -885,11 +1026,12 @@ hide the work instead of leaving it in plain sight.
     table.hline(stroke: 0.5pt),
     src("code/common/nsort.v"), [804], [networks, and what it means to sort],
     src("code/common/nbitonic.v"), [664], [the bitonic sorter],
-    src("code/common/nalgebra.v"), [1730], [the algebra of comparisons: `dequiv` and its toolkit],
+    src("code/common/nalgebra.v"), [1796], [the algebra of comparisons: `dequiv`, `nequiv`, and their toolkit],
     src("code/common/nprog.v"), [751], [programs: `Cmp`, `Vcmp`, `Vshuf`, and `pflat`],
     src("code/common/nprune.v"), [232], [padding, and the merge with comparisons dropped],
     src("code/common/nrec.v"), [454], [the recursion for a length that is not a power of two],
-    src("code/common/nlevel.v"), [354], [the merge, one distance at a time],
+    src("code/common/nlevel.v"), [625], [the merge one distance at a time, and eight lanes at a time],
+    src("code/common/nmloop.v"), [765], [one turn of the merge loop of the AVX2 code],
     src("code/portable4/proof/nbjsort.v"), [1291], [Knuth's merge exchange],
     src("code/portable4/proof/int32_knuth.v"), [602], [the portable code is that network],
     src("code/avx2/proof/sort_generic.v"), [592], [the bitonic network, and the loop nest],
@@ -917,7 +1059,10 @@ The recipe, in five steps.
 + *Write the program down in a small language,* and read off the comparisons
   it performs, renaming as the shuffles move values about.
 + *Prove that the order does not matter,* by colouring the comparisons so that
-  different colours never touch the same place.
+  different colours never touch the same place. And when the code does not
+  merely reorder --- when it performs a comparison twice, as `minmax_vector`
+  does on a ragged length --- ask for less: not the same list, only the same
+  function.
 + *Deal with the tricks separately:* complementing values instead of sorting
   downwards, and a loop nest instead of a recursion. Each is a small theorem
   once it is stated in the right way.
