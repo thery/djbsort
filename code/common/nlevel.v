@@ -31,6 +31,12 @@ Import Order POrderTheory TotalTheory.
 (*    vblock_dequiv   whatever the batch, a block read lane group by lane     *)
 (*                    group is a reordering of it read comparison by          *)
 (*                    comparison                                              *)
+(*    level_pairs_scale                                                       *)
+(*                    the level at distance d * q on N * q wires is the level *)
+(*                    at distance d on N wires, every wire blown up into q    *)
+(*    vblock_levels   so one block of the code IS the levels of the merge on  *)
+(*                    that block: N_mrg8 the levels at 4q, 2q and q, N_mrg4   *)
+(*                    those at 2q and q, N_mrg2 the level at q                *)
 (*                                                                            *)
 (*  It is the first step towards reading the merge loop of sort_short.c,      *)
 (*  which walks one distance at a time and, at each of them, does the whole   *)
@@ -495,3 +501,125 @@ Qed.
 (* the run of eight comparisons                                               *)
 Example vblock_16_8 : vblock 0 8 8 [:: (0, 1)] = mm 0 8 8.
 Proof. by []. Qed.
+
+(* -------------------------------------------------------------------------- *)
+(*  A level at a q times bigger distance                                      *)
+(* -------------------------------------------------------------------------- *)
+
+(* The batches the code runs between its registers -- N_mrg8, N_mrg4 and      *)
+(* N_mrg2 -- fuse three, two and one distance.  Each is the merge on that     *)
+(* many registers, and a register stands for q consecutive wires.  So a fused *)
+(* batch is to be read as levels whose distance is q times a register         *)
+(* distance, which is what this section says.                                 *)
+
+Lemma iota_chunks (N q : nat) :
+  iota 0 (N * q) = flatten [seq [seq a * q + l | l <- iota 0 q] | a <- iota 0 N].
+Proof.
+elim: N => [|N IH]; first by rewrite mul0n.
+rewrite mulSnr iotaD add0n IH -addn1 iotaD map_cat flatten_cat add0n /= cats0.
+by congr (_ ++ _); rewrite -iotaDl addn0.
+Qed.
+
+Lemma flatten_if (T : Type) (P : pred nat) (G : nat -> seq T) (l : seq nat) :
+  flatten [seq (if P a then G a else [::]) | a <- l]
+    = flatten [seq G a | a <- [seq a <- l | P a]].
+Proof. by elim: l => //= a l IH; case: (P a); rewrite /= IH. Qed.
+
+Lemma flatten_map_flatten (T U : Type) (F : T -> seq U) (L : seq (seq T)) :
+  flatten [seq F x | x <- flatten L]
+    = flatten [seq flatten [seq F x | x <- l] | l <- L].
+Proof. by elim: L => //= l L IH; rewrite map_cat flatten_cat IH. Qed.
+
+Lemma mm_shift (base a b len : nat) :
+  mm (base + a) (base + b) len = pshift base (mm a b len).
+Proof. by rewrite /mm /pshift -map_comp; apply: eq_map => l /=; rewrite !addnA. Qed.
+
+Lemma pshift_flatten (b : nat) (ls : seq (seq (nat * nat))) :
+  pshift b (flatten ls) = flatten [seq pshift b l | l <- ls].
+Proof. by rewrite /pshift map_flatten. Qed.
+
+Lemma level_pairs_bnd (N p d : nat) (b : bool) :
+  all (fun ab => (ab.1 < N) && (ab.2 < N)) (level_pairs N p d b).
+Proof.
+apply/allP => x /mapP[i]; rewrite mem_filter => /andP[/andP[H1 _] _] -> /=.
+by rewrite H1 andbT (leq_ltn_trans (leq_addr d i) H1).
+Qed.
+
+(* blowing every wire up into q consecutive ones: the level at distance d * q *)
+(* on N * q wires is the level at distance d on N wires, comparison by        *)
+(* comparison and, inside each of them, lane by lane                          *)
+Theorem level_pairs_scale (N d q : nat) : 0 < d -> 0 < q ->
+  level_pairs (N * q) (d * q) (d * q) false
+    = flatten [seq mm (ab.1 * q) (ab.2 * q) q | ab <- level_pairs N d d false].
+Proof.
+move=> d_gt0 q_gt0.
+have E : flatten [seq (if (a + d < N) && (odd (a %/ d) == false)
+                       then mm (a * q) ((a + d) * q) q else [::])
+                 | a <- iota 0 N]
+       = flatten [seq mm (ab.1 * q) (ab.2 * q) q | ab <- level_pairs N d d false].
+  by rewrite /level_pairs -map_comp flatten_if.
+rewrite -E /level_pairs iota_chunks filter_flatten map_flatten -!map_comp.
+congr flatten; apply: eq_map => a; rewrite /comp /=.
+have Ha (l : nat) : l < q ->
+    ((a * q + l + d * q < N * q) && (odd ((a * q + l) %/ (d * q)) == false))
+      = ((a + d < N) && (odd (a %/ d) == false)).
+  move=> lLq.
+  have dE : (a * q + l) %/ (d * q) = a %/ d.
+    have -> : a * q + l = (a %/ d) * (d * q) + ((a %% d) * q + l).
+      by have := divn_eq a d; nia.
+    rewrite divnMDl ?muln_gt0 ?d_gt0 //.
+    suff -> : (a %% d * q + l) %/ (d * q) = 0 by rewrite addn0.
+    by apply: divn_small; have := ltn_pmod a d_gt0; nia.
+  rewrite dE; congr (_ && _).
+  by apply/idP/idP => H; nia.
+rewrite filter_map -map_comp.
+case: ifP => [H|H].
+  rewrite (eq_in_filter (a2 := predT)) ?filter_predT; last first.
+    by move=> l; rewrite mem_iota add0n => /andP[_ lLq]; rewrite /= Ha.
+  by rewrite /mm; apply: eq_map => l /=; rewrite mulnDl addnAC.
+rewrite (eq_in_filter (a2 := pred0)) ?filter_pred0 //.
+by move=> l; rewrite mem_iota add0n => /andP[_ lLq]; rewrite /= Ha.
+Qed.
+
+(* the batches of sort_short.c are merges on eight, four and two registers *)
+Example nstages_hcr_3 :
+  nstages (half_cleaner_rec false 3)
+    = [:: (0, 4); (1, 5); (2, 6); (3, 7); (0, 2); (1, 3); (4, 6); (5, 7);
+          (0, 1); (2, 3); (4, 5); (6, 7)].
+Proof. by rewrite nstages_half_cleaner_rec. Qed.
+
+Example nstages_hcr_2 :
+  nstages (half_cleaner_rec false 2) = [:: (0, 2); (1, 3); (0, 1); (2, 3)].
+Proof. by rewrite nstages_half_cleaner_rec. Qed.
+
+Example nstages_hcr_1 : nstages (half_cleaner_rec false 1) = [:: (0, 1)].
+Proof. by rewrite nstages_half_cleaner_rec. Qed.
+
+(* so one block of the code, whatever the batch fuses, is a reordering of the *)
+(* levels of the merge on that block: N_mrg8 at e = 3 is the levels at        *)
+(* distances 4q, 2q and q, N_mrg4 at e = 2 those at 2q and q, N_mrg2 at e = 1 *)
+(* the level at q                                                             *)
+Theorem vblock_levels (n base q e : nat) : 0 < q -> 8 %| q -> q %| base ->
+  base + `2^ e * q <= n ->
+  dequiv n (vblock base q q (nstages (half_cleaner_rec false e)))
+           (flatten [seq pshift base
+                          (level_pairs (`2^ e * q) (d * q) (d * q) false)
+                    | d <- dists e]).
+Proof.
+move=> q_gt0 q8 qb bn.
+have gB : all (fun ab => (ab.1 < `2^ e) && (ab.2 < `2^ e))
+              (nstages (half_cleaner_rec false e)).
+  rewrite nstages_half_cleaner_rec.
+  by apply: all_flatten_map => d _; apply: level_pairs_bnd.
+suff -> : flatten [seq pshift base
+                        (level_pairs (`2^ e * q) (d * q) (d * q) false)
+                  | d <- dists e]
+        = flatten [seq mm (base + ab.1 * q) (base + ab.2 * q) q
+                  | ab <- nstages (half_cleaner_rec false e)].
+  by apply: (@vblock_dequiv n base q (`2^ e)).
+rewrite nstages_half_cleaner_rec flatten_map_flatten -map_comp.
+congr flatten; apply/eq_in_map => d dIn; rewrite /comp.
+have [i iLe dE] := mem_dists dIn.
+rewrite level_pairs_scale ?dE ?e2n_gt0 // pshift_flatten -map_comp.
+by congr flatten; apply/eq_in_map => ab _; rewrite /comp -mm_shift.
+Qed.
