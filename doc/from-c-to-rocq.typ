@@ -168,9 +168,11 @@ a network that sorts all arrays of zeros and ones cannot fail.
 For four places this brings the check down from "all arrays of integers" to
 sixteen cases, which one can do by hand. For a real array --- a thousand
 places, say --- there are still $2^1000$ cases, so one does not check them but
-proves the statement. Only the very small pieces, such as the fixed batches of
-five or twelve comparisons the AVX2 code contains, are settled by letting the
-machine try all cases.
+proves the statement. In fact no network in this development, however small,
+is checked by enumeration; section 12 explains why the machine cannot do it
+here even for eight places. What the machine does check exhaustively is
+arithmetic: the tables the shuffles of the AVX2 code use are settled by
+evaluating them at all sixty-four lanes.
 
 = Networks in Rocq
 
@@ -992,6 +994,67 @@ loop is over. Here $j = 4$ and $k = 2$: two turns, six levels, and
 $2^(4 + 6) = 1024$, which is the width whose merge covers a thousand places.
 The contract left for the last phase is the four levels at 8, 4, 2 and 1.
 
+= Technique eight: comparing against a trace
+
+At the other end of the size range the code stops being a loop. For eight,
+sixteen and thirty-two elements it keeps a straight line: a fixed table of
+comparisons for eight, and for the other two a handful of vector instructions
+with no loop at all. There is nothing to reason about there, only something to
+*check*: are those comparisons a sorting network?
+
+The obvious answer --- ask the machine, it is only sixteen wires --- does not
+work, and the reason is worth a paragraph, because it decides how the rest is
+done.
+
+A network in this development is a list of connectors, and a connector is a
+finite function on the places of the array together with two proofs
+(@fournet's `clink` and `cflip`). Those proofs are what make a connector a
+sensible object, and they are also what stops it from computing: asking Rocq
+to evaluate the comparisons of the bitonic sorter on eight wires returns a
+term the size of a small book, stuck on the proof that 3 is below 4. And
+deciding "this network sorts" is worse: the zero-one principle turns it into
+$2^8$ runs, but each run drags the same stuck machinery behind it, and the
+question does not finish.
+
+What does compute is a list of pairs of ordinary numbers. So the small sorters
+are written a second time, as a list:
+
+```coq
+Definition mlev (k : nat) : seq (nat * nat) :=
+  flatten [seq level_pairs (`2^ k) d d false | d <- dists k].
+
+Fixpoint bsl (k : nat) (up : bool) : seq (nat * nat) :=
+  if k is k1.+1
+  then (bsl k1 false ++ pshift (`2^ k1) (bsl k1 true))
+       ++ (if up then mlev k1.+1 else rpairs (mlev k1.+1))
+  else [::].
+```
+
+`bsl k up` is the bitonic sorter on $2^k$ wires: sort the first half
+downwards, the second upwards, then merge --- and, when the whole is wanted
+downwards, turn the last merge round, which is exactly what the code's masks
+do. It sorts, in the direction asked:
+
+```coq
+Theorem sorted_bsl (k : nat) (up : bool) (t : (`2^ k).-tuple bool) :
+  sorted (if up then (<=%O : rel bool) else >=%O)
+         (nfun (pnet (`2^ k) (bsl k up)) t).
+```
+
+The proof is two lines of the induction that section 10 already used: the two
+halves leave the array falling and then rising, which is bitonic, and the
+merge finishes it.
+
+And now `bsl` can be *printed*. Its twenty-four comparisons at $k = 3$ sit
+next to the trace of the C at sixteen elements --- produced by the OCaml
+transcription in #src("code/avx2/ml/trace_short.ml"), which runs the same
+instructions on wire numbers instead of values --- and they are the same
+comparisons in a different order: the code sorts the two halves in two
+registers at once, so it alternates between them, while `bsl` does one half
+and then the other. Two comparisons in different halves share no place, so
+that difference is again the reordering of section 6. Fitting the two together
+at sixteen and thirty-two wires is what is left of this part.
+
 = What is proved, and what is not
 
 The four main statements are these.
@@ -1062,8 +1125,9 @@ largest distance down to the point where it stops, and everything in it is
 closed like the statements above. What is left is the phase after the loop,
 where the distances have become small enough that the code merges whole
 registers with shuffles instead of sweeping the array --- the `L` of
-`sorted_mturns` --- and, at the other end, the straight lines the C keeps for
-eight, sixteen and thirty-two elements.
+`sorted_mturns` --- and, at the other end, fitting the straight lines of
+section 12 to the trace of the C, so that the small widths are covered by the
+code's own comparisons rather than by a sorter of the same width.
 
 = The files
 
@@ -1081,6 +1145,7 @@ eight, sixteen and thirty-two elements.
     src("code/common/nprune.v"), [232], [padding, and the merge with comparisons dropped],
     src("code/common/nrec.v"), [454], [the recursion for a length that is not a power of two],
     src("code/common/nlevel.v"), [625], [the merge one distance at a time, and eight lanes at a time],
+    src("code/common/nbsl.v"), [120], [the bitonic sorter as a list, for the small widths],
     src("code/common/nmloop.v"), [872], [the merge loop of the AVX2 code],
     src("code/portable4/proof/nbjsort.v"), [1291], [Knuth's merge exchange],
     src("code/portable4/proof/int32_knuth.v"), [602], [the portable code is that network],
