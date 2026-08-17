@@ -25,6 +25,12 @@ Import Order POrderTheory TotalTheory.
 (*                    and one level is the whole blocks of 2d wires, one      *)
 (*                    after the other, then a ragged tail -- the shape stage  *)
 (*                    followed by minmax_vector has                           *)
+(*    vbatch, vblock, vstage                                                  *)
+(*                    what vnet, blockn and stage compare: a batch between    *)
+(*                    registers q apart, eight lanes at a time                *)
+(*    vblock_dequiv   whatever the batch, a block read lane group by lane     *)
+(*                    group is a reordering of it read comparison by          *)
+(*                    comparison                                              *)
 (*                                                                            *)
 (*  It is the first step towards reading the merge loop of sort_short.c,      *)
 (*  which walks one distance at a time and, at each of them, does the whole   *)
@@ -351,4 +357,141 @@ Proof. by []. Qed.
 Example level_pairs_blocks_11_2 :
   level_pairs 11 2 2 false
     = flatten [seq mm (m * 4) (m * 4 + 2) 2 | m <- iota 0 2] ++ mm 8 10 1.
+Proof. by []. Qed.
+
+(* -------------------------------------------------------------------------- *)
+(*  Cutting a run of comparisons into chunks                                  *)
+(* -------------------------------------------------------------------------- *)
+
+Lemma mm_cat (a b u v : nat) :
+  mm a b (u + v) = mm a b u ++ mm (a + u) (b + u) v.
+Proof.
+rewrite /mm iotaD add0n map_cat; congr (_ ++ _).
+have -> : iota u v = [seq u + i | i <- iota 0 v] by rewrite -iotaDl addn0.
+by rewrite -map_comp; apply: eq_map => i /=; rewrite !addnA.
+Qed.
+
+Lemma mm_chunks (a b c k : nat) :
+  mm a b (k * c) = flatten [seq mm (a + t * c) (b + t * c) c | t <- iota 0 k].
+Proof.
+elim: k => [|k IH]; first by rewrite mul0n.
+rewrite mulSnr mm_cat IH -addn1 iotaD map_cat flatten_cat add0n /=.
+by rewrite cats0.
+Qed.
+
+Lemma mem_mm (a b len : nat) (x : nat * nat) :
+  x \in mm a b len -> exists2 l, l < len & x = (a + l, b + l).
+Proof.
+by rewrite /mm => /mapP[l]; rewrite mem_iota add0n => /andP[_ lL] ->; exists l.
+Qed.
+
+(* -------------------------------------------------------------------------- *)
+(*  The vector layer: eight lanes at a time                                   *)
+(* -------------------------------------------------------------------------- *)
+
+(* The code does not walk a level wire by wire.  It holds cnt registers of    *)
+(* eight lanes, taken q apart, runs a fixed batch g of compare-exchanges      *)
+(* between those registers, and moves on eight lanes further.  So a batch     *)
+(* between the registers at a and at b compares eight wires at a time, and a  *)
+(* block reads the same comparisons lane group by lane group instead of       *)
+(* comparison by comparison.                                                  *)
+
+(* what vnet(v,g) compares: the batch g between registers q apart from i      *)
+Definition vbatch (i q : nat) (g : seq (nat * nat)) : seq (nat * nat) :=
+  flatten [seq mm (i + ab.1 * q) (i + ab.2 * q) 8 | ab <- g].
+
+(* what blockn(x,base,span,q,cnt,g) compares: the batch at every lane group   *)
+(* of the span                                                                *)
+Definition vblock (base span q : nat) (g : seq (nat * nat)) : seq (nat * nat) :=
+  flatten [seq vbatch (base + t * 8) q g | t <- iota 0 (span %/ 8)].
+
+(* what stage(x,n,cnt,q,g) compares: the whole array tiled with such blocks   *)
+Definition vstage (n cnt q : nat) (g : seq (nat * nat)) : seq (nat * nat) :=
+  flatten [seq vblock (t * (cnt * q)) q q g | t <- iota 0 (n %/ (cnt * q))].
+
+(* the only batch of one comparison there is *)
+Lemma vbatch1 (i q : nat) : vbatch i q [:: (0, 1)] = mm i (i + q) 8.
+Proof. by rewrite /vbatch /mm /= mul0n mul1n !addn0. Qed.
+
+(* one distance alone needs no reordering: the lane groups of a block come in *)
+(* increasing order, so the block IS the run of comparisons                   *)
+Lemma vblock_mrg2 (base q : nat) : 8 %| q ->
+  vblock base q q [:: (0, 1)] = mm base (base + q) q.
+Proof.
+move=> q8.
+have -> : mm base (base + q) q
+        = flatten [seq mm (base + t * 8) (base + t * 8 + q) 8
+                  | t <- iota 0 (q %/ 8)].
+  rewrite -{1}[X in mm _ _ X](divnK q8) mm_chunks.
+  by congr flatten; apply: eq_map => t; rewrite addnAC.
+by rewrite /vblock; congr flatten; apply: eq_map => t; rewrite vbatch1.
+Qed.
+
+(* so a level whose distance is a multiple of eight is exactly what           *)
+(* stage(x,n,2,q,N_mrg2) does, followed by minmax_vector on the tail          *)
+Theorem level_pairs_vstage (n q : nat) : 0 < q -> 8 %| q ->
+  level_pairs n q q false
+    = vstage n 2 q [:: (0, 1)]
+        ++ mm (n %/ q.*2 * q.*2) (n %/ q.*2 * q.*2 + q) (n - q - n %/ q.*2 * q.*2).
+Proof.
+move=> q_gt0 q8; rewrite level_pairs_blocks //; congr (_ ++ _).
+rewrite /vstage mul2n; congr flatten; apply: eq_map => t.
+by rewrite vblock_mrg2.
+Qed.
+
+(* THE VECTOR LAYER: whatever the batch, a block read lane group by lane      *)
+(* group is a reordering of the same block read comparison by comparison.     *)
+(* Two comparisons of different lane groups share no wire, and the batch is   *)
+(* run in the same order in each group, so nothing crosses.                   *)
+Theorem vblock_dequiv (n base q c : nat) (g : seq (nat * nat)) :
+  0 < q -> 8 %| q -> q %| base -> base + c * q <= n ->
+  all (fun ab => (ab.1 < c) && (ab.2 < c)) g ->
+  dequiv n (vblock base q q g)
+           (flatten [seq mm (base + ab.1 * q) (base + ab.2 * q) q | ab <- g]).
+Proof.
+move=> q_gt0 q8 qb bcn gB.
+pose ng j := nth (0, 0) g j.
+pose F j t := mm (base + t * 8 + (ng j).1 * q) (base + t * 8 + (ng j).2 * q) 8.
+have -> : vblock base q q g
+        = flatten [seq flatten [seq F j t | j <- iota 0 (size g)]
+                  | t <- iota 0 (q %/ 8)].
+  rewrite /vblock; congr flatten; apply: eq_map => t.
+  rewrite /vbatch; congr flatten.
+  rewrite -{1}(mkseq_nth (0, 0) g) /mkseq -map_comp.
+  by apply: eq_map => j.
+have -> : flatten [seq mm (base + ab.1 * q) (base + ab.2 * q) q | ab <- g]
+        = flatten [seq flatten [seq F j t | t <- iota 0 (q %/ 8)]
+                  | j <- iota 0 (size g)].
+  rewrite -{1}(mkseq_nth (0, 0) g) /mkseq -map_comp; congr flatten.
+  apply: eq_map => j; rewrite /comp /F -/(ng j).
+  rewrite -{1}[X in mm _ _ X](divnK q8) mm_chunks.
+  by congr flatten; apply: eq_map => t; rewrite ![_ + _ * q + t * 8]addnAC.
+have key (a l t : nat) : a < c -> l < 8 -> t < q %/ 8 ->
+    (base + t * 8 + a * q + l < n)
+      && ((base + t * 8 + a * q + l) %% q %/ 8 == t).
+  move=> aLc lL8 tL.
+  have t8 : t * 8 + 8 <= q by rewrite -mulSnr -(divnK q8) leq_mul2r tL orbT.
+  have tlq : t * 8 + l < q by lia.
+  have [k bE] : exists k, base = k * q by exists (base %/ q); rewrite divnK.
+  have xE : base + t * 8 + a * q + l = (k + a) * q + (t * 8 + l).
+    by rewrite bE mulnDl; lia.
+  rewrite xE modnMDl modn_small // divnMDl // divn_small ?addn0 ?eqxx ?andbT //.
+  have H : a * q + q <= c * q by rewrite -mulSnr leq_mul2r aLc orbT.
+  by move: bcn; rewrite bE; lia.
+have ngB (j : nat) : j < size g -> ((ng j).1 < c) && ((ng j).2 < c).
+  by move=> jL; apply: (allP gB); apply: mem_nth.
+apply: (@dequiv_flatten_swap n (fun x => x %% q %/ 8) F (q %/ 8) (size g)).
+- move=> j t jL tL; apply/allP => ab /mem_mm[l lL8 ->].
+  have /andP[c1 c2] := ngB _ jL.
+  by rewrite /bnd /=; have /andP[-> _] := key _ l t c1 lL8 tL;
+     have /andP[-> _] := key _ l t c2 lL8 tL.
+move=> j t jL tL; apply/allP => ab /mem_mm[l lL8 ->].
+have /andP[c1 c2] := ngB _ jL.
+have /andP[_ /eqP->] := key _ l t c1 lL8 tL.
+by have /andP[_ /eqP->] := key _ l t c2 lL8 tL; rewrite !eqxx.
+Qed.
+
+(* sixteen wires at distance eight: one lane group, so the block is literally *)
+(* the run of eight comparisons                                               *)
+Example vblock_16_8 : vblock 0 8 8 [:: (0, 1)] = mm 0 8 8.
 Proof. by []. Qed.
