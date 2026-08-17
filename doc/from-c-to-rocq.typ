@@ -945,6 +945,53 @@ Theorem mbody_levels (n q : nat) : 0 < q -> 8 %| q ->
 where `mbody n q` is the turn written out --- the stage, the two leftover
 blocks and the three tails, in the order the C runs them.
 
+== All the turns
+
+One turn is three levels; the loop is all of them. Look at what it does to $q$:
+it shifts right by two before the body and by one after, so each turn divides
+$q$ by eight --- three halvings, three levels. Nothing else about the loop
+matters. Writing $2^j$ for the body's $q$ on the last turn, $k$ turns are
+
+```coq
+Fixpoint mturns (n j k : nat) : seq (nat * nat) :=
+  if k is k1.+1 then mbody n (`2^ (j + 3 * k1)) ++ mturns n j k1 else [::].
+```
+
+and one line of `mbody_levels` per turn gives the $3k$ levels they run,
+`dtop j k`, largest distance first. The turn stops where $q$ would fall below
+eight lanes, so $j >= 3$; that is the only condition.
+
+What makes this the *whole* merge is one list identity: those $3k$ distances
+are the top ones of a merge on $2^(j + 3 k)$ wires, and what is left below
+them is a merge on $2^j$ wires.
+
+```coq
+Lemma dists_dtop (j k : nat) : dists (j + 3 * k) = dtop j k ++ dists j.
+```
+
+So the loop, followed by anything at all that runs the distances it stopped
+above, is the pruned merge of section 10 --- and therefore sorts:
+
+```coq
+Theorem sorted_mturns (n j k : nat) (L : seq (nat * nat)) (s1 s2 : seq bool)
+    (t : n.-tuple bool) :
+  3 <= j -> n <= `2^ (j + 3 * k) ->
+  nequiv n L (flatten [seq level_pairs n d d false | d <- dists j]) ->
+  sorted >=%O s1 -> sorted <=%O s2 -> t = s1 ++ s2 :> seq bool ->
+  sorted <=%O (nfun (pnet n (mturns n j k ++ L)) t).
+```
+
+Read the hypothesis on `L` as a contract with the rest of the code: whatever
+the last phase of `int32_sort_short` does, if it performs the levels at
+$2^(j-1)$ down to 1, the merge is complete.
+
+A thousand elements make that concrete. The code enters the merge with
+$q = 512$, so the first turn runs the levels at 512, 256 and 128 and the
+second those at 64, 32 and 16; then $q$ is 8, the test `q >= 64` fails, and the
+loop is over. Here $j = 4$ and $k = 2$: two turns, six levels, and
+$2^(4 + 6) = 1024$, which is the width whose merge covers a thousand places.
+The contract left for the last phase is the four levels at 8, 4, 2 and 1.
+
 = What is proved, and what is not
 
 The four main statements are these.
@@ -1009,11 +1056,14 @@ loops #src("code/avx2/c/sort_short.c") runs for a longer array of an awkward
 length. Their model is the scheme of section 10, which is mathematics rather
 than a transcription: that the code's merge loop performs that scheme's pruned
 merge is a proof, not an assumption, and writing it down as an axiom would
-hide the work instead of leaving it in plain sight. That proof is under way.
-One turn of the loop is done --- `mbody_levels` of section 11, closed like the
-statements above --- and what is left is the induction over the turns and the
-last phase, where the distances have become small enough that the code merges
-whole registers instead of sweeping the array.
+hide the work instead of leaving it in plain sight. Section 11 does most of
+that proof: the merge loop is exactly the levels it should perform, from the
+largest distance down to the point where it stops, and everything in it is
+closed like the statements above. What is left is the phase after the loop,
+where the distances have become small enough that the code merges whole
+registers with shuffles instead of sweeping the array --- the `L` of
+`sorted_mturns` --- and, at the other end, the straight lines the C keeps for
+eight, sixteen and thirty-two elements.
 
 = The files
 
@@ -1031,7 +1081,7 @@ whole registers instead of sweeping the array.
     src("code/common/nprune.v"), [232], [padding, and the merge with comparisons dropped],
     src("code/common/nrec.v"), [454], [the recursion for a length that is not a power of two],
     src("code/common/nlevel.v"), [625], [the merge one distance at a time, and eight lanes at a time],
-    src("code/common/nmloop.v"), [765], [one turn of the merge loop of the AVX2 code],
+    src("code/common/nmloop.v"), [872], [the merge loop of the AVX2 code],
     src("code/portable4/proof/nbjsort.v"), [1291], [Knuth's merge exchange],
     src("code/portable4/proof/int32_knuth.v"), [602], [the portable code is that network],
     src("code/avx2/proof/sort_generic.v"), [592], [the bitonic network, and the loop nest],
