@@ -32,6 +32,12 @@ Import Order POrderTheory TotalTheory.
 (*                    that share no wire                                      *)
 (*    mbody_levels    that turn computes the same function as the three       *)
 (*                    levels at 4q, 2q and q, one after the other             *)
+(*    mturns n j k     k turns of the loop, the last one at `2^ j             *)
+(*    mturns_levels    those turns are 3k levels; with dists_dtop, the loop   *)
+(*                    followed by anything that runs the distances below      *)
+(*                    `2^ j is the whole pruned merge (mturns_hcr), and it    *)
+(*                    sorts an array that falls and then rises                *)
+(*                    (sorted_mturns)                                         *)
 (*                                                                            *)
 (*  What it rests on, all proved here:                                        *)
 (*                                                                            *)
@@ -762,4 +768,97 @@ apply: nequiv_dequiv; apply: (@mbody_assemble n J0 J1).
   have -> : J0 + 3 * q = J0 + 2 * q + q by rewrite -addnA e23.
   by apply: wlo_mm_blk; rewrite -addnA e2 -addnA e4 J1c.
 exact: whi_mm_blk.
+Qed.
+
+(* -------------------------------------------------------------------------- *)
+(*  The whole loop                                                            *)
+(* -------------------------------------------------------------------------- *)
+
+(* The loop divides q by eight per turn (>>= 2 before the body, >>= 1 after), *)
+(* so the turns are the exponents j, j + 3, j + 6, ..., where `2^ j is the    *)
+(* body's q on the last turn -- at least eight, since the body needs 8 %| q.  *)
+(* k turns therefore cover 3k distances, `2^ (j + 3k - 1) down to `2^ j: for  *)
+(* n = 1000 the code enters the merge with q = 512 and runs two turns, the    *)
+(* first at 512, 256, 128 and the second at 64, 32, 16, so j = 4 and k = 2.   *)
+
+(* k turns of the loop, the last one at `2^ j *)
+Fixpoint mturns (n j k : nat) : seq (nat * nat) :=
+  if k is k1.+1 then mbody n (`2^ (j + 3 * k1)) ++ mturns n j k1 else [::].
+
+(* the distances they cover, largest first *)
+Fixpoint dtop (j k : nat) : seq nat :=
+  if k is k1.+1
+  then [:: 4 * `2^ (j + 3 * k1); 2 * `2^ (j + 3 * k1); `2^ (j + 3 * k1)]
+       ++ dtop j k1
+  else [::].
+
+Lemma e2n2 (i : nat) : `2^ i.+1 = 2 * `2^ i.
+Proof. by rewrite e2Sn; lia. Qed.
+
+Lemma e2n4 (i : nat) : `2^ i.+2 = 4 * `2^ i.
+Proof. by rewrite !e2Sn; lia. Qed.
+
+(* k turns are those 3k levels *)
+Theorem mturns_levels (n j k : nat) : 3 <= j ->
+  nequiv n (mturns n j k)
+           (flatten [seq level_pairs n d d false | d <- dtop j k]).
+Proof.
+move=> j3; elim: k => [|k IH]; first exact: nequiv_refl.
+rewrite [mturns _ _ _]/= -/(mturns n j k) [dtop _ _]/= -/(dtop j k).
+set Q := `2^ (j + 3 * k).
+have -> : flatten [seq level_pairs n d d false
+                  | d <- [:: 4 * Q, 2 * Q, Q & dtop j k]]
+        = (level_pairs n (4 * Q) (4 * Q) false
+           ++ level_pairs n (2 * Q) (2 * Q) false
+           ++ level_pairs n Q Q false)
+          ++ flatten [seq level_pairs n d d false | d <- dtop j k].
+  by rewrite /= -!catA.
+apply: nequiv_cat; last exact: IH.
+apply: mbody_levels; first by rewrite /Q e2n_gt0.
+by rewrite /Q -[8]/(`2^ 3) dvdn_e2n; lia.
+Qed.
+
+(* and those are the top 3k distances of a merge on `2^ (j + 3k) wires *)
+Lemma dists_dtop (j k : nat) : dists (j + 3 * k) = dtop j k ++ dists j.
+Proof.
+elim: k => [|k IH]; first by rewrite muln0 addn0.
+have -> : j + 3 * k.+1 = (j + 3 * k).+3 by lia.
+rewrite !dists_cons [dtop _ _]/= -/(dtop j k) IH.
+by rewrite -e2n4 -e2n2.
+Qed.
+
+(* so the loop, followed by anything that runs the distances it stopped       *)
+(* above, is the whole merge -- and the last phase of the C, which merges     *)
+(* whole registers, is what has to supply that L                              *)
+Corollary mturns_merge (n j k : nat) (L : seq (nat * nat)) : 3 <= j ->
+  nequiv n L (flatten [seq level_pairs n d d false | d <- dists j]) ->
+  nequiv n (mturns n j k ++ L)
+           (flatten [seq level_pairs n d d false | d <- dists (j + 3 * k)]).
+Proof.
+move=> j3 HL; rewrite dists_dtop map_cat flatten_cat.
+by apply: nequiv_cat HL; apply: mturns_levels.
+Qed.
+
+Corollary mturns_hcr (n j k : nat) (L : seq (nat * nat)) :
+  3 <= j -> n <= `2^ (j + 3 * k) ->
+  nequiv n L (flatten [seq level_pairs n d d false | d <- dists j]) ->
+  nequiv n (mturns n j k ++ L)
+           [seq ab <- nstages (half_cleaner_rec false (j + 3 * k)) | ab.2 < n].
+Proof.
+move=> j3 nN HL; rewrite nstages_hcr_prune //.
+by apply: mturns_merge.
+Qed.
+
+(* THE MERGE THE CODE RUNS SORTS: an array that falls and then rises comes    *)
+(* out sorted from the loop followed by that last phase                       *)
+Theorem sorted_mturns (n j k : nat) (L : seq (nat * nat)) (s1 s2 : seq bool)
+    (t : n.-tuple bool) :
+  3 <= j -> n <= `2^ (j + 3 * k) ->
+  nequiv n L (flatten [seq level_pairs n d d false | d <- dists j]) ->
+  sorted >=%O s1 -> sorted <=%O s2 -> t = s1 ++ s2 :> seq bool ->
+  sorted <=%O (nfun (pnet n (mturns n j k ++ L)) t).
+Proof.
+move=> j3 nN HL s1S s2S tE.
+rewrite (mturns_hcr j3 nN HL t).
+by apply: sorted_hcr_prune s1S s2S tE.
 Qed.
