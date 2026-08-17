@@ -33,8 +33,7 @@ Import Order POrderTheory TotalTheory.
 (*    mbody_levels    that turn computes the same function as the three       *)
 (*                    levels at 4q, 2q and q, one after the other             *)
 (*                                                                            *)
-(*  mbody_levels is proved; what it still rests on, and what the next round   *)
-(*  owes, are four statements left Admitted here:                             *)
+(*  What it rests on, all proved here:                                        *)
 (*                                                                            *)
 (*    stage_sblocks   the stage IS the first blocks of the three levels       *)
 (*    level2_sblocks, level1_sblocks                                          *)
@@ -206,7 +205,251 @@ Lemma stage_sblocks (n q : nat) : 0 < q -> 8 %| q ->
            (sblocks (4 * q) (n %/ (8 * q))
             ++ sblocks (2 * q) (2 * (n %/ (8 * q)))
             ++ sblocks q (4 * (n %/ (8 * q)))).
-Admitted.
+Proof.
+move=> q_gt0 q8.
+have d42 : (4 * q).*2 = 8 * q by lia.
+have d22 : (2 * q).*2 = 4 * q by lia.
+have d12 : q.*2 = 2 * q by lia.
+have qq : 0 < 8 * q by lia.
+(* the three levels of a merge on 8q wires, block by block *)
+have lp4 : level_pairs (8 * q) (4 * q) (4 * q) false = mm 0 (4 * q) (4 * q).
+  rewrite level_pairs_sblocks ?muln_gt0 // d42 divnn qq /=.
+  have -> : 8 * q - 4 * q - 1 * (8 * q) = 0 by lia.
+  by rewrite /sblocks /= !mul0n !add0n !cats0.
+have h84 : 8 * q %/ (4 * q) = 2.
+  have -> : 8 * q = 2 * (4 * q) by lia.
+  by rewrite mulnK ?muln_gt0.
+have h82 : 8 * q %/ (2 * q) = 4.
+  have -> : 8 * q = 4 * (2 * q) by lia.
+  by rewrite mulnK ?muln_gt0.
+have lp2 : level_pairs (8 * q) (2 * q) (2 * q) false
+         = mm 0 (2 * q) (2 * q) ++ mm (4 * q) (6 * q) (2 * q).
+  rewrite level_pairs_sblocks ?muln_gt0 // d22 h84.
+  have -> : 8 * q - 2 * q - 2 * (4 * q) = 0 by lia.
+  rewrite /sblocks /= d22 !mul0n !mul1n !add0n !cats0.
+  by congr (_ ++ _); congr mm; lia.
+have lp1 : level_pairs (8 * q) q q false
+         = mm 0 q q ++ mm (2 * q) (3 * q) q ++ mm (4 * q) (5 * q) q
+           ++ mm (6 * q) (7 * q) q.
+  rewrite level_pairs_sblocks // d12 h82.
+  have -> : 8 * q - q - 4 * (2 * q) = 0 by lia.
+  rewrite /sblocks /= d12 !mul0n !mul1n !add0n !cats0.
+  by congr (_ ++ _ ++ _ ++ _); congr mm; lia.
+set M := n %/ (8 * q).
+have Mn : M * (8 * q) <= n by rewrite /M leq_divM.
+have tb : forall t, t < M -> t * (8 * q) + 8 * q <= n.
+  move=> t tM; apply: leq_trans Mn.
+  by rewrite -mulSnr leq_mul2r tM orbT.
+have qb : forall t, q %| t * (8 * q).
+  by move=> t; apply/dvdnP; exists (t * 8); lia.
+(* one block is its three levels *)
+have blockE : forall t, t < M ->
+  dequiv n (vblock (t * (8 * q)) q q (mrg 3))
+           (mm (t * (8 * q)) (t * (8 * q) + 4 * q) (4 * q)
+            ++ (mm (t * (8 * q)) (t * (8 * q) + 2 * q) (2 * q)
+                ++ mm (t * (8 * q) + 4 * q) (t * (8 * q) + 6 * q) (2 * q))
+            ++ (mm (t * (8 * q)) (t * (8 * q) + q) q
+                ++ mm (t * (8 * q) + 2 * q) (t * (8 * q) + 3 * q) q
+                ++ mm (t * (8 * q) + 4 * q) (t * (8 * q) + 5 * q) q
+                ++ mm (t * (8 * q) + 6 * q) (t * (8 * q) + 7 * q) q)).
+  move=> t tM.
+  have pcat : forall b l1 l2, pshift b (l1 ++ l2) = pshift b l1 ++ pshift b l2.
+    by move=> b l1 l2; rewrite /pshift map_cat.
+  have H : dequiv n (vblock (t * (8 * q)) q q (mrg 3))
+     (pshift (t * (8 * q)) (level_pairs (8 * q) (4 * q) (4 * q) false)
+      ++ (pshift (t * (8 * q)) (level_pairs (8 * q) (2 * q) (2 * q) false)
+          ++ (pshift (t * (8 * q)) (level_pairs (8 * q) (1 * q) (1 * q) false)
+              ++ [::])))
+    := @vblock_levels n (t * (8 * q)) q 3 q_gt0 q8 (qb t) (tb _ tM).
+  by move: H; rewrite mul1n lp4 lp2 lp1 !pcat !cats0 -!mm_shift !addn0.
+(* the blocks of a level, read block of 8q by block of 8q *)
+have group : forall (k : nat) (G : nat -> seq (nat * nat)),
+    flatten [seq G m | m <- iota 0 (M * k)]
+      = flatten [seq flatten [seq G (t * k + i) | i <- iota 0 k]
+                | t <- iota 0 M].
+  move=> k G; rewrite iota_chunks flatten_map_flatten -map_comp.
+  by congr flatten; apply/eq_in_map => t _; rewrite /comp -map_comp.
+have gA : sblocks (4 * q) M
+        = flatten [seq mm (t * (8 * q)) (t * (8 * q) + 4 * q) (4 * q)
+                  | t <- iota 0 M].
+  by rewrite /sblocks d42.
+have gB : sblocks (2 * q) (2 * M)
+        = flatten [seq mm (t * (8 * q)) (t * (8 * q) + 2 * q) (2 * q)
+                       ++ mm (t * (8 * q) + 4 * q) (t * (8 * q) + 6 * q) (2 * q)
+                  | t <- iota 0 M].
+  rewrite /sblocks d22 [2 * M]mulnC group.
+  congr flatten; apply/eq_in_map => t _; rewrite /= cats0.
+  have -> : (t * 2 + 0) * (4 * q) = t * (8 * q) by nia.
+  have -> : (t * 2 + 1) * (4 * q) = t * (8 * q) + 4 * q by nia.
+  by have -> : t * (8 * q) + 4 * q + 2 * q = t * (8 * q) + 6 * q by lia.
+have gC : sblocks q (4 * M)
+        = flatten [seq mm (t * (8 * q)) (t * (8 * q) + q) q
+                       ++ mm (t * (8 * q) + 2 * q) (t * (8 * q) + 3 * q) q
+                       ++ mm (t * (8 * q) + 4 * q) (t * (8 * q) + 5 * q) q
+                       ++ mm (t * (8 * q) + 6 * q) (t * (8 * q) + 7 * q) q
+                  | t <- iota 0 M].
+  rewrite /sblocks d12 [4 * M]mulnC group.
+  congr flatten; apply/eq_in_map => t _; rewrite /= cats0.
+  have -> : (t * 4 + 0) * (2 * q) = t * (8 * q) by nia.
+  have -> : (t * 4 + 1) * (2 * q) = t * (8 * q) + 2 * q by nia.
+  have -> : (t * 4 + 2) * (2 * q) = t * (8 * q) + 4 * q by nia.
+  have -> : (t * 4 + 3) * (2 * q) = t * (8 * q) + 6 * q by nia.
+  have -> : t * (8 * q) + 2 * q + q = t * (8 * q) + 3 * q by lia.
+  have -> : t * (8 * q) + 4 * q + q = t * (8 * q) + 5 * q by lia.
+  by have -> : t * (8 * q) + 6 * q + q = t * (8 * q) + 7 * q by lia.
+(* the block number is the colour: comparisons of different blocks share no  *)
+(* wire                                                                      *)
+have col : forall t x y len, t < M ->
+    t * (8 * q) <= x -> x + len <= t * (8 * q) + 8 * q ->
+    t * (8 * q) <= y -> y + len <= t * (8 * q) + 8 * q ->
+    all (fun ab => [&& bnd n ab, ab.2 %/ (8 * q) == ab.1 %/ (8 * q)
+                     & ab.1 %/ (8 * q) == t]) (mm x y len).
+  move=> t x y len tM hx1 hx2 hy1 hy2.
+  have hn := tb _ tM.
+  have E : forall z, t * (8 * q) <= z -> z < t * (8 * q) + 8 * q ->
+      z %/ (8 * q) = t.
+    move=> z h1 h2; rewrite -(subnKC h1) divnMDl // divn_small ?addn0 //; lia.
+  apply/allP => ab /mem_mm[i iL ->] /=.
+  have b1 : x + i < n.
+    by apply: leq_trans hn; apply: leq_trans hx2; rewrite ltn_add2l.
+  have b2 : y + i < n.
+    by apply: leq_trans hn; apply: leq_trans hy2; rewrite ltn_add2l.
+  have hx : (x + i) %/ (8 * q) = t.
+    apply: E; first by apply: leq_trans hx1 (leq_addr _ _).
+    by apply: leq_trans hx2; rewrite ltn_add2l.
+  have hy : (y + i) %/ (8 * q) = t.
+    apply: E; first by apply: leq_trans hy1 (leq_addr _ _).
+    by apply: leq_trans hy2; rewrite ltn_add2l.
+  by rewrite hx hy !eqxx !andbT /bnd /= b1 b2.
+(* block by block, then the three levels read one after the other *)
+rewrite gA gB gC.
+apply: (@dequiv_trans n _
+  (flatten [seq mm (t * (8 * q)) (t * (8 * q) + 4 * q) (4 * q)
+                 ++ (mm (t * (8 * q)) (t * (8 * q) + 2 * q) (2 * q)
+                     ++ mm (t * (8 * q) + 4 * q) (t * (8 * q) + 6 * q) (2 * q))
+                 ++ (mm (t * (8 * q)) (t * (8 * q) + q) q
+                     ++ mm (t * (8 * q) + 2 * q) (t * (8 * q) + 3 * q) q
+                     ++ mm (t * (8 * q) + 4 * q) (t * (8 * q) + 5 * q) q
+                     ++ mm (t * (8 * q) + 6 * q) (t * (8 * q) + 7 * q) q)
+           | t <- iota 0 M])).
+  by apply: dequiv_flatten_in => t; rewrite mem_iota add0n => /andP[_ tM];
+     apply: blockE.
+apply: (@dequiv_flatten_swap3 n (fun x => x %/ (8 * q))
+  (fun t => mm (t * (8 * q)) (t * (8 * q) + 4 * q) (4 * q))
+  (fun t => mm (t * (8 * q)) (t * (8 * q) + 2 * q) (2 * q)
+            ++ mm (t * (8 * q) + 4 * q) (t * (8 * q) + 6 * q) (2 * q))
+  (fun t => mm (t * (8 * q)) (t * (8 * q) + q) q
+            ++ mm (t * (8 * q) + 2 * q) (t * (8 * q) + 3 * q) q
+            ++ mm (t * (8 * q) + 4 * q) (t * (8 * q) + 5 * q) q
+            ++ mm (t * (8 * q) + 6 * q) (t * (8 * q) + 7 * q) q) M).
+- by move=> t tM; apply: col => //; lia.
+- move=> t tM; rewrite all_cat.
+  by apply/andP; split; apply: col => //; lia.
+move=> t tM; rewrite !all_cat.
+by apply/and4P; split; apply: col => //; lia.
+Qed.
+
+(* -------------------------------------------------------------------------- *)
+(*  How many whole blocks each level has                                      *)
+(* -------------------------------------------------------------------------- *)
+
+(* the blocks of a level, split anywhere *)
+Lemma sblocks_cat (d k1 k2 : nat) :
+  sblocks d (k1 + k2)
+    = sblocks d k1 ++ flatten [seq mm (m * d.*2) (m * d.*2 + d) d
+                              | m <- iota k1 k2].
+Proof. by rewrite /sblocks -{1}[k1]add0n iotaD map_cat flatten_cat. Qed.
+
+Lemma mj0_le (n q : nat) : 0 < q -> mj0 n q <= n.
+Proof. by move=> q_gt0; rewrite /mj0 leq_divM. Qed.
+
+(* what is left after the stage is what n leaves over 8q *)
+Lemma mj0_mod (n q : nat) : 0 < q -> n - mj0 n q = n %% (8 * q).
+Proof.
+move=> q_gt0; rewrite /mj0.
+by rewrite {1}(divn_eq n (8 * q)) addnC addnK.
+Qed.
+
+Lemma div4E (n q : nat) : 0 < q ->
+  n %/ (4 * q) = 2 * (n %/ (8 * q)) + n %% (8 * q) %/ (4 * q).
+Proof.
+move=> q_gt0.
+have E : n = 2 * (n %/ (8 * q)) * (4 * q) + n %% (8 * q).
+  by rewrite {1}(divn_eq n (8 * q)); congr (_ + _); nia.
+by rewrite {1}E divnMDl ?muln_gt0.
+Qed.
+
+Lemma div2E (n q : nat) : 0 < q ->
+  n %/ (2 * q) = 4 * (n %/ (8 * q)) + n %% (8 * q) %/ (2 * q).
+Proof.
+move=> q_gt0.
+have E : n = 4 * (n %/ (8 * q)) * (2 * q) + n %% (8 * q).
+  by rewrite {1}(divn_eq n (8 * q)); congr (_ + _); nia.
+by rewrite {1}E divnMDl ?muln_gt0.
+Qed.
+
+(* the two tests the code makes, read on what n leaves over 8q *)
+Lemma c4E (n q : nat) : 0 < q ->
+  (mj0 n q + 4 * q <= n) = (4 * q <= n %% (8 * q)).
+Proof.
+move=> q_gt0; have := mj0_le n q_gt0; have := mj0_mod n q_gt0; lia.
+Qed.
+
+Lemma mj1_add (n q : nat) : 0 < q ->
+  mj1 n q = mj0 n q + (if 4 * q <= n %% (8 * q) then 4 * q else 0).
+Proof.
+by move=> q_gt0; rewrite /mj1 (c4E _ q_gt0); case: leqP => _; rewrite ?addn0.
+Qed.
+
+Lemma c2E (n q : nat) : 0 < q ->
+  (mj1 n q + 2 * q <= n)
+    = (if 4 * q <= n %% (8 * q) then 6 * q <= n %% (8 * q)
+       else 2 * q <= n %% (8 * q)).
+Proof.
+move=> q_gt0.
+have hle := mj0_le n q_gt0; have hmod := mj0_mod n q_gt0.
+by rewrite mj1_add //; case: (leqP (4 * q) (n %% (8 * q))) => h; lia.
+Qed.
+
+Lemma modn_div_eq (n q j : nat) : 0 < q ->
+  j * (2 * q) <= n %% (8 * q) -> n %% (8 * q) < j.+1 * (2 * q) ->
+  n %% (8 * q) %/ (2 * q) = j.
+Proof.
+move=> q_gt0 h1 h2.
+have -> : n %% (8 * q) = j * (2 * q) + (n %% (8 * q) - j * (2 * q)) by lia.
+by rewrite divnMDl ?muln_gt0 // divn_small ?addn0 //;
+   move: h2; rewrite mulSn; lia.
+Qed.
+
+(* where the code stands is where the levels at 2q and at q have their tail *)
+Lemma mj1E (n q : nat) : 0 < q -> mj1 n q = n %/ (4 * q) * (4 * q).
+Proof.
+move=> q_gt0.
+have rrL : n %% (8 * q) < 8 * q by rewrite ltn_mod; lia.
+rewrite /mj1 (c4E _ q_gt0) div4E //.
+case: leqP => [h|h].
+  have -> : n %% (8 * q) %/ (4 * q) = 1.
+    have -> : n %% (8 * q) = 1 * (4 * q) + (n %% (8 * q) - 4 * q) by lia.
+    by rewrite divnMDl ?muln_gt0 // divn_small ?addn0 //; lia.
+  by rewrite /mj0; nia.
+have -> : n %% (8 * q) %/ (4 * q) = 0 by apply: divn_small.
+by rewrite /mj0; nia.
+Qed.
+
+Lemma mj2E (n q : nat) : 0 < q -> mj2 n q = n %/ (2 * q) * (2 * q).
+Proof.
+move=> q_gt0.
+have rrL : n %% (8 * q) < 8 * q by rewrite ltn_mod; lia.
+have m0 : mj0 n q = 4 * (n %/ (8 * q)) * (2 * q) by rewrite /mj0; nia.
+rewrite /mj2 (c2E _ q_gt0) mj1_add // div2E // mulnDl -m0.
+case: (leqP (4 * q) (n %% (8 * q))) => h4.
+  case: (leqP (6 * q) (n %% (8 * q))) => h6.
+    by rewrite (@modn_div_eq n q 3 q_gt0); [nia | lia | lia].
+  by rewrite (@modn_div_eq n q 2 q_gt0); [nia | lia | lia].
+case: (leqP (2 * q) (n %% (8 * q))) => h2.
+  by rewrite (@modn_div_eq n q 1 q_gt0); [nia | lia | lia].
+by rewrite (@modn_div_eq n q 0 q_gt0); [nia | lia | lia].
+Qed.
 
 (* the level at 2q: the blocks the stage ran, the one leftover block the      *)
 (* mrg4 line runs, then the tail                                              *)
@@ -216,10 +459,22 @@ Lemma level2_sblocks (n q : nat) : 0 < q ->
       ++ (if mj0 n q + 4 * q <= n then mm (mj0 n q) (mj0 n q + 2 * q) (2 * q)
           else [::])
       ++ mm (mj1 n q) (mj1 n q + 2 * q) (n - 2 * q - mj1 n q).
-Admitted.
+Proof.
+move=> q_gt0.
+have d2 : (2 * q).*2 = 4 * q by lia.
+have rrL : n %% (8 * q) < 8 * q by rewrite ltn_mod; lia.
+rewrite level_pairs_sblocks ?muln_gt0 // d2 -(mj1E n q_gt0).
+rewrite div4E // sblocks_cat -catA; congr (_ ++ _); congr (_ ++ _).
+rewrite (c4E _ q_gt0); case: leqP => [h|h].
+  have -> : n %% (8 * q) %/ (4 * q) = 1.
+    have -> : n %% (8 * q) = 1 * (4 * q) + (n %% (8 * q) - 4 * q) by lia.
+    by rewrite divnMDl ?muln_gt0 // divn_small ?addn0 //; lia.
+  rewrite /= cats0 d2; congr mm; rewrite /mj0; nia.
+by have -> : n %% (8 * q) %/ (4 * q) = 0 by apply: divn_small.
+Qed.
 
-(* the level at q: the blocks the stage ran, the two inside the leftover    *)
-(* mrg4 block, the one inside the leftover mrg2 block, then the tail        *)
+(* the level at q: the blocks the stage ran, the two inside the leftover      *)
+(* mrg4 block, the one inside the leftover mrg2 block, then the tail          *)
 Lemma level1_sblocks (n q : nat) : 0 < q ->
   level_pairs n q q false
     = sblocks q (4 * (n %/ (8 * q)))
@@ -229,13 +484,132 @@ Lemma level1_sblocks (n q : nat) : 0 < q ->
           else [::])
       ++ (if mj1 n q + 2 * q <= n then mm (mj1 n q) (mj1 n q + q) q else [::])
       ++ mm (mj2 n q) (mj2 n q + q) (n - q - mj2 n q).
-Admitted.
+Proof.
+move=> q_gt0.
+have d2 : q.*2 = 2 * q by lia.
+have rrL : n %% (8 * q) < 8 * q by rewrite ltn_mod; lia.
+have m0 : 4 * (n %/ (8 * q)) * (2 * q) = mj0 n q by rewrite /mj0; nia.
+rewrite level_pairs_sblocks // d2 -(mj2E n q_gt0) div2E // sblocks_cat.
+rewrite -catA; congr (_ ++ _).
+rewrite (c4E _ q_gt0) (c2E _ q_gt0) mj1_add //.
+set a := 4 * (n %/ (8 * q)).
+have e0 : a * q.*2 = mj0 n q by rewrite d2.
+have e1 : a.+1 * q.*2 = mj0 n q + 2 * q by rewrite d2 mulSnr m0.
+have e2 : a.+2 * q.*2 = mj0 n q + 4 * q by rewrite mulSnr e1 d2; lia.
+have e3 : mj0 n q + 2 * q + q = mj0 n q + 3 * q by lia.
+case: (leqP (4 * q) (n %% (8 * q))) => h4.
+  case: (leqP (6 * q) (n %% (8 * q))) => h6.
+    rewrite (@modn_div_eq n q 3 q_gt0); [|by lia|by lia].
+    by rewrite /= e0 e1 e2 e3 cats0 -!catA.
+  rewrite (@modn_div_eq n q 2 q_gt0); [|by lia|by lia].
+  by rewrite /= e0 e1 e3 cats0 -!catA.
+case: (leqP (2 * q) (n %% (8 * q))) => h2.
+  rewrite (@modn_div_eq n q 1 q_gt0); [|by lia|by lia].
+  by rewrite /= e0 cats0 addn0.
+rewrite (@modn_div_eq n q 0 q_gt0); [|by lia|by lia].
+by [].
+Qed.
+
+(* a run of comparisons, head first *)
+Lemma mm_cons (a b len : nat) : mm a b len.+1 = (a, b) :: mm a.+1 b.+1 len.
+Proof.
+rewrite /mm -[iota 0 len.+1]/(0 :: iota 1 len) map_cons !addn0.
+congr (_ :: _).
+have -> : iota 1 len = [seq 1 + i | i <- iota 0 len] by rewrite -iotaDl.
+by rewrite -map_comp; apply: eq_map => i /=; rewrite !addnS !addSn.
+Qed.
+
+(* a run done twice is the run: its comparisons share no wire, so each of    *)
+(* them can be brought next to its repeat and collapsed                      *)
+Lemma nequiv_dup_mm (n a b len : nat) (r : seq (nat * nat)) :
+  a + len <= b -> b + len <= n ->
+  nequiv n (mm a b len ++ mm a b len ++ r) (mm a b len ++ r).
+Proof.
+elim: len a b => [|len IH] a b ab bn; first exact: nequiv_refl.
+rewrite !mm_cons !cat_cons.
+set T := mm a.+1 b.+1 len.
+have bT : all (bnd n) T by apply: bnd_mm; lia.
+have dT : all (dpair (a, b)) T.
+  apply/allP => x /mem_mm[l lL ->]; rewrite /dpair /=.
+  by apply/and4P; split; apply/eqP; lia.
+apply: (@nequiv_trans n _ ((a, b) :: (a, b) :: (T ++ T ++ r))).
+  apply: (nequiv_catl [:: (a, b)]); apply: nequiv_dequiv.
+  by apply: (@dequiv_moveL n (a, b) [::] T (T ++ r)) => //; rewrite /bnd /=;
+     apply/andP; split; lia.
+apply: (@nequiv_trans n _ ((a, b) :: (T ++ T ++ r))).
+  by apply: nequiv_dup; lia.
+by apply: (nequiv_catl [:: (a, b)]); apply: IH; lia.
+Qed.
 
 (* minmax_vector does eight comparisons twice when its length is ragged, and *)
 (* a comparison done twice is the comparison                                 *)
 Lemma mmv_mm (n a b len : nat) : a + len <= b -> (0 < len -> b + len <= n) ->
   nequiv n (mmv a b len) (mm a b len).
-Admitted.
+Proof.
+move=> ab bn; rewrite /mmv.
+case: ifP => [/andP[l8 rnz]|_]; last exact: nequiv_refl.
+have r8 : len %% 8 < 8 by rewrite ltn_mod.
+have r0 : 0 < len %% 8 by rewrite lt0n rnz.
+have bn' : b + len <= n by apply: bn; lia.
+set r := len %% 8; set L := len - r.
+(* the last eight are the eight-r that the run of L also does, then the r    *)
+(* that only they do                                                         *)
+have LE : len = L + r by rewrite /L /r; lia.
+have L8 : L = len - 8 + (8 - r) by rewrite /L /r; lia.
+have D8E : mm (a + (len - 8)) (b + (len - 8)) 8
+         = mm (a + (len - 8)) (b + (len - 8)) (8 - r) ++ mm (a + L) (b + L) r.
+  have -> : 8 = (8 - r) + r by lia.
+  rewrite mm_cat; congr (_ ++ _); last by congr mm; rewrite /L /r; lia.
+  by congr mm; lia.
+have ME : mm a b L
+        = mm a b (len - 8) ++ mm (a + (len - 8)) (b + (len - 8)) (8 - r).
+  by rewrite {1}L8 mm_cat.
+have TE : mm a b len = mm a b L ++ mm (a + L) (b + L) r.
+  by rewrite {1}LE mm_cat.
+have moveL0 : forall ps qs bs : seq (nat * nat),
+    all (bnd n) qs -> all (bnd n) bs ->
+    all (fun x => all (dpair x) qs) bs ->
+    dequiv n (ps ++ qs ++ bs) (ps ++ bs ++ qs).
+  move=> ps qs bs H1 H2 H3.
+  by have := @dequiv_moveL_block n ps qs bs [::]; rewrite !cats0; apply.
+have dp : forall u1 v1 u2 v2 : nat, u1 + v1 <= u2 -> u2 + v2 <= len ->
+    all (fun x => all (dpair x) (mm (a + u2) (b + u2) v2))
+        (mm (a + u1) (b + u1) v1).
+  move=> u1 v1 u2 v2 H1 H2.
+  apply/allP => x /mem_mm[i iL ->]; apply/allP => y /mem_mm[j jL ->].
+  by rewrite /dpair /=; apply/and4P; split; apply/eqP; lia.
+have bm : forall u v : nat, u + v <= len -> all (bnd n) (mm (a + u) (b + u) v).
+  by move=> u v H; apply: bnd_mm; lia.
+have bm0 : forall v : nat, v <= len -> all (bnd n) (mm a b v).
+  by move=> v H; have := bm 0 v; rewrite !addn0; apply; lia.
+have dp0 : forall v1 u2 v2 : nat, v1 <= u2 -> u2 + v2 <= len ->
+    all (fun x => all (dpair x) (mm (a + u2) (b + u2) v2)) (mm a b v1).
+  by move=> v1 u2 v2 H1 H2; have := dp 0 v1 u2 v2; rewrite !addn0; apply; lia.
+rewrite TE ME D8E -catA.
+(* the r comparisons only they do go to the end *)
+apply: (@nequiv_trans n _
+  (mm (a + (len - 8)) (b + (len - 8)) (8 - r)
+   ++ (mm a b (len - 8) ++ mm (a + (len - 8)) (b + (len - 8)) (8 - r))
+   ++ mm (a + L) (b + L) r)).
+  apply: nequiv_dequiv; apply: moveL0.
+  - by apply: bm; rewrite /L /r; lia.
+  - rewrite all_cat; apply/andP; split;
+      [apply: bm0 | apply: bm]; rewrite /L /r; lia.
+  rewrite all_cat; apply/andP; split;
+    [apply: dp0 | apply: dp]; rewrite /L /r; lia.
+(* and the eight-r meet their repeat *)
+rewrite -!catA.
+apply: (@nequiv_trans n _
+  (mm a b (len - 8) ++ mm (a + (len - 8)) (b + (len - 8)) (8 - r)
+   ++ mm (a + (len - 8)) (b + (len - 8)) (8 - r) ++ mm (a + L) (b + L) r)).
+  apply: nequiv_dequiv.
+  apply: (@dequiv_moveL_block n [::]
+            (mm (a + (len - 8)) (b + (len - 8)) (8 - r)) (mm a b (len - 8))).
+  - by apply: bm; rewrite /L /r; lia.
+  - by apply: bm0; lia.
+  by apply: dp0; rewrite /L /r; lia.
+by apply: nequiv_catl; apply: nequiv_dup_mm; rewrite /L /r; lia.
+Qed.
 
 (* -------------------------------------------------------------------------- *)
 (*  The tails and the blocks, in the shapes the turn uses                     *)
