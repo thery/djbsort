@@ -1728,3 +1728,69 @@ by case: (split b) => b'; rewrite IH.
 Qed.
 
 End TileReshape.
+
+(* -------------------------------------------------------------------------- *)
+(*  Two listings of comparisons that compute the same function                *)
+(* -------------------------------------------------------------------------- *)
+
+(* dequiv only ever moves a comparison past one it shares no wire with, so it *)
+(* cannot account for a comparison DONE TWICE -- which is what minmax_vector  *)
+(* does when its length is not a multiple of eight.  A comparison done twice  *)
+(* is the comparison, so what survives is the function computed: that is      *)
+(* nequiv.  Every reordering is one, and so is dropping a repeat.             *)
+
+(* running a comparator twice is running it once *)
+Lemma cfun_cswap_idem (m : nat) (d : disp_t) (A : orderType d) (i j : 'I_m)
+    (t : m.-tuple A) :
+  cfun (cswap i j) (cfun (cswap i j) t) = cfun (cswap i j) t.
+Proof.
+apply: eq_from_tnth => k.
+have [->|kDi] := eqVneq k i.
+  rewrite !cswapE_min cswapE_max.
+  by case: (leP (tnth t i) (tnth t j)) => H; apply/min_idPl => //; apply: ltW.
+have [->|kDj] := eqVneq k j.
+  rewrite !cswapE_max cswapE_min.
+  by case: (leP (tnth t i) (tnth t j)) => H; apply/max_idPr => //; apply: ltW.
+by rewrite !cswapE_neq.
+Qed.
+
+(* two lists of comparisons computing the same function on n wires *)
+Definition nequiv (n : nat) (l1 l2 : seq (nat * nat)) : Prop :=
+  forall (d : disp_t) (A : orderType d) (t : n.-tuple A),
+    nfun (pnet n l1) t = nfun (pnet n l2) t.
+
+Lemma nequiv_refl (n : nat) (l : seq (nat * nat)) : nequiv n l l.
+Proof. by []. Qed.
+
+Lemma nequiv_sym (n : nat) (l1 l2 : seq (nat * nat)) :
+  nequiv n l1 l2 -> nequiv n l2 l1.
+Proof. by move=> H d A t; rewrite H. Qed.
+
+Lemma nequiv_trans (n : nat) (l1 l2 l3 : seq (nat * nat)) :
+  nequiv n l1 l2 -> nequiv n l2 l3 -> nequiv n l1 l3.
+Proof. by move=> H1 H2 d A t; rewrite H1 H2. Qed.
+
+(* a reordering computes the same function *)
+Lemma nequiv_dequiv (n : nat) (l1 l2 : seq (nat * nat)) :
+  dequiv n l1 l2 -> nequiv n l1 l2.
+Proof. by move=> H d A t; apply: nfun_dequiv. Qed.
+
+Lemma nequiv_cat (n : nat) (l1 l1' l2 l2' : seq (nat * nat)) :
+  nequiv n l1 l1' -> nequiv n l2 l2' -> nequiv n (l1 ++ l2) (l1' ++ l2').
+Proof. by move=> H1 H2 d A t; rewrite !nfun_pnet_cat H1 H2. Qed.
+
+Lemma nequiv_catl (n : nat) (l l1 l2 : seq (nat * nat)) :
+  nequiv n l1 l2 -> nequiv n (l ++ l1) (l ++ l2).
+Proof. by move=> H; apply: nequiv_cat. Qed.
+
+Lemma nequiv_catr (n : nat) (l l1 l2 : seq (nat * nat)) :
+  nequiv n l1 l2 -> nequiv n (l1 ++ l) (l2 ++ l).
+Proof. by move=> H; apply: nequiv_cat. Qed.
+
+(* and a comparison done twice in a row is the comparison *)
+Lemma nequiv_dup (n a b : nat) (l : seq (nat * nat)) : a < n -> b < n ->
+  nequiv n ((a, b) :: (a, b) :: l) ((a, b) :: l).
+Proof.
+move=> aLn bLn d A t.
+by rewrite !(nfun_pnet_cons _ aLn bLn) cfun_cswap_idem.
+Qed.

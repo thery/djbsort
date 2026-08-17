@@ -10,4 +10,5 @@ nalgebra.v
 nprune.v
 nrec.v
 nlevel.v
+nmloop.v
 nprog.v
