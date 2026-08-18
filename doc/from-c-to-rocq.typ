@@ -1077,9 +1077,131 @@ recursion are now sorted by the code's own comparisons. Below sixteen the C
 has no straight line at all --- it bubble-sorts anything of eight elements or
 less --- so there a sorter of the same width still stands in.
 
+= Technique nine: the phase that finishes the merge
+
+The loop of section 11 stops when $q$ falls below sixty-four, leaving the
+levels at $2^(j-1)$ down to $1$ still to do --- the contract `L` of
+`sorted_mturns`. The block of code that follows it honours that contract, and
+it does not sweep the array at all:
+
+```c
+long long j = 0;
+for (int w = (int)(q >> 2); w >= 2; w >>= 1) {
+  net_t first = (w == 8) ? N_mrg8 : (w == 4) ? N_mrg4 : N_mrg2;
+  while (j + 8*w <= n) { bmerge(x,j,w,first); j += 8*w; }
+  minmax_vector(&x[j],&x[j + 4*w], n - 4*w - j);
+}
+if (j + 8 <= n) { snet(&x[j],P_tail8,12); j += 8; }
+minmax_vector(&x[j],&x[j+4], n - 4 - j);
+if (j + 4 <= n) { snet(&x[j],P_mrg4,4); j += 4; }
+if (j + 3 <= n) s_minmax(&x[j],&x[j+2]);
+if (j + 2 <= n) s_minmax(&x[j],&x[j+1]);
+```
+
+`bmerge` merges $8w$ consecutive places *whole*, in eight registers, with
+shuffles: one call is a complete bitonic merge of a block, not one level of it.
+That it is --- at blocks of sixteen, thirty-two and sixty-four places --- is
+checked against its trace, exactly as section 12 checks the small sorters:
+
+```coq
+Lemma dequiv_bm6 : dequiv 64 bm6 (mlev 6).
+```
+
+So the phase reads block size by block size. At size $2^p$ the code merges as
+many whole blocks of $2^p$ as fit; one `minmax_vector` then picks up what the
+level at $2^(p-1)$ still owes past them; and the size halves. The four lines
+after the loop are the same thing at the three smallest sizes, written out.
+Two definitions say it --- where the code stands after the pass at size $2^p$,
+and the phase itself:
+
+```coq
+Definition bj (n p start : nat) : nat :=
+  start + ((n - start) %/ (`2^ p)) * (`2^ p).
+
+Fixpoint bph (n p start : nat) : seq (nat * nat) :=
+  if p is p1.+1 then
+    flatten [seq pshift (start + m * (`2^ p1.+1)) (mlev p1.+1)
+            | m <- iota 0 ((n - start) %/ (`2^ p1.+1))]
+    ++ mmv (bj n p1.+1 start) (bj n p1.+1 start + (`2^ p1))
+           (n - (`2^ p1) - bj n p1.+1 start)
+    ++ bph n p1 (bj n p1.+1 start)
+  else [::].
+```
+
+and the theorem is that the phase performs precisely the levels it owes, where
+`lvsfrom n p start` is every level below $2^p$, restricted to the places from
+`start` on:
+
+```coq
+Theorem bph_levels (n : nat) : forall p start,
+  dvdn (`2^ p) start -> start <= n ->
+  nequiv n (bph n p start) (lvsfrom n p start).
+```
+
+The proof is an induction on $p$, one pass per step, and it rests on two
+observations about where a level's comparisons sit.
+
+*The whole blocks are the levels inside them.* A level below $2^p$ never
+compares across a boundary between blocks of $2^p$ places, provided the blocks
+start on a multiple of their size. Restricted to one block, the level at
+distance $d$ *is* the level at $d$ of the merge on that block, shifted to
+where the block sits:
+
+```coq
+Lemma lvin_block (n p d c : nat) :
+  d \in dists p -> dvdn (`2^ p) c -> c + `2^ p <= n ->
+  lvin n d c (c + `2^ p) = pshift c (level_pairs (`2^ p) d d false).
+```
+
+That is an equality of lists, not a reordering: a level lists its comparisons
+by increasing low place, so a block's share of it comes out in the block's own
+order. The condition that a place is compared upwards --- the $d$-bit of the
+place is zero --- survives the shift because the block starts on a multiple of
+$2d$; and the other condition, that the comparison stays inside the array,
+follows from it, because a place compared upwards is at least $d$ short of the
+end of its block. Summing over the blocks, one peeled off the front at a time,
+gives the first half of a pass:
+
+```coq
+Lemma merges_are_levels (n p start M : nat) :
+  dvdn (`2^ p) start -> start + M * (`2^ p) <= n ->
+  dequiv n (flatten [seq pshift (start + m * (`2^ p)) (mlev p) | m <- iota 0 M])
+           (lvsin n p start (start + M * (`2^ p))).
+```
+
+*And what is left of a level is a tail.* Past the last whole block, fewer than
+two blocks of the level at $2^(p-1)$ remain, so what it still owes is a single
+run of consecutive comparisons --- which is exactly what one `minmax_vector`
+does:
+
+```coq
+Lemma lvfrom_tail (n d j : nat) :
+  0 < d -> dvdn d.*2 j -> j <= n -> n < j + d.*2 ->
+  lvfrom n d j = mm j (j + d) (n - d - j).
+```
+
+The rest is order. Everything a pass does above `bj` is above it, everything
+the smaller levels do is spread over the whole array; but the pieces that must
+change places share no wire, so one move of a block (section 6 again) puts the
+pass in front of the levels below it.
+
+Putting the loop and the phase together discharges the contract:
+
+```coq
+Corollary bph_mturns (n j k : nat) : 3 <= j -> n <= `2^ (j + 3 * k) ->
+  nequiv n (mturns n j k ++ bph n j 0)
+           [seq ab <- nstages (half_cleaner_rec false (j + 3 * k)) | ab.2 < n].
+```
+
+The merge of #src("code/avx2/c/sort_short.c") --- the loop that sweeps the
+array while the distances are large, and the phase that merges blocks in
+registers once they are small --- is the pruned bitonic merge of section 10,
+at every length. With a thousand elements: two turns of the loop for the
+levels at 512 down to 16, then the phase for those at 8, 4, 2 and 1.
+
 = What is proved, and what is not
 
-The four main statements are these.
+The five main statements are these.
 
 #align(center)[
   #table(columns: 2, stroke: none, inset: (x: 8pt, y: 4pt), align: (left, left),
@@ -1094,6 +1216,9 @@ The four main statements are these.
     [the loop nest of the generic AVX2 sort *is* the bitonic network],
     raw("sorting_avx2_short"),
     [the AVX2 program, inside the recursion of section 10, sorts every length],
+    raw("bph_mturns"),
+    [the merge of `sort_short.c`, loop and last phase together, is the pruned
+     bitonic merge],
     table.hline(),
   )
 ]
@@ -1141,15 +1266,15 @@ loops #src("code/avx2/c/sort_short.c") runs for a longer array of an awkward
 length. Their model is the scheme of section 10, which is mathematics rather
 than a transcription: that the code's merge loop performs that scheme's pruned
 merge is a proof, not an assumption, and writing it down as an axiom would
-hide the work instead of leaving it in plain sight. Section 11 does most of
-that proof: the merge loop is exactly the levels it should perform, from the
-largest distance down to the point where it stops, and everything in it is
-closed like the statements above. What is left is the phase after the loop,
-where the distances have become small enough that the code merges whole
-registers with shuffles instead of sweeping the array --- the `L` of
-`sorted_mturns`. At the other end the straight lines are now covered: sixteen
-and thirty-two wires are sorted by the code's own comparisons (section 12),
-and below that the C has no straight line to model.
+hide the work instead of leaving it in plain sight. Sections 11 and 13 are that
+proof, and it is complete: the merge loop is exactly the levels it should
+perform, from the largest distance down to the point where it stops, and the
+phase after it --- where the distances have become small enough that the code
+merges whole blocks in registers with shuffles --- is exactly the levels below
+that point. Together they are the pruned merge, for every length, and like the
+statements above they rest on nothing. At the other end the straight lines are
+covered too: sixteen and thirty-two wires are sorted by the code's own
+comparisons (section 12), and below that the C has no straight line to model.
 
 = The files
 
@@ -1167,15 +1292,15 @@ and below that the C has no straight line to model.
     src("code/common/nprune.v"), [232], [padding, and the merge with comparisons dropped],
     src("code/common/nrec.v"), [454], [the recursion for a length that is not a power of two],
     src("code/common/nlevel.v"), [625], [the merge one distance at a time, and eight lanes at a time],
-    src("code/common/nbsl.v"), [361], [the bitonic sorter as a list, and the C's straight lines],
-    src("code/common/nmloop.v"), [872], [the merge loop of the AVX2 code],
+    src("code/common/nbsl.v"), [456], [the bitonic sorter as a list, and the C's straight lines],
+    src("code/common/nmloop.v"), [1369], [the merge loop of the AVX2 code, and the phase after it],
     src("code/portable4/proof/nbjsort.v"), [1291], [Knuth's merge exchange],
     src("code/portable4/proof/int32_knuth.v"), [602], [the portable code is that network],
     src("code/avx2/proof/sort_generic.v"), [592], [the bitonic network, and the loop nest],
     src("code/avx2/proof/sort_transpose.v"), [722], [the transpose realisation],
     src("code/avx2/proof/sort_prog.v"), [596], [djbsort's AVX2 code, as a program],
     src("code/avx2/proof/sort_link.v"), [4426], [the bridge for the AVX2 code],
-    src("code/avx2/proof/sort_short.v"), [85], [that code inside the recursion, at every length],
+    src("code/avx2/proof/sort_short.v"), [94], [that code inside the recursion, at every length],
     src("code/avx2/proof/sort_c.v"), [86], [what is still assumed about the C source],
     table.hline(),
   )
