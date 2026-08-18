@@ -75,7 +75,7 @@
 
 #v(0.8em)
 
-= The programs and their comparisons
+= The programs and their comparisons <sec-programs>
 
 First a word about the tool. Rocq @rocq is a proof assistant. It was called
 Coq until recently. You write definitions and statements in it, and then a proof.
@@ -144,7 +144,7 @@ $(0,1), (2,3), (0,2), (1,3), (1,2)$, and we start from $3, 1, 4, 2$:
   )
 ]
 
-= Checking a network with zeros and ones
+= Checking a network with zeros and ones <sec-zeroone>
 
 Suppose someone gives you a network on four places, like @fournet, and says
 that it sorts. How can you check that? You cannot try every input: there are
@@ -170,7 +170,7 @@ wires as the values they replace. The output has a 1 where $v$ was and a 0
 where $u$ was, which is again the wrong order. A network that sorts every
 array of zeros and ones can therefore never fail.
 
-= Networks in Rocq
+= Networks in Rocq <sec-networks>
 
 Before going further we must say how a network is written down in Rocq. Two
 ways of writing it are used, and the difference matters later. All the
@@ -186,7 +186,7 @@ below `true`. Nothing in the development depends on that choice. The places
 are numbered by `'I_m`, the whole numbers below $m$. An array of four values
 has places 0, 1, 2 and 3.
 
-*The first way: a list of pairs.* This is what section 1 gave us, and it needs
+*The first way: a list of pairs.* This is what @sec-programs gave us, and it needs
 no machinery: `[:: (0,1); (2,3); (0,2); (1,3); (1,2)]` is @fournet. The
 function `pnet` turns such a list into a network, and pairs whose places fall
 outside the array are simply dropped.
@@ -328,10 +328,10 @@ turns a statement about an infinite set into a statement about a finite one.
 Rocq is constructive, and the difference is visible in the text above:
 `m.-tuple bool` is a finite type, so `[forall r : m.-tuple bool, ...]` is a
 *boolean* and not merely a proposition. In other words, "this network sorts"
-is decidable, and `n \is sorting` is a test. Section 12 says why the machine
+is decidable, and `n \is sorting` is a test. @sec-trace says why the machine
 still cannot run that test here.
 
-== Why the bitonic sorter sorts
+== The bitonic sorter <sec-bitonic>
 
 The AVX2 code follows Batcher's *bitonic* sorter @batcher. It is worth seeing
 why that works, because the whole right-hand side of the proof rests on it.
@@ -388,12 +388,73 @@ So the whole array is sorted. That is `half_cleaner_rec`.
 A full sorter follows. Sort the first half downwards, sort the second half
 upwards, and put them together. The result is bitonic, so @cleaner finishes
 the work. That is a recursion, and it is the network the AVX2 code uses.
+@bsort draws it in full on eight wires.
 
-The portable code follows a different plan, Knuth's merge exchange
-@knuth. The shape of the argument is the same: a network built by a recursion, proved to sort by
-induction, with the zero-one principle doing the work at the bottom.
+#figure(
+  cetz.canvas(length: 1cm, {
+    import cetz.draw: *
+    let h = 0.5
+    for i in range(8) {
+      line((0, -i * h), (6.4, -i * h), stroke: 0.5pt + luma(90))
+      content((-0.45, -i * h), text(size: 7.5pt)[#i])
+    }
+    // one comparison; the arrow points at the end that gets the larger value
+    let comp(x, a, b, down) = {
+      if down {
+        line((x, -b * h), (x, -a * h), mark: (end: ">"), stroke: 0.7pt)
+        circle((x, -b * h), radius: 0.05, fill: black)
+      } else {
+        line((x, -a * h), (x, -b * h), mark: (end: ">"), stroke: 0.7pt)
+        circle((x, -a * h), radius: 0.05, fill: black)
+      }
+    }
+    // blocks of two, then of four: the lower one down, the upper one up
+    comp(0.8, 0, 1, true); comp(0.8, 2, 3, false)
+    comp(0.8, 4, 5, true); comp(0.8, 6, 7, false)
+    comp(1.7, 0, 2, true); comp(1.82, 1, 3, true)
+    comp(1.7, 4, 6, false); comp(1.82, 5, 7, false)
+    comp(2.6, 0, 1, true); comp(2.6, 2, 3, true)
+    comp(2.6, 4, 5, false); comp(2.6, 6, 7, false)
+    // the merge of @cleaner, on all eight wires
+    for i in range(4) { comp(3.6 + i * 0.12, i, i + 4, false) }
+    comp(4.7, 0, 2, false); comp(4.82, 1, 3, false)
+    comp(4.7, 4, 6, false); comp(4.82, 5, 7, false)
+    for i in (0, 2, 4, 6) { comp(5.7, i, i + 1, false) }
+    content((1.7, 0.5), text(size: 7.5pt)[sorting the blocks])
+    content((4.7, 0.5), text(size: 7.5pt)[the merge on eight wires])
+  }),
+  caption: [The bitonic sorter on eight wires. An arrow points at the end
+    that receives the larger value. The first three columns sort blocks of
+    two and then of four, the lower block downwards and the upper one
+    upwards. The last three columns are the merge of @cleaner. Turn the
+    arrows of those last three columns round, and the sorter runs
+    downwards.],
+) <bsort>
 
-= The shape of the proof
+== Knuth's merge exchange <sec-knuth>
+
+The portable code follows another network, Knuth's *merge exchange*, which is
+Algorithm 5.2.2M of @knuth and is due to Batcher as well.
+
+Its recursion splits the array in another way. Not the first half and the
+second half, but the places with an even number and the places with an odd
+number. Sort each of the two with the same network. The two results are then
+interleaved, and a run of comparisons at falling distances repairs them into
+one sorted array. As before, the proof is an induction, and the zero-one
+principle does the work at the bottom.
+
+The code runs the loops that go with it. They need no power of two: a length
+that is not one only means that some comparisons fall outside the array, and
+those are dropped. This is why the portable code needs neither the padding nor
+the splitting of @sec-nonpow2, which the AVX2 code needs.
+
+Both networks of this section were formalised and proved to sort before the
+present work @thery. The files #src("code/common/nsort.v"),
+#src("code/common/nbitonic.v") and
+#src("code/portable4/proof/nbjsort.v") come from that development, and
+everything below is built on top of them.
+
+= The shape of the proof <sec-shape>
 
 There are two objects, and they are not of the same kind.
 
@@ -427,9 +488,49 @@ The bridge says that the program performs the comparisons of the network.
 
 The left box is built once and for all, as a small language. The right box is
 classical mathematics. Almost all the work is in the bridge. The rest of this
-note describes the techniques that the bridge needs.
+note describes the techniques that the bridge needs, in four parts: reading
+the program, the order of the comparisons, matching the control flow, and the
+vector code.
 
-= Technique one: writing the program down
+= Reading the program <part-read>
+
+Here are the two programs, so that the reader knows what has to be written
+down. This is the portable one, in the middle of its work:
+
+```c
+for (p = top;p >= 1;p >>= 1) {
+  i = 0;
+  while (i + 2 * p <= n) {
+    for (j = i;j < i + p;++j)
+      int32_MINMAX(x[j],x[j+p]);
+    i += 2 * p;
+  }
+  ...
+```
+
+Three loops, and inside them the small step of @sec-programs on two places of
+the array. Nothing else happens to a value.
+
+The AVX2 one works on registers. An `int32x8` is eight 32-bit values in one
+register of 256 bits. `int32x8_MINMAX(a,b)` compares two registers lane by
+lane, so it performs eight comparisons at once, and the lines between the
+comparisons move values from one lane to another:
+
+```c
+int32x8_MINMAX(x0,x1);
+b0 = _mm256_permute2x128_si256(x0,x1,0x20); /* A0123B0123 */
+b1 = _mm256_permute2x128_si256(x0,x1,0x31); /* A4567B4567 */
+int32x8_MINMAX(b0,b1);
+c0 = _mm256_unpacklo_epi64(b0,b1);          /* A0145B0145 */
+c1 = _mm256_unpackhi_epi64(b0,b1);          /* A2367B2367 */
+int32x8_MINMAX(c0,c1);
+```
+
+The comments say which values sit in the register after each move. Again a
+value is only compared, or moved to another place. The two techniques of this
+part write such a program down and read off the comparisons that it performs.
+
+== Writing the program down <sec-writing>
 
 A program is written as a list of instructions. There are only three of them:
 
@@ -440,7 +541,7 @@ Inductive item : Type :=
   | Vshuf of cperm m.             (* one vector lane shuffle *)
 ```
 
-- `Cmp (3, 5)` is the scalar step of section 1: compare places 3 and 5.
+- `Cmp (3, 5)` is the scalar step of @sec-programs: compare places 3 and 5.
 - `Vcmp` is the same thing done by the vector unit. One AVX2 instruction
   compares eight pairs at once, so the instruction carries the list of the
   eight pairs it performs.
@@ -512,7 +613,7 @@ Instead, every comparison is named by *the place its values end up in* when
 the program finishes. Nothing is lost. It is a change of names, and it is
 applied everywhere.
 
-== What the renaming gives
+== What the renaming gives <sec-naming>
 
 That change of names is not only useful for the bridge. It is what makes the
 AVX2 code readable at all. Read as it is written,
@@ -556,7 +657,7 @@ Fixpoint dsort (b : bool) k : network (`2^ k.+2) :=
   else net4 b.
 ```
 
-and it sorts (`sorting_dsort`). The proof is the induction of section 3 with
+and it sorts (`sorting_dsort`). The proof is the induction of @sec-bitonic with
 the two halves the other way round. An array that goes down and then up is
 bitonic as well, so the argument is unchanged. The base case has four wires,
 and it is settled by running through the sixteen arrays of zeros and ones.
@@ -573,7 +674,12 @@ Corollary sorted_pfun (p : prog) t :
   pnetwork p \is sorting -> sorted <=%O (pfun p t).
 ```
 
-= Technique two: the same comparisons in a different order
+= The order of the comparisons <part-order>
+
+The program and the network hold the same comparisons in a different order.
+These three techniques are about that difference.
+
+== The same comparisons in a different order <sec-order>
 
 Now both sides are lists of comparisons. We would like them to be equal. They
 are not, and they cannot be.
@@ -642,7 +748,7 @@ In words: two lists related by `dequiv` compute the same function. So if the
 program's list is a reordering of the network's list, and the network sorts,
 then the program sorts as well.
 
-== Justifying a whole rearrangement at once
+== Justifying a whole rearrangement at once <sec-colour>
 
 Swapping neighbours is fine on paper, but the two orders differ by millions of
 swaps. We cannot write them all out. We need a way to justify a whole
@@ -691,7 +797,34 @@ reordering in both programs. Only the colouring changes. For the portable code
 it is the place where a chain of comparisons starts. For the AVX2 code it is
 the group of eight, or of sixty-four, that a value belongs to.
 
-= Technique three: sorting downwards without any downward code
+== Reading the loops of the portable code <sec-portable>
+
+The portable code is Knuth's merge exchange. It raises the same difficulty in
+another form. Its inner loop follows a *chain*. It takes one place and
+compares it with places further and further away, halving the distance each
+time. The network groups the comparisons the other way: all the longest ones
+first, then all the next longest, and so on.
+
+So once again the two lists hold the same comparisons in a different order,
+and the same colouring method applies. Two facts do all the work:
+
+- two ways of running a pass differ only by comparisons on even places against
+  comparisons on odd places, and those never share a place.
+- the longest comparison may be taken out of every chain, because the long
+  comparison of a later chain shares no place with the short comparisons of an
+  earlier one.
+
+Both are special cases of the lemmas of @sec-colour. Both were once proved from
+scratch, at the level of functions rather than lists. The two programs are
+very different, but the argument is the same one twice.
+
+= Matching the control flow <part-flow>
+
+A program does not have the shape of a network. It sorts downwards without
+downward code, it runs loops instead of a recursion, and it sorts lengths that
+are not powers of two.
+
+== Sorting downwards without any downward code <sec-down>
 
 Networks like the bitonic sorter do not only sort upwards. Half of the work is
 sorting a block *downwards*, so that the two halves together can be merged.
@@ -723,7 +856,7 @@ and a mask instruction adds a pattern into it, bit by bit. After the last
 merge the mask is false everywhere, so nothing is complemented. That is what
 "sorted upwards" requires.
 
-= Technique four: loops instead of a recursion
+== Loops instead of a recursion <sec-loops>
 
 Textbooks write the bitonic sorter as a recursion: sort the two halves in
 opposite directions, then merge. The code does not do that. It runs three
@@ -772,28 +905,7 @@ Theorem isort_pbsort k : isort k = pbsort false k.
 recursive sorter, proved to sort by induction. Before this theorem, the two
 were only compared by running them on small sizes.
 
-= Technique five: reading the loops of the portable code
-
-The portable code is Knuth's merge exchange. It raises the same difficulty in
-another form. Its inner loop follows a *chain*. It takes one place and
-compares it with places further and further away, halving the distance each
-time. The network groups the comparisons the other way: all the longest ones
-first, then all the next longest, and so on.
-
-So once again the two lists hold the same comparisons in a different order,
-and the same colouring method applies. Two facts do all the work:
-
-- two ways of running a pass differ only by comparisons on even places against
-  comparisons on odd places, and those never share a place.
-- the longest comparison may be taken out of every chain, because the long
-  comparison of a later chain shares no place with the short comparisons of an
-  earlier one.
-
-Both are special cases of the lemmas of section 6. Both were once proved from
-scratch, at the level of functions rather than lists. The two programs are
-very different, but the argument is the same one twice.
-
-= Technique six: a length that is not a power of two
+== A length that is not a power of two <sec-nonpow2>
 
 A network is built for a fixed number of wires, and every sorter in this note
 has a power of two of them. Real code must sort eleven elements as well. There
@@ -838,13 +950,13 @@ next power of two, once the comparisons that leave the array are removed.
 There is a trap in that argument. It only works when a comparison sends the
 smaller value to the *lower* place. Every comparison of the merge does that.
 The comparisons of the block sorter do not: half of them run downwards. This
-is the mask trick of section 7, seen on the list side. So the two solutions
+is the mask trick of @sec-down, seen on the list side. So the two solutions
 cannot be exchanged. The merge may be pruned, but the blocks must be padded.
 
 At the level of lists, sorting a block downwards is one line: turn every
 comparison round. The upward sorter compares $(a, b)$ and puts the smaller
 value in $a$. The downward one compares $(b, a)$. The proof that this really
-sorts downwards is the complement argument of section 7 again, in two lines.
+sorts downwards is the complement argument of @sec-down again, in two lines.
 Flipping every value turns one comparison round, and flipping an increasing
 list gives a decreasing one.
 
@@ -922,7 +1034,12 @@ The second half of the comparison is the subject of the next section. It is
 what the code does *inside* a block, where it works on eight lanes at a time
 and does three distances in one pass.
 
-= Technique seven: eight lanes at a time
+= The vector code <part-vector>
+
+The last four techniques are about the AVX2 code itself: its vector
+instructions, its merge loop, its fixed sequences and its last phase.
+
+== Eight lanes at a time <sec-lanes>
 
 A level at distance $d$ compares place $i$ with place $i + d$. The code never
 goes through it in that way.
@@ -988,7 +1105,7 @@ Together they say that the table, run on a block of $8q$ places, gives the
 levels at $4q$, $2q$ and $q$ of that block. Only the order inside the block is
 left to justify. The code goes group of eight by group of eight, while the
 levels go comparison by comparison. Colour a comparison by its group of eight.
-For a place $x$, that colour is `x %% q %/ 8`. Section 6 then settles the
+For a place $x$, that colour is `x %% q %/ 8`. @sec-colour then settles the
 question, for *any* table of comparisons between registers:
 
 ```coq
@@ -1062,7 +1179,7 @@ Theorem mbody_levels (n q : nat) : 0 < q -> 8 %| q ->
 Here `mbody n q` is the turn written out: the stage, the two extra blocks and
 the three end pieces, in the order in which the C runs them.
 
-== All the turns of the loop
+== All the turns of the loop <sec-turns>
 
 One turn is three levels, and the loop is all of them. Look at what the loop
 does to $q$. It divides $q$ by four before the body and by two after it, so
@@ -1088,7 +1205,7 @@ Lemma dists_dtop (j k : nat) : dists (j + 3 * k) = dtop j k ++ dists j.
 ```
 
 So take the loop, and after it anything that runs the distances at which the
-loop stopped. Together they are the pruned merge of section 10, and therefore
+loop stopped. Together they are the pruned merge of @sec-nonpow2, and therefore
 they sort:
 
 ```coq
@@ -1111,7 +1228,7 @@ over. Here $j = 4$ and $k = 2$: two turns and six levels. The merge on
 $2^(4 + 6) = 1024$ wires is the one that covers a thousand places. The
 contract left for the last phase is the four levels at 8, 4, 2 and 1.
 
-= Technique eight: comparing against a trace
+== Comparing against a trace <sec-trace>
 
 At the small end of the size range the code is no longer a loop. For eight,
 sixteen and thirty-two elements it runs a fixed sequence: a table of
@@ -1156,7 +1273,7 @@ Theorem sorted_bsl (k : nat) (up : bool) (t : (`2^ k).-tuple bool) :
          (nfun (pnet (`2^ k) (bsl k up)) t).
 ```
 
-The proof is two lines of the induction used in section 10. The two halves
+The proof is two lines of the induction used in @sec-nonpow2. The two halves
 leave the array going down and then up, which is bitonic, and the merge
 finishes the work.
 
@@ -1169,7 +1286,7 @@ registers at the same time, so it alternates between them, while `bsl` does
 one half and then the other.
 
 Two comparisons in different halves share no place. So this difference is
-again the reordering of section 6, and one lemma gives it:
+again the reordering of @sec-colour, and one lemma gives it:
 
 ```coq
 Lemma dequiv_cut (n b : nat) (l : seq (nat * nat)) :
@@ -1188,14 +1305,14 @@ code merges each half as a whole while the levels take the two halves
 alternately. Every step in between is an identity between lists, which the
 machine settles by evaluation. That is what `bsl` was written for. The results
 are `dequiv_c16` and `dequiv_c32`, and hence `sorting_c16` and `sorting_c32`.
-The blocks of sixteen and thirty-two wires in the recursion of section 10 are
+The blocks of sixteen and thirty-two wires in the recursion of @sec-nonpow2 are
 now sorted by the code's own comparisons. Below sixteen the C has no fixed
 sequence at all. It sorts eight elements or fewer with a bubble sort, so at
 those sizes a sorter of the same width is still used in its place.
 
-= Technique nine: the phase that finishes the merge
+== The phase that finishes the merge <sec-phase>
 
-The loop of section 11 stops when $q$ falls below sixty-four. The levels at
+The loop of @sec-turns stops when $q$ falls below sixty-four. The levels at
 $2^(j-1)$ down to $1$ are then still to do. They are the contract `L` of
 `sorted_mturns`. The piece of code that follows the loop does them, and it
 never walks through the whole array:
@@ -1217,7 +1334,7 @@ if (j + 2 <= n) s_minmax(&x[j],&x[j+1]);
 `bmerge` merges $8w$ consecutive places at once, in eight registers, using
 shuffles. One call is a complete bitonic merge of a block, and not one level
 of it. This is checked against its trace, for blocks of sixteen, thirty-two
-and sixty-four places, exactly as section 12 checks the small sorters:
+and sixty-four places, exactly as @sec-trace checks the small sorters:
 
 ```coq
 Lemma dequiv_bm6 : dequiv 64 bm6 (mlev 6).
@@ -1299,7 +1416,7 @@ Lemma lvfrom_tail (n d j : nat) :
 
 The rest is a question of order. What a pass does after `bj` stays after `bj`,
 while the smaller levels are spread over the whole array. The two pieces that
-must change places share no wire, so one move of a block, by section 6 again,
+must change places share no wire, so one move of a block, by @sec-colour again,
 puts the pass in front of the levels below it.
 
 The loop and the phase together fulfil the contract:
@@ -1311,13 +1428,13 @@ Corollary bph_mturns (n j k : nat) : 3 <= j -> n <= `2^ (j + 3 * k) ->
 ```
 
 So the merge of #src("code/avx2/c/sort_short.c") is the pruned bitonic merge
-of section 10, at every length. That merge has two parts: the loop, which
+of @sec-nonpow2, at every length. That merge has two parts: the loop, which
 walks through the array while the distances are large, and the phase, which
 merges blocks in registers once the distances are small. With a thousand
 elements, the loop takes two turns, for the levels at 512 down to 16, and the
 phase does those at 8, 4, 2 and 1.
 
-= What is proved, and what is not
+= What is proved, and what is not <sec-proved>
 
 The five main statements are these.
 
@@ -1333,7 +1450,7 @@ The five main statements are these.
     raw("isort_pbsort"),
     [the loop nest of the generic AVX2 sort *is* the bitonic network],
     raw("sorting_avx2_short"),
-    [the AVX2 program, inside the recursion of section 10, sorts every length],
+    [the AVX2 program, inside the recursion of @sec-nonpow2, sorts every length],
     raw("bph_mturns"),
     [the merge of `sort_short.c`, loop and last phase together, is the pruned
      bitonic merge],
@@ -1351,7 +1468,7 @@ arrays whose length is a power of two and at least sixty-four, which is what
 the vector code is written for. A length that is not a power of two is handled
 in two ways, and both are proved. One is padding: fill the array with a value
 above everything else, and drop that filling afterwards. The other is the
-recursion of section 10, whose blocks are the bits of the length.
+recursion of @sec-nonpow2, whose blocks are the bits of the length.
 
 One gap remains inside that last statement. From sixty-four elements up, the
 blocks are sorted by djbsort's own comparisons. Below that size, the C runs a
@@ -1382,21 +1499,21 @@ sixty-four. In that range the model really is a copy of the code, instruction
 by instruction. Through padding, it also covers everything that the code sorts
 by padding. It says nothing about the loops that
 #src("code/avx2/c/sort_short.c") runs for a longer array whose length is not a
-power of two. The model of those loops is the scheme of section 10, which is
+power of two. The model of those loops is the scheme of @sec-nonpow2, which is
 mathematics and not a copy of the code. That the merge loop performs the
 pruned merge of that scheme is a proof, not an assumption. Writing it as an
 axiom would hide the work instead of showing it.
 
-Sections 11 and 13 are that proof, and it is complete. The merge loop performs
+@sec-lanes, @sec-turns and @sec-phase are that proof, and it is complete. The merge loop performs
 exactly the levels it should, from the largest distance down to the point
 where it stops. The phase after it performs exactly the levels below that
 point, by merging whole blocks in registers with shuffles. Together they are
 the pruned merge, for every length, and like the statements above they rest on
 nothing. At the small end, the fixed sequences are covered as well. Sixteen
-and thirty-two wires are sorted by the code's own comparisons (section 12),
+and thirty-two wires are sorted by the code's own comparisons (@sec-trace),
 and below that the C has no fixed sequence to model.
 
-= The files
+= The files <sec-files>
 
 #align(center)[
   #table(columns: 3, stroke: none, inset: (x: 8pt, y: 3.5pt),
@@ -1430,7 +1547,7 @@ The bridge is by far the largest file. That is the honest summary of this
 note. Proving that a network sorts is textbook work. Proving that a real
 program performs that network is where the effort goes.
 
-= The difficult points
+= The difficult points <sec-hard>
 
 The mathematics was not the hard part. The bitonic sorter and Knuth's merge
 exchange are textbook results, and their proofs here are small next to the bridge that
@@ -1445,7 +1562,7 @@ say that the merge fits inside the array, so for a merge wider than the array
 they spoke about places past the end. Both mistakes appear at once if the
 statement is tried on a small length before anyone proves it.
 
-*Nothing computes.* Section 12 says this for networks. A connector carries
+*Nothing computes.* @sec-trace says this for networks. A connector carries
 proofs, so it does not evaluate, and the machine cannot be asked whether a
 network of sixteen wires sorts. The same is true of the permutations that
 describe the shuffles. So everything that had to be *checked* rather than
@@ -1456,8 +1573,8 @@ permutations as tables. A lemma then ties the two versions together.
 compared. While the code only compares, a value and its place are the same
 thing. After the first shuffle they are not, so a trace taken in the middle of
 a full run looks like nonsense. Two things work. Model the code in terms of
-places, as section 11 does. And trace a single call on a fresh array, as the
-check of section 13 does.
+places, as @sec-lanes does. And trace a single call on a fresh array, as the
+check of @sec-phase does.
 
 *The parts that do not fill a block.* Most of the length of this proof is not
 about sorting. It is about what the code does with the end of the array, where
@@ -1475,7 +1592,7 @@ The rule that came out of this is simple. Do the arithmetic first, while the
 goal is still small, and state the lemmas about the shape of the lists
 separately, so that the two kinds of reasoning never meet in one goal.
 
-= Summary
+= Summary <sec-summary>
 
 The method, in five steps.
 
@@ -1500,3 +1617,4 @@ the program compares the same pairs as the network, in an order that costs
 nothing.
 
 #bibliography("refs.bib", title: [References])
+
