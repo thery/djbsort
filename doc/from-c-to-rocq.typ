@@ -354,8 +354,9 @@ everything that follows:
 
 So the problem splits in two. No value has to cross the middle again, and each
 half is a smaller copy of the same problem. Repeat the half-cleaner on the
-halves, then on the quarters, and so on, and the whole array is sorted. That
-is `half_cleaner_rec`.
+halves, then on the quarters, and so on. At the end each piece holds two
+values, and there the half-cleaner is a single comparison, which sorts them.
+So the whole array is sorted. That is `half_cleaner_rec`.
 
 #figure(
   cetz.canvas(length: 1cm, {
