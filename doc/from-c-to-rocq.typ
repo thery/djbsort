@@ -465,6 +465,67 @@ every step, all comparisons are named by *the place the value ends up in* when
 the program finishes. Nothing is lost: it is a change of names, applied
 everywhere.
 
+== What the naming buys
+
+That change of names is not only a convenience for the bridge; it is what
+makes the AVX2 code legible at all. Read as it is written,
+#src("code/avx2/c/sort.c") is a reversing pass, then a ladder of stages of
+growing width, with masks flipping signs along the way. Nothing in it looks
+like a network anyone has a theorem about. Even a trace of it --- run the code
+on an array whose entries are their own place numbers, and record what it
+compares --- looks scattered, because the shuffles have moved everything by
+the time each comparison happens.
+
+Name each comparison instead by the place the two values it compares *end up*
+in, and the schedule falls into shape. The array is cut into groups of four;
+each group is sorted, and neighbouring groups the opposite way round --- the
+first falls, the second rises, which is what a merge wants to be given; and
+then they are merged, at eight, at sixteen, at thirty-two, at sixty-four, each
+merge the familiar cascade of halving distances. That is Batcher's bitonic
+sorter, with two differences worth naming.
+
+*The base.* A group of four is sorted in five comparisons, at distances 1, 1,
+2, 2 and 1; a bitonic sorter of four would use six. That saved comparison per
+group is the entire size difference against the textbook network --- 656
+comparisons against 672, at sixty-four elements.
+
+*The direction.* Every merge but the last leaves its two halves the other way
+round from the textbook rule --- the lower half falling and the upper half
+rising --- and only the last merge sorts the whole array upwards. Comparing
+the code against textbook bitonic therefore fails, and it fails everywhere at
+once, until the rule is turned round.
+
+Neither difference costs anything in the mathematics. The network is written
+down as the code has it,
+
+```coq
+Definition net4 (b : bool) : network (`2^ 2) :=
+  pnet _ (if b then [:: (1,0); (3,2); (2,0); (3,1); (2,1)]
+          else [:: (0,1); (2,3); (0,2); (1,3); (1,2)]).
+
+Fixpoint dsort (b : bool) k : network (`2^ k.+2) :=
+  if k is k1.+1
+  then nmerge (dsort true k1) (dsort false k1) ++ half_cleaner_rec b k1.+3
+  else net4 b.
+```
+
+and it sorts (`sorting_dsort`) by the induction of section 3 with the two
+halves the other way round --- the array falls and then rises, which is
+bitonic just as well --- on a base case of four wires settled by running
+through the sixteen arrays of zeros and ones.
+
+And the renaming itself is free. Pushing every move back past the comparison
+before it, over and over, turns a program that compares and moves into *one*
+rearrangement of the array followed by a network --- the comparisons renamed
+by the place each value ends in. The rearrangement is then applied to the
+input, where it does no harm at all, since a network that sorts does so
+whatever order it is handed:
+
+```coq
+Corollary sorted_pfun (p : prog) t :
+  pnetwork p \is sorting -> sorted <=%O (pfun p t).
+```
+
 = Technique two: the same comparisons in a different order
 
 Now both sides are lists of comparisons, and one would like them to be equal.
@@ -1309,6 +1370,52 @@ comparisons (section 12), and below that the C has no straight line to model.
 The bridge is by far the largest file, which is the honest summary of this
 note: proving that a network sorts is textbook work, and proving that a real
 program performs that network is where the effort goes.
+
+= What was hard
+
+Not the mathematics. The bitonic sorter and Knuth's merge exchange are
+textbook, and their proofs here are small next to the bridge that connects
+them to the code. The time went elsewhere, and five things stand out.
+
+*Statements that were false.* Parts of the bridge were written down as a plan
+--- the statements first, the proofs later --- and several of those statements
+were wrong. Always in one of two ways: an equality between the program's list
+of comparisons and the network's, where the two are the same comparisons in a
+different order and only a reordering can hold; or a missing hypothesis tying
+a merge to the array it runs on, so that for a merge wider than the array the
+statement talks about places past the end. Both kinds show up at once if the
+statement is measured on a small length before anyone tries to prove it.
+
+*Nothing computes.* Section 12 tells this for networks: a connector carries
+proofs, so it does not evaluate, and the machine cannot be asked whether a
+network of sixteen wires sorts. The same is true of the permutations that
+describe the shuffles. Everything that had to be *checked* rather than proved
+therefore had to be written a second time on plain numbers --- networks as
+lists of pairs, permutations as tables --- with a lemma tying the two
+versions together.
+
+*A trace names values, not places.* The tracer records which values the code
+compared, and while the code only compares, a value and its place are the same
+thing. After the first shuffle they are not, so a trace taken in the middle of
+a full run looks like nonsense. What works is to model the code in terms of
+places, as section 11 does, and to trace a single call on a fresh array, as
+the check of section 13 does.
+
+*The ragged edges.* Most of the length of this proof is not sorting at all; it
+is what the code does with the part of the array that does not fill a block.
+How many whole blocks of a level a pass covers is arithmetic on a remainder; a
+length that would be negative is a no-op, which the truncated subtraction of
+natural numbers already says; and at a ragged end `minmax_vector` performs
+eight comparisons twice, which is why the statement about it asks for the same
+function and not the same list. Each point is trivial and none could be
+skipped.
+
+*Arithmetic in a prover.* Goals mixing a length, that length divided by eight,
+and powers of two are at the edge of what the arithmetic tactics settle
+quickly, and a context full of abbreviations pushes them over it. The rule
+that emerged is to do the arithmetic first, while the context is still small,
+and to state the geometric lemmas about abstract lists, so that the two kinds
+of reasoning never meet in the same goal.
 
 = What to take away
 
