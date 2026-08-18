@@ -111,7 +111,7 @@ this shape is called a *sorting network*. The whole proof rests on this one
 observation.
 
 #figure(
-  net(4, ((1, 0, 1), (1, 2, 3), (2.2, 0, 2), (2.2, 1, 3), (3.4, 1, 2)),
+  net(4, ((1, 0, 1), (1, 2, 3), (2.15, 0, 2), (2.25, 1, 3), (3.4, 1, 2)),
       width: 4.4),
   caption: [A network on four places. Time runs left to right. Each vertical
     bar is one comparison: the smaller value goes to the upper end, the larger
