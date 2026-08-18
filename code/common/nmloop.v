@@ -1,6 +1,6 @@
 From mathcomp Require Import all_boot order perm.
 From mathcomp Require Import zify.
-Require Import more_tuple nsort nbitonic nalgebra nprune nrec nlevel.
+Require Import more_tuple nsort nbitonic nalgebra nprune nrec nlevel nbsl.
 
 Import Order POrderTheory TotalTheory.
 
@@ -32,6 +32,10 @@ Import Order POrderTheory TotalTheory.
 (*                    that share no wire                                      *)
 (*    mbody_levels    that turn computes the same function as the three       *)
 (*                    levels at 4q, 2q and q, one after the other             *)
+(*    bph n p start   the last phase, from block size `2^ p on: the whole     *)
+(*                    blocks, each merged in registers, then the ragged tail  *)
+(*    bph_levels      it IS the levels it owes, and bph_mturns puts it with   *)
+(*                    the loop to give the whole pruned merge                 *)
 (*    mturns n j k     k turns of the loop, the last one at `2^ j             *)
 (*    mturns_levels    those turns are 3k levels; with dists_dtop, the loop   *)
 (*                    followed by anything that runs the distances below      *)
@@ -861,4 +865,177 @@ Proof.
 move=> j3 nN HL s1S s2S tE.
 rewrite (mturns_hcr j3 nN HL t).
 by apply: sorted_hcr_prune s1S s2S tE.
+Qed.
+
+(* -------------------------------------------------------------------------- *)
+(*  The last phase: whole merges, then a ragged tail, distance by distance    *)
+(* -------------------------------------------------------------------------- *)
+
+(* When the distances have become small the code stops sweeping the array and *)
+(* merges whole blocks in registers:                                          *)
+(*                                                                            *)
+(*   for (w = q >> 2; w >= 2; w >>= 1) {                                      *)
+(*     while (j + 8*w <= n) { bmerge(x,j,w,first); j += 8*w; }                *)
+(*     minmax_vector(&x[j], &x[j + 4*w], n - 4*w - j);                        *)
+(*   }                                                                        *)
+(*   ... then the same at eight, four and two, written out                    *)
+(*                                                                            *)
+(* One turn is: the whole blocks of `2^ p from j on, each of them merged,     *)
+(* then the ragged tail at half that.  bmerge does one such block -- the      *)
+(* dequiv_bm lemmas of nbsl.v say it IS the merge on it -- and the lines the  *)
+(* C ends with are the same at the three smallest widths.                     *)
+
+(* where the code stands after the pass at block size `2^ p *)
+Definition bj (n p start : nat) : nat :=
+  start + ((n - start) %/ (`2^ p)) * (`2^ p).
+
+(* the phase, from block size `2^ p down *)
+Fixpoint bph (n p start : nat) : seq (nat * nat) :=
+  if p is p1.+1 then
+    flatten [seq pshift (start + m * (`2^ p1.+1)) (mlev p1.+1)
+            | m <- iota 0 ((n - start) %/ (`2^ p1.+1))]
+    ++ mmv (bj n p1.+1 start) (bj n p1.+1 start + (`2^ p1))
+           (n - (`2^ p1) - bj n p1.+1 start)
+    ++ bph n p1 (bj n p1.+1 start)
+  else [::].
+
+(* the levels it still owes: everything from start on *)
+Definition lvfrom (n d start : nat) : seq (nat * nat) :=
+  [seq ab <- level_pairs n d d false | start <= ab.1].
+
+Definition lvin (n d start j : nat) : seq (nat * nat) :=
+  [seq ab <- level_pairs n d d false | (start <= ab.1) && (ab.1 < j)].
+
+Definition lvsfrom (n p start : nat) : seq (nat * nat) :=
+  flatten [seq lvfrom n d start | d <- dists p].
+
+Definition lvsin (n p start j : nat) : seq (nat * nat) :=
+  flatten [seq lvin n d start j | d <- dists p].
+
+(* M whole merges of `2^ p places, from start on, ARE the levels below `2^ p  *)
+(* on that stretch                                                            *)
+Lemma merges_are_levels (n p start M : nat) :
+  dvdn (`2^ p) start -> start + M * (`2^ p) <= n ->
+  dequiv n (flatten [seq pshift (start + m * (`2^ p)) (mlev p) | m <- iota 0 M])
+           (lvsin n p start (start + M * (`2^ p))).
+Admitted.
+
+(* a level from a point on: the whole blocks up to j, then what j leaves *)
+Lemma lvfrom_cut (n d start j : nat) :
+  0 < d -> dvdn d.*2 j -> start <= j -> j <= n ->
+  lvfrom n d start = lvin n d start j ++ lvfrom n d j.
+Admitted.
+
+(* the levels from start on may be read as: what is below j, then what is not *)
+Lemma lvsfrom_cut (n p start j : nat) :
+  dvdn (`2^ p) j -> start <= j -> j <= n ->
+  dequiv n (lvsfrom n p start) (lvsin n p start j ++ lvsfrom n p j).
+Admitted.
+
+(* the top level from start on: its whole blocks, then the ragged tail *)
+Lemma lvfrom_blocks (n p start : nat) :
+  dvdn (`2^ p.+1) start -> start <= n ->
+  lvfrom n (`2^ p) start
+    = lvin n (`2^ p) start (bj n p.+1 start)
+      ++ mm (bj n p.+1 start) (bj n p.+1 start + (`2^ p))
+            (n - (`2^ p) - bj n p.+1 start).
+Admitted.
+
+(* a comparison of a level below j, when j is a whole number of its blocks,   *)
+(* has both its wires below j                                                 *)
+Lemma wlo_lvin (n d start j : nat) : 0 < d -> dvdn d.*2 j ->
+  wlo j (lvin n d start j).
+Proof.
+move=> d_gt0 dj; apply/allP => x; rewrite mem_filter => /andP[/andP[_ xj]].
+rewrite /level_pairs => /mapP[i]; rewrite mem_filter => /andP[/andP[_ Hi] _] xE.
+move: xj; rewrite xE /= => iLj; rewrite iLj /=.
+case/dvdnP: dj => k jE.
+have iE := divn_eq i d; have iM := ltn_pmod i d_gt0.
+move: Hi; rewrite eqbF_neg => /negPf oi.
+have [k' ik'] : exists k', i %/ d = k'.*2
+  by exists (i %/ d)./2; rewrite even_halfK // oi.
+rewrite ik' in iE.
+rewrite jE -addnn in iLj *.
+have k'k : k' < k by move: iLj iE iM; rewrite -addnn; nia.
+by move: iE iM k'k; rewrite -addnn; nia.
+Qed.
+
+(* THE ACCOUNTING: the phase from block size `2^ p on IS the levels it owes  *)
+Theorem bph_levels (n : nat) : forall p start,
+  dvdn (`2^ p) start -> start <= n ->
+  nequiv n (bph n p start) (lvsfrom n p start).
+Proof.
+elim => [|p IH] start pd sn; first exact: nequiv_refl.
+set B := `2^ p.+1; set M := (n - start) %/ B; set j := bj n p.+1 start.
+have B_gt0 : 0 < B by rewrite /B e2n_gt0.
+have jE : j = start + M * B by [].
+have sj : start <= j by rewrite jE leq_addr.
+have jn : j <= n.
+  by rewrite jE /M; have := leq_divM (n - start) B; lia.
+have jd : dvdn B j.
+  by rewrite jE; apply: dvdn_add => //; apply: dvdn_mull.
+have jdp : dvdn (`2^ p) j.
+  by apply: dvdn_trans jd; rewrite dvdn_e2n.
+have nj : n < j + `2^ p + `2^ p.
+  have BE : `2^ p + `2^ p = B by rewrite /B e2Sn.
+  have hm : (n - start) %% B < B by rewrite ltn_mod.
+  have he := divn_eq (n - start) B.
+  rewrite -addnA BE jE.
+  by move: hm he sn; rewrite -/M; lia.
+(* the whole merges are the levels between start and j *)
+rewrite [bph _ _ _]/= -/bph -/B -/M -/j.
+apply: (@nequiv_trans n _ (lvsin n p.+1 start j
+  ++ (mmv j (j + `2^ p) (n - `2^ p - j) ++ bph n p j))).
+  apply: nequiv_cat; last exact: nequiv_refl.
+  by apply: nequiv_dequiv; rewrite -/B; apply: merges_are_levels; rewrite -?jE.
+(* the tail is a plain run of comparisons *)
+apply: (@nequiv_trans n _ (lvsin n p.+1 start j
+  ++ (mm j (j + `2^ p) (n - `2^ p - j) ++ bph n p j))).
+  by apply: nequiv_catl; apply: nequiv_cat;
+     [apply: mmv_tail | exact: nequiv_refl].
+(* and the rest of the phase is the smaller levels from j on *)
+apply: (@nequiv_trans n _ (lvsin n p.+1 start j
+  ++ (mm j (j + `2^ p) (n - `2^ p - j) ++ lvsfrom n p j))).
+  by apply: nequiv_catl; apply: nequiv_catl; apply: IH.
+have bC : all (bnd n) (lvsin n p start j).
+  apply: all_flatten_map => d _; apply/allP => x.
+  rewrite mem_filter => /andP[_ xI].
+  by have /andP[H1 H2] := allP (level_pairs_bnd n d d false) _ xI; rewrite /bnd H1.
+have wC : wlo j (lvsin n p start j).
+  apply: all_flatten_map => d dI; apply: wlo_lvin.
+    by have [i _ ->] := mem_dists dI; rewrite e2n_gt0.
+  have [i iLp ->] := mem_dists dI.
+  rewrite -addnn -e2Sn; apply: dvdn_trans jdp.
+  by rewrite dvdn_e2n.
+have -> : lvsfrom n p.+1 start = lvfrom n (`2^ p) start ++ lvsfrom n p start.
+  by rewrite /lvsfrom dists_cons.
+rewrite (lvfrom_blocks pd sn) -/j.
+(* only the tail has to move: it is above j, the smaller levels below it are *)
+(* not                                                                       *)
+apply: (@nequiv_trans n _
+  ((lvin n (`2^ p) start j ++ mm j (j + `2^ p) (n - `2^ p - j))
+   ++ (lvsin n p start j ++ lvsfrom n p j))); last first.
+  apply: nequiv_catl; apply: nequiv_sym; apply: nequiv_dequiv.
+  by apply: lvsfrom_cut.
+apply: nequiv_dequiv.
+rewrite /lvsin [dists p.+1]dists_cons [flatten _]/= -/(lvsin n p start j) -!catA.
+apply: (@dequiv_moveL_block n (lvin n (`2^ p) start j) (lvsin n p start j)
+          (mm j (j + `2^ p) (n - `2^ p - j)) (lvsfrom n p j)) => //.
+- exact: mm_tail_bnd.
+by apply: dpair_wlo_whi wC _; apply: whi_mm_blk.
+Qed.
+
+(* so, with the loop, the whole merge: mturns_hcr's L is the phase *)
+Corollary bph_mturns (n j k : nat) : 3 <= j -> n <= `2^ (j + 3 * k) ->
+  nequiv n (mturns n j k ++ bph n j 0)
+           [seq ab <- nstages (half_cleaner_rec false (j + 3 * k)) | ab.2 < n].
+Proof.
+move=> j3 nN; apply: mturns_hcr => //.
+have H := bph_levels (dvdn0 (`2^ j)) (leq0n n).
+apply: (nequiv_trans H); rewrite /lvsfrom.
+have -> : [seq lvfrom n d 0 | d <- dists j]
+        = [seq level_pairs n d d false | d <- dists j].
+  apply/eq_in_map => d _; rewrite /lvfrom -[RHS]filter_predT.
+  by apply: eq_in_filter => ab _.
+exact: nequiv_refl.
 Qed.
