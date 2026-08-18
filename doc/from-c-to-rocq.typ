@@ -164,25 +164,18 @@ wires as the values they replace. The output has a 1 where $v$ was and a 0
 where $u$ was, which is again the wrong order. A network that sorts every
 array of zeros and ones can therefore never fail.
 
-For four places, the check is now sixteen cases, which you can do by hand. A
-real array is longer. For a thousand places there are $2^1000$ cases, far too
-many to try, so the statement is proved instead. In fact no network in this
-development is checked case by case, however small it is. Section 12 explains
-why the machine cannot do that here, even for eight places. The machine does
-check some things case by case, but they are all arithmetic. For example, the
-tables used by the shuffles of the AVX2 code are checked at all sixty-four
-lanes.
-
 = Networks in Rocq
 
 Before going further we must say how a network is written down in Rocq. Two
 ways of writing it are used, and the difference matters later.
 
 *The array.* An array of $m$ values is a `m.-tuple A`. That is exactly $m$
-values of some type `A`, and `A` carries an order. `A` can be the integers, or
-the booleans of the previous section. Nothing in the development depends on
-that choice. The places are numbered by `'I_m`, the whole numbers below $m$.
-An array of four values has places 0, 1, 2 and 3.
+values of some type `A`. Only one thing is asked of `A`: any two of its values
+can be compared, so that one of them is at most the other. `A` can be the
+integers, or the booleans of the previous section, with `false` below `true`.
+Nothing in the development depends on that choice. The places are numbered by
+`'I_m`, the whole numbers below $m$. An array of four values has places 0, 1,
+2 and 3.
 
 *The first way: a list of pairs.* This is what section 1 gave us, and it needs
 no machinery: `[:: (0,1); (2,3); (0,2); (1,3); (1,2)]` is @fournet. The
