@@ -8,7 +8,7 @@ components.pdf: components.typ
 avx2-network.pdf: avx2-network.typ
 	typst compile avx2-network.typ avx2-network.pdf
 
-from-c-to-rocq.pdf: from-c-to-rocq.typ
+from-c-to-rocq.pdf: from-c-to-rocq.typ refs.bib
 	typst compile from-c-to-rocq.typ from-c-to-rocq.pdf
 
 watch:

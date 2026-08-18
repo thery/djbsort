@@ -77,13 +77,14 @@
 
 = The programs and their comparisons
 
-First a word about the tool. Rocq is a proof assistant. It was called Coq
-until recently. You write definitions and statements in it, and then a proof.
+First a word about the tool. Rocq @rocq is a proof assistant. It was called
+Coq until recently. You write definitions and statements in it, and then a proof.
 The machine checks every step. Nothing is accepted because it looks right.
 When a proof is finished, you can also ask the machine which assumptions it
 uses. For the proofs described here, the answer is: none.
 
-djbsort sorts an array. It never asks "is this value smaller than that one?"
+djbsort @djbsort sorts an array. It never asks "is this value smaller than
+that one?"
 and then takes one path or the other. It always runs the same small step, on a
 fixed pair of places in the array:
 
@@ -111,7 +112,7 @@ this shape is called a *sorting network*. The whole proof rests on this one
 observation.
 
 #figure(
-  net(4, ((1, 0, 1), (1, 2, 3), (2.2, 0, 2), (2.2, 1, 3), (3.4, 1, 2)),
+  net(4, ((1, 0, 1), (1, 2, 3), (2.15, 0, 2), (2.25, 1, 3), (3.4, 1, 2)),
       width: 4.4),
   caption: [A network on four places. Time runs left to right. Each vertical
     bar is one comparison: the smaller value goes to the upper end, the larger
@@ -154,7 +155,8 @@ development.
   and ones, then it sorts every array of numbers.
 ]
 
-Here is the reason. Take an array that the network does not sort. Look at the
+This is a classical result of Knuth @knuth. Here is the reason. Take an array
+that the network does not sort. Look at the
 first place where the output is too large. Some value $v$ ends up above a
 value $u$, with $u < v$. Now go back to the input. Replace every value below
 $v$ by 0, and every value from $v$ upwards by 1. Then run the network again.
@@ -164,25 +166,21 @@ wires as the values they replace. The output has a 1 where $v$ was and a 0
 where $u$ was, which is again the wrong order. A network that sorts every
 array of zeros and ones can therefore never fail.
 
-For four places, the check is now sixteen cases, which you can do by hand. A
-real array is longer. For a thousand places there are $2^1000$ cases, far too
-many to try, so the statement is proved instead. In fact no network in this
-development is checked case by case, however small it is. Section 12 explains
-why the machine cannot do that here, even for eight places. The machine does
-check some things case by case, but they are all arithmetic. For example, the
-tables used by the shuffles of the AVX2 code are checked at all sixty-four
-lanes.
-
 = Networks in Rocq
 
 Before going further we must say how a network is written down in Rocq. Two
-ways of writing it are used, and the difference matters later.
+ways of writing it are used, and the difference matters later. All the
+definitions use the Mathematical Components library @mathcomp, and its style
+of proof @ssreflect.
 
-*The array.* An array of $m$ values is a `m.-tuple A`. That is exactly $m$
-values of some type `A`, and `A` carries an order. `A` can be the integers, or
-the booleans of the previous section. Nothing in the development depends on
-that choice. The places are numbered by `'I_m`, the whole numbers below $m$.
-An array of four values has places 0, 1, 2 and 3.
+*The array.* Sorting compares values, so the type of the values must come with
+an order relation: given two values, one of them is at most the other. In Rocq
+a type with such a relation is called an ordered type. The array is then a
+`m.-tuple A`, where `A` is an ordered type: exactly $m$ values of type `A`.
+`A` can be the integers, or the booleans of the previous section, with `false`
+below `true`. Nothing in the development depends on that choice. The places
+are numbered by `'I_m`, the whole numbers below $m$. An array of four values
+has places 0, 1, 2 and 3.
 
 *The first way: a list of pairs.* This is what section 1 gave us, and it needs
 no machinery: `[:: (0,1); (2,3); (0,2); (1,3); (1,2)]` is @fournet. The
@@ -216,8 +214,15 @@ Word by word:
   direction. It would make no sense for one end to want the smaller value and
   the other end the larger.
 
-Running one stage is then what you would expect: each place looks at its
-partner and keeps the min or the max.
+A stage is a standard notion. In the literature it is usually called a
+*layer*, and the number of layers is the *depth* of the network, which is the
+time a machine takes when it runs each layer at once. We say stage here,
+because the word level is used later for something else: the comparisons of
+one distance inside a merge.
+
+Running a stage means applying it to an array. Every place looks at the place
+it is paired with and keeps the smaller or the larger of the two values. The
+result is a new array of the same length:
 
 ```coq
 Definition cfun c t :=
@@ -265,10 +270,33 @@ Definition network := seq (connector m).
 Definition nfun n t := foldl (fun t c => cfun c t) t n.
 ```
 
-The two ways of writing a network fit together. A single pair $(i,j)$ is a
-stage that touches only two places (`cswap i j`). So a list of pairs is a
-network in which every stage does one comparison. That is exactly what `pnet`
-builds. The program side of the proof uses lists of pairs, because that is
+Stages have a second use, and it is the reason the mathematical side is built
+from them. A sorter is defined by a recursion, and the two halves of the array
+are treated side by side. Two connectors on $m$ wires give one connector on
+$2m$ wires, and two networks are joined stage by stage, `cmerge` and `nmerge`
+in the library. So the network on twice as many wires is built by copying the
+stages of the smaller one, and the induction follows the same shape.
+
+Both ways are standard, and they answer two different questions. A list of
+pairs is the sequential reading: the comparisons come one after the other, and
+their number is the *size* of the network. A list of stages says which
+comparisons may run at the same time, and the number of stages is the *depth*.
+
+The two ways fit together. A single pair $(i,j)$ is a stage that touches only
+two places, `cswap i j`. So a list of pairs is a network in which every stage
+does one comparison. That is what `pnet` builds:
+
+```coq
+Definition oconn (n : nat) (ab : nat * nat) : option (connector n) :=
+  obind (fun i => omap (fun j => cswap i j) (insub ab.2)) (insub ab.1).
+
+Definition pnet (n : nat) (ps : seq (nat * nat)) : network n :=
+  pmap (oconn n) ps.
+```
+
+`oconn n (a, b)` gives the stage `cswap a b` when both places are below $n$,
+and nothing when one of them is not. `pmap` keeps the stages that are there
+and drops the others, so a pair that leaves the array is simply not run. The program side of the proof uses lists of pairs, because that is
 what a program performs. The mathematical side uses stages, because that is
 what induction works on.
 
@@ -290,10 +318,19 @@ Definition sorting :=
 By the zero-one principle, this single line is as strong as sorting arrays of
 integers. The library proves that once, for any network.
 
+This is where the strength of the principle shows. There are infinitely many
+arrays of $m$ integers, but only $2^m$ arrays of $m$ booleans. The principle
+turns a statement about an infinite set into a statement about a finite one.
+Rocq is constructive, and the difference is visible in the text above:
+`m.-tuple bool` is a finite type, so `[forall r : m.-tuple bool, ...]` is a
+*boolean* and not merely a proposition. In other words, "this network sorts"
+is decidable, and `n \is sorting` is a test. Section 12 says why the machine
+still cannot run that test here.
+
 == Why the mathematical networks sort
 
-The AVX2 code follows Batcher's *bitonic* sorter. It is worth seeing why that
-works, because the whole right-hand side of the proof rests on it.
+The AVX2 code follows Batcher's *bitonic* sorter @batcher. It is worth seeing
+why that works, because the whole right-hand side of the proof rests on it.
 
 A sequence is *bitonic* if it goes up and then down, like 1, 4, 7, 6, 2. A
 sequence that becomes such a sequence after a rotation is bitonic as well. Two
@@ -343,8 +380,8 @@ A full sorter follows. Sort the first half upwards, sort the second half
 downwards, and put them together. The result is bitonic, so @cleaner finishes
 the work. That is a recursion, and it is the network the AVX2 code uses.
 
-The portable code follows a different plan, Knuth's merge exchange. The shape
-of the argument is the same: a network built by a recursion, proved to sort by
+The portable code follows a different plan, Knuth's merge exchange
+@knuth. The shape of the argument is the same: a network built by a recursion, proved to sort by
 induction, with the zero-one principle doing the work at the bottom.
 
 = The shape of the proof
@@ -1387,7 +1424,7 @@ program performs that network is where the effort goes.
 = The difficult points
 
 The mathematics was not the hard part. The bitonic sorter and Knuth's merge
-exchange are textbook, and their proofs here are small next to the bridge that
+exchange are textbook results, and their proofs here are small next to the bridge that
 connects them to the code. The time went elsewhere. Five points stand out.
 
 *Statements that were false.* Parts of the bridge were written as a plan: the
@@ -1452,3 +1489,5 @@ The last step keeps its shape across very different programs. The AVX2 code
 and the portable code look nothing alike, yet both come down to one sentence:
 the program compares the same pairs as the network, in an order that costs
 nothing.
+
+#bibliography("refs.bib", title: [References])
