@@ -83,10 +83,14 @@ The machine checks every step. Nothing is accepted because it looks right.
 When a proof is finished, you can also ask the machine which assumptions it
 uses. For the proofs described here, the answer is: none.
 
-djbsort @djbsort sorts an array. It never asks "is this value smaller than
-that one?"
-and then takes one path or the other. It always runs the same small step, on a
-fixed pair of places in the array:
+djbsort @djbsort sorts an array of 32-bit integers. It comes in two versions
+of the same function. One is written in portable C. The other one uses the
+AVX2 instructions of x86 processors, which work on eight 32-bit values at a
+time, held in one register of 256 bits. This note follows both versions.
+
+Neither of them ever asks "is this value smaller than that one?" and then
+takes one path or the other. Both always run the same small step, on a fixed
+pair of places in the array:
 
 ```c
 #define int32_MINMAX(a,b)               \
@@ -112,7 +116,7 @@ this shape is called a *sorting network*. The whole proof rests on this one
 observation.
 
 #figure(
-  net(4, ((1, 0, 1), (1, 2, 3), (2.15, 0, 2), (2.25, 1, 3), (3.4, 1, 2)),
+  net(4, ((1, 0, 1), (1, 2, 3), (2.175, 0, 2), (2.225, 1, 3), (3.4, 1, 2)),
       width: 4.4),
   caption: [A network on four places. Time runs left to right. Each vertical
     bar is one comparison: the smaller value goes to the upper end, the larger
@@ -327,22 +331,24 @@ Rocq is constructive, and the difference is visible in the text above:
 is decidable, and `n \is sorting` is a test. Section 12 says why the machine
 still cannot run that test here.
 
-== Why the mathematical networks sort
+== Why the bitonic sorter sorts
 
 The AVX2 code follows Batcher's *bitonic* sorter @batcher. It is worth seeing
 why that works, because the whole right-hand side of the proof rests on it.
 
-A sequence is *bitonic* if it goes up and then down, like 1, 4, 7, 6, 2. A
-sequence that becomes such a sequence after a rotation is bitonic as well. Two
-sorted runs, one going up and one going down, always give a bitonic sequence
-when you put them end to end.
+A sequence is *bitonic* if it goes up and then down, like 1, 4, 7, 6, 2, or
+if a rotation turns it into such a sequence. A sequence that goes down and
+then up is therefore bitonic as well: 5, 3, 1, 2, 4 becomes 1, 2, 4, 5, 3
+after a rotation. This is the case the code produces. It sorts one half
+downwards and the other half upwards, and the two halves put end to end are
+bitonic.
 
 Now take a bitonic sequence of $2m$ values. Compare each place $i$ with the
 place $i + m$, and keep the smaller one on the left. This single stage is the
 *half-cleaner*. After it, three things are true. They are the key to
 everything that follows:
 
-+ every value in the left half is at most every value in the right half;
++ no value in the left half is larger than a value in the right half;
 + the left half is still bitonic;
 + the right half is still bitonic.
 
