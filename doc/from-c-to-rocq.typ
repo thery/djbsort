@@ -96,15 +96,10 @@ do {                                    \
 } while(0)
 ```
 
-A macro in C must be written on one line. The backslash at the end of a line
-says that the macro continues on the next one, so the six lines above are a
-single line for the compiler. The backslashes are lined up in one column here,
-which is only a matter of taste. The source file puts each one just after the
-code, and both styles are common. The details of the computation do not matter
-here. Only the effect matters. After the step, `a` holds the smaller of the
-two values and `b` the larger. There is no `if`. The processor runs the same
-instructions for every input. That is what makes the routine constant-time,
-and useful in cryptography.
+The details do not matter here. Only the effect matters. After the step, `a`
+holds the smaller of the two values and `b` the larger. There is no `if`. The
+processor runs the same instructions for every input. That is what makes the
+routine constant-time, and useful in cryptography.
 
 We call one such step a *comparison*, and write it as a pair of places, for
 instance $(3, 5)$: compare what is in place 3 with what is in place 5, and put
