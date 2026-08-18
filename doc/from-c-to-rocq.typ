@@ -88,17 +88,19 @@ and then takes one path or the other. It always runs the same small step, on a
 fixed pair of places in the array:
 
 ```c
-#define int32_MINMAX(a,b) \
-do { \
-  int32 ab = b ^ a;  int32 c = b - a; \
+#define int32_MINMAX(a,b)               \
+do {                                    \
+  int32 ab = b ^ a;  int32 c = b - a;   \
   c ^= ab & (c ^ b); c >>= 31; c &= ab; \
-  a ^= c; b ^= c;    \
+  a ^= c; b ^= c;                       \
 } while(0)
 ```
 
 A macro in C must be written on one line. The backslash at the end of a line
-says that the macro continues on the next one, so the six lines above are one
-single line for the compiler. The details of the computation do not matter
+says that the macro continues on the next one, so the six lines above are a
+single line for the compiler. The backslashes are lined up in one column here,
+which is only a matter of taste. The source file puts each one just after the
+code, and both styles are common. The details of the computation do not matter
 here. Only the effect matters. After the step, `a` holds the smaller of the
 two values and `b` the larger. There is no `if`. The processor runs the same
 instructions for every input. That is what makes the routine constant-time,
