@@ -270,6 +270,13 @@ Definition network := seq (connector m).
 Definition nfun n t := foldl (fun t c => cfun c t) t n.
 ```
 
+Stages have a second use, and it is the reason the mathematical side is built
+from them. A sorter is defined by a recursion, and the two halves of the array
+are treated side by side. Two connectors on $m$ wires give one connector on
+$2m$ wires, and two networks are joined stage by stage, `cmerge` and `nmerge`
+in the library. So the network on twice as many wires is built by copying the
+stages of the smaller one, and the induction follows the same shape.
+
 Both ways are standard, and they answer two different questions. A list of
 pairs is the sequential reading: the comparisons come one after the other, and
 their number is the *size* of the network. A list of stages says which
@@ -310,6 +317,15 @@ Definition sorting :=
 
 By the zero-one principle, this single line is as strong as sorting arrays of
 integers. The library proves that once, for any network.
+
+This is where the strength of the principle shows. There are infinitely many
+arrays of $m$ integers, but only $2^m$ arrays of $m$ booleans. The principle
+turns a statement about an infinite set into a statement about a finite one.
+Rocq is constructive, and the difference is visible in the text above:
+`m.-tuple bool` is a finite type, so `[forall r : m.-tuple bool, ...]` is a
+*boolean* and not merely a proposition. In other words, "this network sorts"
+is decidable, and `n \is sorting` is a test. Section 12 says why the machine
+still cannot run that test here.
 
 == Why the mathematical networks sort
 
