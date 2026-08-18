@@ -331,7 +331,7 @@ Rocq is constructive, and the difference is visible in the text above:
 is decidable, and `n \is sorting` is a test. Section 12 says why the machine
 still cannot run that test here.
 
-== Why the bitonic sorter sorts
+== The bitonic sorter
 
 The AVX2 code follows Batcher's *bitonic* sorter @batcher. It is worth seeing
 why that works, because the whole right-hand side of the proof rests on it.
@@ -388,10 +388,71 @@ So the whole array is sorted. That is `half_cleaner_rec`.
 A full sorter follows. Sort the first half downwards, sort the second half
 upwards, and put them together. The result is bitonic, so @cleaner finishes
 the work. That is a recursion, and it is the network the AVX2 code uses.
+@bsort draws it in full on eight wires.
 
-The portable code follows a different plan, Knuth's merge exchange
-@knuth. The shape of the argument is the same: a network built by a recursion, proved to sort by
-induction, with the zero-one principle doing the work at the bottom.
+#figure(
+  cetz.canvas(length: 1cm, {
+    import cetz.draw: *
+    let h = 0.5
+    for i in range(8) {
+      line((0, -i * h), (6.4, -i * h), stroke: 0.5pt + luma(90))
+      content((-0.45, -i * h), text(size: 7.5pt)[#i])
+    }
+    // one comparison; the arrow points at the end that gets the larger value
+    let comp(x, a, b, down) = {
+      if down {
+        line((x, -b * h), (x, -a * h), mark: (end: ">"), stroke: 0.7pt)
+        circle((x, -b * h), radius: 0.05, fill: black)
+      } else {
+        line((x, -a * h), (x, -b * h), mark: (end: ">"), stroke: 0.7pt)
+        circle((x, -a * h), radius: 0.05, fill: black)
+      }
+    }
+    // blocks of two, then of four: the lower one down, the upper one up
+    comp(0.8, 0, 1, true); comp(0.8, 2, 3, false)
+    comp(0.8, 4, 5, true); comp(0.8, 6, 7, false)
+    comp(1.7, 0, 2, true); comp(1.82, 1, 3, true)
+    comp(1.7, 4, 6, false); comp(1.82, 5, 7, false)
+    comp(2.6, 0, 1, true); comp(2.6, 2, 3, true)
+    comp(2.6, 4, 5, false); comp(2.6, 6, 7, false)
+    // the merge of @cleaner, on all eight wires
+    for i in range(4) { comp(3.6 + i * 0.12, i, i + 4, false) }
+    comp(4.7, 0, 2, false); comp(4.82, 1, 3, false)
+    comp(4.7, 4, 6, false); comp(4.82, 5, 7, false)
+    for i in (0, 2, 4, 6) { comp(5.7, i, i + 1, false) }
+    content((1.7, 0.5), text(size: 7.5pt)[sorting the blocks])
+    content((4.7, 0.5), text(size: 7.5pt)[the merge on eight wires])
+  }),
+  caption: [The bitonic sorter on eight wires. An arrow points at the end
+    that receives the larger value. The first three columns sort blocks of
+    two and then of four, the lower block downwards and the upper one
+    upwards. The last three columns are the merge of @cleaner. Turn the
+    arrows of those last three columns round, and the sorter runs
+    downwards.],
+) <bsort>
+
+== Knuth's merge exchange
+
+The portable code follows another network, Knuth's *merge exchange*, which is
+Algorithm 5.2.2M of @knuth and is due to Batcher as well.
+
+Its recursion splits the array in another way. Not the first half and the
+second half, but the places with an even number and the places with an odd
+number. Sort each of the two with the same network. The two results are then
+interleaved, and a run of comparisons at falling distances repairs them into
+one sorted array. As before, the proof is an induction, and the zero-one
+principle does the work at the bottom.
+
+The code runs the loops that go with it. They need no power of two: a length
+that is not one only means that some comparisons fall outside the array, and
+those are dropped. This is why the portable code needs neither the padding nor
+the splitting of section 10, which the AVX2 code needs.
+
+Both networks of this section were formalised and proved to sort before the
+present work @thery. The files #src("code/common/nsort.v"),
+#src("code/common/nbitonic.v") and
+#src("code/portable4/proof/nbjsort.v") come from that development, and
+everything below is built on top of them.
 
 = The shape of the proof
 
