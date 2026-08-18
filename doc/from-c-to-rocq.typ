@@ -276,8 +276,20 @@ their number is the *size* of the network. A list of stages says which
 comparisons may run at the same time, and the number of stages is the *depth*.
 
 The two ways fit together. A single pair $(i,j)$ is a stage that touches only
-two places (`cswap i j`). So a list of pairs is a network in which every stage
-does one comparison. That is exactly what `pnet` builds. The program side of the proof uses lists of pairs, because that is
+two places, `cswap i j`. So a list of pairs is a network in which every stage
+does one comparison. That is what `pnet` builds:
+
+```coq
+Definition oconn (n : nat) (ab : nat * nat) : option (connector n) :=
+  obind (fun i => omap (fun j => cswap i j) (insub ab.2)) (insub ab.1).
+
+Definition pnet (n : nat) (ps : seq (nat * nat)) : network n :=
+  pmap (oconn n) ps.
+```
+
+`oconn n (a, b)` gives the stage `cswap a b` when both places are below $n$,
+and nothing when one of them is not. `pmap` keeps the stages that are there
+and drops the others, so a pair that leaves the array is simply not run. The program side of the proof uses lists of pairs, because that is
 what a program performs. The mathematical side uses stages, because that is
 what induction works on.
 
