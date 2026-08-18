@@ -327,7 +327,7 @@ Rocq is constructive, and the difference is visible in the text above:
 is decidable, and `n \is sorting` is a test. Section 12 says why the machine
 still cannot run that test here.
 
-== Why the mathematical networks sort
+== Why the bitonic sorter sorts
 
 The AVX2 code follows Batcher's *bitonic* sorter @batcher. It is worth seeing
 why that works, because the whole right-hand side of the proof rests on it.
