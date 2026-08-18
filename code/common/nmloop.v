@@ -912,34 +912,9 @@ Definition lvsfrom (n p start : nat) : seq (nat * nat) :=
 Definition lvsin (n p start j : nat) : seq (nat * nat) :=
   flatten [seq lvin n d start j | d <- dists p].
 
-(* M whole merges of `2^ p places, from start on, ARE the levels below `2^ p  *)
-(* on that stretch                                                            *)
-Lemma merges_are_levels (n p start M : nat) :
-  dvdn (`2^ p) start -> start + M * (`2^ p) <= n ->
-  dequiv n (flatten [seq pshift (start + m * (`2^ p)) (mlev p) | m <- iota 0 M])
-           (lvsin n p start (start + M * (`2^ p))).
-Admitted.
-
-(* a level from a point on: the whole blocks up to j, then what j leaves *)
-Lemma lvfrom_cut (n d start j : nat) :
-  0 < d -> dvdn d.*2 j -> start <= j -> j <= n ->
-  lvfrom n d start = lvin n d start j ++ lvfrom n d j.
-Admitted.
-
-(* the levels from start on may be read as: what is below j, then what is not *)
-Lemma lvsfrom_cut (n p start j : nat) :
-  dvdn (`2^ p) j -> start <= j -> j <= n ->
-  dequiv n (lvsfrom n p start) (lvsin n p start j ++ lvsfrom n p j).
-Admitted.
-
-(* the top level from start on: its whole blocks, then the ragged tail *)
-Lemma lvfrom_blocks (n p start : nat) :
-  dvdn (`2^ p.+1) start -> start <= n ->
-  lvfrom n (`2^ p) start
-    = lvin n (`2^ p) start (bj n p.+1 start)
-      ++ mm (bj n p.+1 start) (bj n p.+1 start + (`2^ p))
-            (n - (`2^ p) - bj n p.+1 start).
-Admitted.
+(* -------------------------------------------------------------------------- *)
+(*  Where a level's comparisons sit                                           *)
+(* -------------------------------------------------------------------------- *)
 
 (* a comparison of a level below j, when j is a whole number of its blocks,   *)
 (* has both its wires below j                                                 *)
@@ -959,6 +934,184 @@ rewrite jE -addnn in iLj *.
 have k'k : k' < k by move: iLj iE iM; rewrite -addnn; nia.
 by move: iE iM k'k; rewrite -addnn; nia.
 Qed.
+
+(* and one from j on has both from j on *)
+Lemma whi_lvfrom (n d j : nat) : whi j (lvfrom n d j).
+Proof.
+apply/allP => x; rewrite mem_filter => /andP[jx xI].
+move: xI; rewrite /level_pairs => /mapP[i _ xE].
+move: jx; rewrite xE /= => ji.
+by rewrite ji (leq_trans ji (leq_addr _ _)).
+Qed.
+
+Lemma bnd_lvfrom (n d start : nat) : all (bnd n) (lvfrom n d start).
+Proof.
+apply/allP => x; rewrite mem_filter => /andP[_ xI].
+by have /andP[H1 H2] := allP (level_pairs_bnd n d d false) _ xI; rewrite /bnd H1.
+Qed.
+
+Lemma bnd_lvin (n d start j : nat) : all (bnd n) (lvin n d start j).
+Proof.
+apply/allP => x; rewrite mem_filter => /andP[_ xI].
+by have /andP[H1 H2] := allP (level_pairs_bnd n d d false) _ xI; rewrite /bnd H1.
+Qed.
+
+(* -------------------------------------------------------------------------- *)
+(*  Cutting a level, and its ragged end                                       *)
+(* -------------------------------------------------------------------------- *)
+
+(* a level lists its comparisons by increasing low place, so it may be cut    *)
+(* anywhere                                                                   *)
+Lemma lvfrom_cut (n d start j : nat) : start <= j -> j <= n ->
+  lvfrom n d start = lvin n d start j ++ lvfrom n d j.
+Proof.
+move=> sj jn.
+rewrite /lvfrom /lvin /level_pairs !filter_map -!filter_predI.
+have -> : iota 0 n = iota 0 j ++ iota j (n - j).
+  by rewrite -{3}[j]add0n -iotaD subnKC.
+rewrite !filter_cat !map_cat.
+have -> : [seq (i, i + d) | i <- iota j (n - j)
+          & predI (preim (fun i : nat => (i, i + d))
+                     (fun ab : nat * nat => start <= ab.1 < j))
+              (fun i : nat => (i + d < n) && (odd (i %/ d) == false)) i] = [::].
+  rewrite -[RHS](_ : [seq (i, i + d) | i <- [::]] = [::]) //; congr map.
+  rewrite -(filter_pred0 (iota j (n - j))); apply: eq_in_filter => i.
+  by rewrite mem_iota => /andP[ji _] /=; rewrite ltnNge ji !andbF.
+have -> : [seq (i, i + d) | i <- iota 0 j
+          & predI (preim (fun i : nat => (i, i + d))
+                     (fun ab : nat * nat => j <= ab.1))
+              (fun i : nat => (i + d < n) && (odd (i %/ d) == false)) i] = [::].
+  rewrite -[RHS](_ : [seq (i, i + d) | i <- [::]] = [::]) //; congr map.
+  rewrite -(filter_pred0 (iota 0 j)); apply: eq_in_filter => i.
+  by rewrite mem_iota add0n => /andP[_ iLj] /=; rewrite leqNgt iLj.
+rewrite cats0 cat0s; congr (_ ++ _); congr map.
+  apply: eq_in_filter => i; rewrite mem_iota add0n => /andP[_ iLj] /=.
+  by rewrite iLj andbT.
+apply: eq_in_filter => i; rewrite mem_iota => /andP[ji _] /=.
+by rewrite ji (leq_trans sj ji).
+Qed.
+
+(* when fewer than two of its blocks are left, a level is just its tail *)
+Lemma lvfrom_tail (n d j : nat) :
+  0 < d -> dvdn d.*2 j -> j <= n -> n < j + d.*2 ->
+  lvfrom n d j = mm j (j + d) (n - d - j).
+Proof.
+move=> d_gt0 dj jn nj.
+have [c jE] : exists c, j = c.*2 * d.
+  by case/dvdnP: dj => c ->; exists c; rewrite -addnn; nia.
+rewrite mmE /lvfrom /level_pairs filter_map -filter_predI.
+congr [seq _ | i <- _].
+have -> : iota 0 n = iota 0 j ++ iota j (n - j).
+  by rewrite -{3}[j]add0n -iotaD subnKC.
+rewrite filter_cat.
+have -> : [seq i <- iota 0 j
+          | predI (preim (fun i : nat => (i, i + d))
+                     (fun ab : nat * nat => j <= ab.1))
+              (fun i : nat => (i + d < n) && (odd (i %/ d) == false)) i] = [::].
+  rewrite -(filter_pred0 (iota 0 j)); apply: eq_in_filter => i.
+  by rewrite mem_iota add0n => /andP[_ iLj] /=; rewrite leqNgt iLj.
+rewrite cat0s.
+have -> : iota j (n - j) = [seq j + k | k <- iota 0 (n - j)]
+  by rewrite -iotaDl addn0.
+rewrite filter_map.
+have -> : [seq k <- iota 0 (n - j)
+          | preim [eta addn j]
+              (predI (preim (fun i : nat => (i, i + d))
+                        (fun ab : nat * nat => j <= ab.1))
+                 (fun i : nat => (i + d < n) && (odd (i %/ d) == false))) k]
+        = [seq k <- iota 0 (n - j) | k < n - d - j].
+  apply: eq_in_filter => k; rewrite mem_iota add0n => /andP[_ kL] /=.
+  rewrite leq_addr /=.
+  case: (ltnP k (n - d - j)) => [kL2|kL2]; last first.
+    by have -> : (j + k + d < n) = false by move: nj kL2; lia.
+  have kd : k < d by move: nj kL2; rewrite -addnn; lia.
+  have -> : (j + k) %/ d = c.*2.
+    by rewrite jE divnMDl // divn_small ?addn0.
+  by rewrite odd_double eqxx andbT; move: kL2; lia.
+rewrite filter_iota_ltn (minn_idPr _) ?leq_subr //.
+  by rewrite -iotaDl addn0.
+by lia.
+Qed.
+
+(* so the top level from start on: its whole blocks, then the ragged tail *)
+Lemma lvfrom_blocks (n p start : nat) :
+  dvdn (`2^ p.+1) start -> start <= n ->
+  lvfrom n (`2^ p) start
+    = lvin n (`2^ p) start (bj n p.+1 start)
+      ++ mm (bj n p.+1 start) (bj n p.+1 start + (`2^ p))
+            (n - (`2^ p) - bj n p.+1 start).
+Proof.
+move=> pd sn.
+set B := `2^ p.+1; set M := (n - start) %/ B; set j := bj n p.+1 start.
+have B_gt0 : 0 < B by rewrite /B e2n_gt0.
+have jE : j = start + M * B by [].
+have sj : start <= j by rewrite jE leq_addr.
+have jn : j <= n by rewrite jE /M; have := leq_divM (n - start) B; lia.
+have jd : dvdn B j by rewrite jE; apply: dvdn_add => //; apply: dvdn_mull.
+have nj : n < j + (`2^ p).*2.
+  have BE : (`2^ p).*2 = B by rewrite /B e2Sn addnn.
+  have hm : (n - start) %% B < B by rewrite ltn_mod.
+  have he := divn_eq (n - start) B.
+  by rewrite BE jE; move: hm he sn; rewrite -/M; lia.
+rewrite (@lvfrom_cut n (`2^ p) start j sj jn) (@lvfrom_tail n (`2^ p) j) //.
+  by rewrite e2n_gt0.
+by rewrite -addnn -e2Sn.
+Qed.
+
+(* and all the levels at once, cut at a block boundary: nothing crosses it *)
+Lemma lvsfrom_cut (n p start j : nat) :
+  dvdn (`2^ p) j -> start <= j -> j <= n ->
+  dequiv n (lvsfrom n p start) (lvsin n p start j ++ lvsfrom n p j).
+Proof.
+move=> pj sj jn.
+have dj (d : nat) : d \in dists p -> dvdn d.*2 j.
+  move=> dI; have [i iLp ->] := mem_dists dI.
+  by rewrite -addnn -e2Sn; apply: dvdn_trans pj; rewrite dvdn_e2n.
+have d0 (d : nat) : d \in dists p -> 0 < d.
+  by move=> dI; have [i _ ->] := mem_dists dI; rewrite e2n_gt0.
+have -> : lvsfrom n p start
+        = flatten [seq lvin n d start j ++ lvfrom n d j | d <- dists p].
+  by rewrite /lvsfrom; congr flatten; apply/eq_in_map => d dI;
+     apply: lvfrom_cut.
+set L := flatten _.
+have LB : all (bnd n) L.
+  by apply: all_flatten_map => d _; rewrite all_cat bnd_lvin bnd_lvfrom.
+have LC : all (fun ab => (ab.1 < j) == (ab.2 < j)) L.
+  apply: all_flatten_map => d dI; rewrite all_cat; apply/andP; split.
+    apply/allP => x xI.
+    have /andP[H1 H2] := allP (wlo_lvin n start (d0 _ dI) (dj _ dI)) _ xI.
+    by rewrite H1 H2.
+  apply/allP => x xI.
+  have /andP[H1 H2] := allP (whi_lvfrom n d j) _ xI.
+  by rewrite !ltnNge H1 H2.
+apply: (dequiv_trans (dequiv_cut LB LC)).
+have -> : [seq ab <- L | ab.1 < j] = lvsin n p start j.
+  rewrite /L filter_flatten -map_comp /lvsin; congr flatten.
+  apply/eq_in_map => d dI; rewrite /comp filter_cat.
+  have -> : [seq ab <- lvfrom n d j | ab.1 < j] = [::].
+    rewrite -(filter_pred0 (lvfrom n d j)); apply: eq_in_filter => x xI /=.
+    by have /andP[H1 _] := allP (whi_lvfrom n d j) _ xI; rewrite ltnNge H1.
+  rewrite cats0 -[RHS]filter_predT; apply: eq_in_filter => x xI /=.
+  by have /andP[H1 _] := allP (wlo_lvin n start (d0 _ dI) (dj _ dI)) _ xI.
+have -> : [seq ab <- L | ~~ (ab.1 < j)] = lvsfrom n p j.
+  rewrite /L filter_flatten -map_comp /lvsfrom; congr flatten.
+  apply/eq_in_map => d dI; rewrite /comp filter_cat.
+  have -> : [seq ab <- lvin n d start j | ~~ (ab.1 < j)] = [::].
+    rewrite -(filter_pred0 (lvin n d start j)); apply: eq_in_filter => x xI /=.
+    by have /andP[H1 _] := allP (wlo_lvin n start (d0 _ dI) (dj _ dI)) _ xI;
+       rewrite H1.
+  rewrite cat0s -[RHS]filter_predT; apply: eq_in_filter => x xI /=.
+  by have /andP[H1 _] := allP (whi_lvfrom n d j) _ xI; rewrite ltnNge H1.
+exact: dequiv_refl.
+Qed.
+
+(* WHAT IS LEFT: M whole merges of `2^ p places, from start on, ARE the       *)
+(* levels below `2^ p on that stretch -- a flatten swap coloured by the block *)
+Lemma merges_are_levels (n p start M : nat) :
+  dvdn (`2^ p) start -> start + M * (`2^ p) <= n ->
+  dequiv n (flatten [seq pshift (start + m * (`2^ p)) (mlev p) | m <- iota 0 M])
+           (lvsin n p start (start + M * (`2^ p))).
+Admitted.
 
 (* THE ACCOUNTING: the phase from block size `2^ p on IS the levels it owes  *)
 Theorem bph_levels (n : nat) : forall p start,
