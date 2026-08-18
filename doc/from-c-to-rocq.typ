@@ -270,10 +270,14 @@ Definition network := seq (connector m).
 Definition nfun n t := foldl (fun t c => cfun c t) t n.
 ```
 
-The two ways of writing a network fit together. A single pair $(i,j)$ is a
-stage that touches only two places (`cswap i j`). So a list of pairs is a
-network in which every stage does one comparison. That is exactly what `pnet`
-builds. The program side of the proof uses lists of pairs, because that is
+Both ways are standard, and they answer two different questions. A list of
+pairs is the sequential reading: the comparisons come one after the other, and
+their number is the *size* of the network. A list of stages says which
+comparisons may run at the same time, and the number of stages is the *depth*.
+
+The two ways fit together. A single pair $(i,j)$ is a stage that touches only
+two places (`cswap i j`). So a list of pairs is a network in which every stage
+does one comparison. That is exactly what `pnet` builds. The program side of the proof uses lists of pairs, because that is
 what a program performs. The mathematical side uses stages, because that is
 what induction works on.
 
