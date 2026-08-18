@@ -371,11 +371,13 @@ So the whole array is sorted. That is `half_cleaner_rec`.
       circle((x, -a * h), radius: 0.05, fill: black)
       circle((x, -b * h), radius: 0.05, fill: black)
     }
-    for i in range(4) { comp(1.0, i, i + 4) }
-    for i in (0, 1) { comp(2.6, i, i + 2); comp(2.6, i + 4, i + 6) }
+    for i in range(4) { comp(1.0 + i * 0.12, i, i + 4) }
+    for i in (0, 1) {
+      comp(2.6 + i * 0.12, i, i + 2); comp(2.6 + i * 0.12, i + 4, i + 6)
+    }
     for i in (0, 2, 4, 6) { comp(4.0, i, i + 1) }
-    content((1.0, 0.45), text(size: 7.5pt)[distance 4])
-    content((2.6, 0.45), text(size: 7.5pt)[distance 2])
+    content((1.18, 0.45), text(size: 7.5pt)[distance 4])
+    content((2.66, 0.45), text(size: 7.5pt)[distance 2])
     content((4.0, 0.45), text(size: 7.5pt)[distance 1])
   }),
   caption: [Sorting a bitonic sequence of eight values: one half-cleaner at
@@ -383,8 +385,8 @@ So the whole array is sorted. That is `half_cleaner_rec`.
     quarter. After the first column, nothing crosses the middle again.],
 ) <cleaner>
 
-A full sorter follows. Sort the first half upwards, sort the second half
-downwards, and put them together. The result is bitonic, so @cleaner finishes
+A full sorter follows. Sort the first half downwards, sort the second half
+upwards, and put them together. The result is bitonic, so @cleaner finishes
 the work. That is a recursion, and it is the network the AVX2 code uses.
 
 The portable code follows a different plan, Knuth's merge exchange
