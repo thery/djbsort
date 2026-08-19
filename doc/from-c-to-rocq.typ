@@ -385,10 +385,39 @@ So the whole array is sorted. That is `half_cleaner_rec`.
     quarter. After the first column, nothing crosses the middle again.],
 ) <cleaner>
 
-A full sorter follows. Sort the first half downwards, sort the second half
-upwards, and put them together. The result is bitonic, so @cleaner finishes
-the work. That is a recursion, and it is the network the AVX2 code uses.
-@bsort draws it in full on eight wires.
+A full sorter follows. Sort the first half upwards, sort the second half
+downwards, and put them together. The result goes up and then down, so it is
+bitonic, and @cleaner finishes the work.
+
+Both halves are recursions, and both are short in Rocq. Here is the merge.
+`ndup l` runs the network `l` on the first half of the array and the same
+network on the second half:
+
+```coq
+Fixpoint half_cleaner_rec b m : network (`2^ m) :=
+  if m is m1.+1 then half_cleaner b (`2^ m1) :: ndup (half_cleaner_rec b m1)
+  else [::].
+```
+
+Read it as @cleaner: one half-cleaner across the whole array, then the same
+merge again on each half. The flag `b` says which way it sorts. On one wire
+there is nothing left to do.
+
+The sorter uses it. `nmerge l1 l2` runs `l1` on the first half of the array
+and `l2` on the second half:
+
+```coq
+Fixpoint bfsort (b : bool) m : network (`2^ m) :=
+  if m is m1.+1 then nmerge (bfsort b m1) (bfsort (~~ b) m1)
+                     ++ half_cleaner_rec b m1.+1
+  else [::].
+```
+
+The two halves are sorted by the same network, in opposite directions: `b` for
+the first half and `~~ b`, its negation, for the second. What comes out is
+bitonic, and the merge on the line below finishes the work. Counting stages,
+`half_cleaner_rec b m` has $m$ of them and `bfsort b m` has $m (m + 1) \/ 2$,
+which is six on eight wires. @bsort draws those six.
 
 #figure(
   cetz.canvas(length: 1cm, {
@@ -401,20 +430,20 @@ the work. That is a recursion, and it is the network the AVX2 code uses.
     // one comparison; the arrow points at the end that gets the larger value
     let comp(x, a, b, down) = {
       if down {
-        line((x, -b * h), (x, -a * h), mark: (end: ">"), stroke: 0.7pt)
+        line((x, -b * h), (x, -a * h), mark: (end: ">", scale: 0.6), stroke: 0.7pt)
         circle((x, -b * h), radius: 0.05, fill: black)
       } else {
-        line((x, -a * h), (x, -b * h), mark: (end: ">"), stroke: 0.7pt)
+        line((x, -a * h), (x, -b * h), mark: (end: ">", scale: 0.6), stroke: 0.7pt)
         circle((x, -a * h), radius: 0.05, fill: black)
       }
     }
-    // blocks of two, then of four: the lower one down, the upper one up
-    comp(0.8, 0, 1, true); comp(0.8, 2, 3, false)
+    // blocks of two, then of four, each in the direction its own half wants
+    comp(0.8, 0, 1, false); comp(0.8, 2, 3, true)
     comp(0.8, 4, 5, true); comp(0.8, 6, 7, false)
-    comp(1.7, 0, 2, true); comp(1.82, 1, 3, true)
-    comp(1.7, 4, 6, false); comp(1.82, 5, 7, false)
-    comp(2.6, 0, 1, true); comp(2.6, 2, 3, true)
-    comp(2.6, 4, 5, false); comp(2.6, 6, 7, false)
+    comp(1.7, 0, 2, false); comp(1.82, 1, 3, false)
+    comp(1.7, 4, 6, true); comp(1.82, 5, 7, true)
+    comp(2.6, 0, 1, false); comp(2.6, 2, 3, false)
+    comp(2.6, 4, 5, true); comp(2.6, 6, 7, true)
     // the merge of @cleaner, on all eight wires
     for i in range(4) { comp(3.6 + i * 0.12, i, i + 4, false) }
     comp(4.7, 0, 2, false); comp(4.82, 1, 3, false)
@@ -423,12 +452,12 @@ the work. That is a recursion, and it is the network the AVX2 code uses.
     content((1.7, 0.5), text(size: 7.5pt)[sorting the blocks])
     content((4.7, 0.5), text(size: 7.5pt)[the merge on eight wires])
   }),
-  caption: [The bitonic sorter on eight wires. An arrow points at the end
-    that receives the larger value. The first three columns sort blocks of
-    two and then of four, the lower block downwards and the upper one
-    upwards. The last three columns are the merge of @cleaner. Turn the
-    arrows of those last three columns round, and the sorter runs
-    downwards.],
+  caption: [`bfsort false 3`, the bitonic sorter on eight wires. An arrow
+    points at the end that receives the larger value. The first three columns
+    are the two halves being sorted, the first one upwards and the second
+    downwards; inside each of them the same rule is applied again. The last
+    three columns are the merge of @cleaner. Turn the arrows of those last
+    three columns round, and the sorter runs downwards.],
 ) <bsort>
 
 == Knuth's merge exchange <sec-knuth>
@@ -438,15 +467,73 @@ Algorithm 5.2.2M of @knuth and is due to Batcher as well.
 
 Its recursion splits the array in another way. Not the first half and the
 second half, but the places with an even number and the places with an odd
-number. Sort each of the two with the same network. The two results are then
-interleaved, and a run of comparisons at falling distances repairs them into
-one sorted array. As before, the proof is an induction, and the zero-one
-principle does the work at the bottom.
+number:
 
-The code runs the loops that go with it. They need no power of two: a length
-that is not one only means that some comparisons fall outside the array, and
-those are dropped. This is why the portable code needs neither the padding nor
-the splitting of @sec-nonpow2, which the AVX2 code needs.
+```coq
+Fixpoint knuth_exchange m : network (`2^ m) :=
+  if m is m1.+1 then
+    neodup (knuth_exchange m1) ++ ceswap :: knuth_jump_rec _ m1 ((`2^ m1).-1)
+  else [::].
+```
+
+`neodup l` runs the network `l` on the even places and the same `l` on the odd
+places. After it the values on the even places are sorted, the values on the
+odd places are sorted, and the two are interleaved. The rest of the network
+mixes them.
+
+First `ceswap`, one stage that compares each even place with the odd place
+next to it: 0 with 1, then 2 with 3, and so on. Then a run of jumps, at
+falling distances:
+
+```coq
+Fixpoint knuth_jump_rec m k r : network m :=
+  if k is k1.+1 then codd_jump r :: knuth_jump_rec _ k1 (uphalf r).-1
+  else [::].
+```
+
+`codd_jump r` compares place $i$ with place $i + r$ for every odd $i$, and
+keeps the smaller value at $i$. The first jump is $2^(m-1) - 1$ and each one
+after it is about half of that, down to a jump of one. @knet draws the whole
+network on eight wires. As before, the proof that it sorts is an induction,
+and the zero-one principle does the work at the bottom.
+
+#figure(
+  cetz.canvas(length: 1cm, {
+    import cetz.draw: *
+    let h = 0.5
+    for i in range(8) {
+      line((0, -i * h), (6.7, -i * h), stroke: 0.5pt + luma(90))
+      content((-0.45, -i * h), text(size: 7.5pt)[#i])
+    }
+    let comp(x, a, b) = {
+      line((x, -a * h), (x, -b * h), mark: (end: ">", scale: 0.6), stroke: 0.7pt)
+      circle((x, -a * h), radius: 0.05, fill: black)
+    }
+    // the even places and the odd places, sorted by the same network
+    comp(0.7, 0, 4); comp(0.85, 2, 6); comp(1.0, 1, 5); comp(1.15, 3, 7)
+    comp(2.1, 0, 2); comp(2.25, 1, 3); comp(2.1, 4, 6); comp(2.25, 5, 7)
+    comp(3.2, 2, 4); comp(3.35, 3, 5)
+    // then the mixing: neighbours, then the jumps
+    comp(4.2, 0, 1); comp(4.2, 2, 3); comp(4.2, 4, 5); comp(4.2, 6, 7)
+    comp(5.1, 1, 4); comp(5.25, 3, 6)
+    comp(6.1, 1, 2); comp(6.1, 3, 4); comp(6.1, 5, 6)
+    content((2.0, 0.5), text(size: 7.5pt)[even places, odd places])
+    content((5.2, 0.5), text(size: 7.5pt)[mixing the two])
+  }),
+  caption: [`knuth_exchange 3`, the merge exchange on eight wires, six stages
+    and nineteen comparisons. The first three columns sort the four even
+    places and the four odd places, by the same network read twice. The
+    fourth column compares each pair of neighbours, and the last two are the
+    jumps, at distance three and then at distance one. Every comparison sends
+    the smaller value upwards, so no direction is needed anywhere.],
+) <knet>
+
+Two things are different from the bitonic sorter. No comparison ever runs
+downwards, so no flag and no mask are needed. And the recursion asks nothing
+of the length: when the length is not a power of two, the comparisons that
+fall outside the array are dropped, and the loops of the portable code do
+exactly that. This is why the portable code needs neither the padding nor the
+splitting of @sec-nonpow2, which the AVX2 code needs.
 
 Both networks of this section were formalised and proved to sort before the
 present work @thery. The files #src("code/common/nsort.v"),
@@ -581,7 +668,7 @@ started in place 0 and the value that started in place 2.
     cell(0, 0, [a], pale); cell(w, 0, [b], hot); cell(2 * w, 0, [c], hot)
     cell(3 * w, 0, [d], pale)
     line((4 * w + 0.35, -w / 2), (4 * w + 1.0, -w / 2),
-         mark: (end: ">"), stroke: 0.7pt)
+         mark: (end: ">", scale: 0.6), stroke: 0.7pt)
     content((4 * w + 1.2, -w / 2),
             text(size: 9pt)[the shuffle swaps places 1 and 2], anchor: "west")
     content((-1.5, -1.6 - w / 2), text(size: 9pt)[after], anchor: "west")
