@@ -582,26 +582,27 @@ vector code.
 = Reading the program <part-read>
 
 Here are the two programs, so that the reader knows what has to be written
-down. This is the portable one, in the middle of its work:
+down.
+
+*The portable one* is the network of @sec-knuth, written as loops. It runs
+through the distances $p$, from the largest down to one. For each $p$ it
+compares every place with the place $p$ further on, block of $2p$ places by
+block of $2p$ places. Then, for each larger distance $q$, it walks chains: it
+starts from a place, compares at distance $q$, then at about half of it, and
+so on down to $p$. Its innermost statement is always the small step of
+@sec-programs on two places of the array:
 
 ```c
-for (p = top;p >= 1;p >>= 1) {
-  i = 0;
-  while (i + 2 * p <= n) {
-    for (j = i;j < i + p;++j)
-      int32_MINMAX(x[j],x[j+p]);
-    i += 2 * p;
-  }
-  ...
+for (j = i;j < i + p;++j)
+  int32_MINMAX(x[j],x[j+p]);
 ```
 
-Three loops, and inside them the small step of @sec-programs on two places of
-the array. Nothing else happens to a value.
+The whole program is sixty lines, and @app-portable prints it.
 
-The AVX2 one works on registers. An `int32x8` is eight 32-bit values in one
+*The AVX2 one* works on registers. An `int32x8` is eight 32-bit values in one
 register of 256 bits. `int32x8_MINMAX(a,b)` compares two registers lane by
-lane, so it performs eight comparisons at once, and the lines between the
-comparisons move values from one lane to another:
+lane, so it performs eight comparisons at once, and the instructions between
+the comparisons move values from one lane to another:
 
 ```c
 int32x8_MINMAX(x0,x1);
@@ -614,8 +615,19 @@ int32x8_MINMAX(c0,c1);
 ```
 
 The comments say which values sit in the register after each move. Again a
-value is only compared, or moved to another place. The two techniques of this
-part write such a program down and read off the comparisons that it performs.
+value is only compared, or moved to another place.
+
+The shape of that program is easier to see at its entry point, printed in
+@app-avx2. Eight elements or fewer are sorted by a small fixed sequence. A
+length that is a power of two goes to `sort_2power`, which is a long fixed
+sequence of vector instructions. Any other length is cut at its top power of
+two: that block is sorted downwards, the rest of the array is sorted by the
+same routine, which leaves the array going down and then up, and what is left
+is one merge. That merge is the loop of @sec-turns and the phase of
+@sec-phase.
+
+The two techniques of this part write such a program down and read off the
+comparisons that it performs.
 
 == Writing the program down <sec-writing>
 
@@ -1703,5 +1715,147 @@ and the portable code look nothing alike, yet both come down to one sentence:
 the program compares the same pairs as the network, in an order that costs
 nothing.
 
-#bibliography("refs.bib", title: [References])
 
+
+#pagebreak()
+#counter(heading).update(0)
+#set heading(numbering: "A.1")
+
+= The portable code <app-portable>
+
+#src("code/portable4/c/sort.c") in full. `int32_MINMAX` is the macro of
+@sec-programs, and `top` is the largest power of two below the length.
+
+```c
+#include "int32_sort.h"
+#define int32 int32_t
+
+#include "int32_minmax.c"
+
+void int32_sort(int32 *x,long long n)
+{
+  long long top,p,q,r,i,j;
+
+  if (n < 2) return;
+  top = 1;
+  while (top < n - top) top += top;
+
+  for (p = top;p >= 1;p >>= 1) {
+    i = 0;
+    while (i + 2 * p <= n) {
+      for (j = i;j < i + p;++j)
+        int32_MINMAX(x[j],x[j+p]);
+      i += 2 * p;
+    }
+    for (j = i;j < n - p;++j)
+      int32_MINMAX(x[j],x[j+p]);
+
+    i = 0;
+    j = 0;
+    for (q = top;q > p;q >>= 1) {
+      if (j != i) for (;;) {
+        if (j == n - q) goto done;
+        int32 a = x[j + p];
+        for (r = q;r > p;r >>= 1)
+          int32_MINMAX(a,x[j + r]);
+        x[j + p] = a;
+        ++j;
+        if (j == i + p) {
+          i += 2 * p;
+          break;
+        }
+      }
+      while (i + p <= n - q) {
+        for (j = i;j < i + p;++j) {
+          int32 a = x[j + p];
+          for (r = q;r > p;r >>= 1)
+            int32_MINMAX(a,x[j+r]);
+          x[j + p] = a;
+        }
+        i += 2 * p;
+      }
+      /* now i + p > n - q */
+      j = i;
+      while (j < n - q) {
+        int32 a = x[j + p];
+        for (r = q;r > p;r >>= 1)
+          int32_MINMAX(a,x[j+r]);
+        x[j + p] = a;
+        ++j;
+      }
+
+      done: ;
+    }
+  }
+}
+```
+
+= The AVX2 code, at its entry point <app-avx2>
+
+The entry point of #src("code/avx2/c/sort_short.c"), which is the routine this
+note follows. `sort_2power` sorts a block whose length is a power of two with
+fixed sequences of vector instructions; `stage`, `blockn` and `minmax_vector`
+are the pieces of @sec-lanes; `bmerge` merges a whole block in registers, as
+in @sec-phase.
+
+```c
+void int32_sort_short(int32 *x, long long n)
+{
+  if (n <= 8) {
+    for (long long len = n; len >= 2; len--)
+      for (long long i = 0; i + 1 < len; i++) s_minmax(&x[i],&x[i+1]);
+    return;
+  }
+  if ((n & (n-1)) == 0) { sort_2power(x,n,0); return; }
+
+  {
+    long long q = 8;
+    while (q < n - q) q += q;
+
+    if (q <= 128) {
+      int32 y[256];
+      for (long long i = q>>3; i < (q>>2); i++)
+        for (int l = 0; l < 8; l++) y[8*i + l] = 0x7fffffff;
+      for (long long i = 0; i < n; i++) y[i] = x[i];
+      sort_2power(y,2*q,0);
+      for (long long i = 0; i < n; i++) x[i] = y[i];
+      return;
+    }
+
+    sort_2power(x,q,1);
+    int32_sort_short(x+q, n-q);
+
+    while (q >= 64) {
+      q >>= 2;
+      long long j = stage(x,n,8,q,N_mrg8);
+      minmax_vector(&x[j],&x[j + 4*q], n - 4*q - j);
+      if (j + 4*q <= n) { blockn(x,j,q,q,4,N_mrg4); j += 4*q; }
+      minmax_vector(&x[j],&x[j + 2*q], n - 2*q - j);
+      if (j + 2*q <= n) { blockn(x,j,q,q,2,N_mrg2); j += 2*q; }
+      minmax_vector(&x[j],&x[j + q], n - q - j);
+      q >>= 1;
+    }
+
+    {
+      long long j = 0;
+      for (int w = (int)(q >> 2); w >= 2; w >>= 1) {
+        net_t first = (w == 8) ? N_mrg8 : (w == 4) ? N_mrg4 : N_mrg2;
+        while (j + 8*w <= n) {
+          if (w == 8) bmerge(x,j,8,first);
+          else if (w == 4) bmerge(x,j,4,first);
+          else bmerge(x,j,2,first);
+          j += 8*w;
+        }
+        minmax_vector(&x[j],&x[j + 4*w], n - 4*w - j);
+      }
+      if (j + 8 <= n) { snet(&x[j],P_tail8,12); j += 8; }
+      minmax_vector(&x[j],&x[j+4], n - 4 - j);
+      if (j + 4 <= n) { snet(&x[j],P_mrg4,4); j += 4; }
+      if (j + 3 <= n) s_minmax(&x[j],&x[j+2]);
+      if (j + 2 <= n) s_minmax(&x[j],&x[j+1]);
+    }
+  }
+}
+```
+
+#bibliography("refs.bib", title: [References])
