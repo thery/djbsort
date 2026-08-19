@@ -277,9 +277,9 @@ Definition nfun n t := foldl (fun t c => cfun c t) t n.
 Stages have a second use, and it is the reason the mathematical side is built
 from them. A sorter is defined by a recursion, and the two halves of the array
 are treated side by side. Two connectors on $m$ wires give one connector on
-$2m$ wires, and two networks are joined stage by stage, `cmerge` and `nmerge`
-in the library. So the network on twice as many wires is built by copying the
-stages of the smaller one, and the induction follows the same shape.
+$2m$ wires, and two networks are joined stage by stage. So the network on
+twice as many wires is built by copying the stages of the smaller one, and the
+induction follows the same shape. @sec-glue says how.
 
 Both ways are standard, and they answer two different questions. A list of
 pairs is the sequential reading: the comparisons come one after the other, and
@@ -330,6 +330,114 @@ Rocq is constructive, and the difference is visible in the text above:
 *boolean* and not merely a proposition. In other words, "this network sorts"
 is decidable, and `n \is sorting` is a test. @sec-trace says why the machine
 still cannot run that test here.
+
+== Gluing two networks together <sec-glue>
+
+Both sorters below are recursions: a network on $m + m$ places is built from
+networks on $m$ places. Three pieces of glue do that, and they come back
+everywhere in the proofs, so they are worth naming once.
+
+*The two halves.* The array of $m + m$ places is cut in the middle. `ttake t`
+is the first half and `tdrop t` is the second. Two connectors then give one:
+
+```coq
+Definition clink_merge m1 m2 (c1 : connector m1) (c2 : connector m2) :=
+  [ffun i => match split i with
+             | inl x => lshift _ (clink c1 x)
+             | inr x => rshift _ (clink c2 x)
+             end].
+
+Definition cmerge m1 m2 (c1 : connector m1) (c2 : connector m2) :=
+  connector_of (clink_merge_proof c1 c2) (cflip_merge_proof c1 c2).
+```
+
+A place of the first half is paired inside the first half by `c1`, a place of
+the second half inside the second half by `c2`, and no pair crosses the
+middle. Networks are joined stage by stage, and `ndup` is the case where the
+same network is used on both sides:
+
+```coq
+Definition nmerge m1 m2 (n1 : network m1) (n2 : network m2) :=
+    [seq cmerge i.1 i.2 | i <- zip n1 n2].
+
+Definition ndup m (n : network m) : network (m + m) := nmerge n n.
+```
+
+`zip` puts stage $k$ of `n1` beside stage $k$ of `n2`, so the result has as
+many stages as the shorter of the two, and the depth does not grow. When the
+two lists have the same length nothing is dropped, and running the result is
+running each network on its own half:
+
+```coq
+Lemma nfun_merge (n1 n2 : network m) (t : (m + m).-tuple A) :
+  size n1 = size n2 ->
+  nfun (nmerge n1 n2) t = [tuple of nfun n1 (ttake t) ++ nfun n2 (tdrop t)].
+```
+
+That lemma is what makes the induction work. A statement about the network on
+$m + m$ places becomes two statements about the network on $m$ places.
+
+*The even and the odd places.* The other cut takes the places with an even
+number on one side and the places with an odd number on the other. `tetake t`
+is the even part, `totake t` the odd part, and `teocat` interleaves them back.
+The connector `ceomerge c1 c2` sends an even place to `c1` and an odd place to
+`c2`, so it is `cmerge` for this cut. The rest follows the same shape:
+
+```coq
+Definition neomerge m (n1 : network m) (n2 : network m) :=
+    [seq ceomerge i.1 i.2 | i <- zip n1 n2].
+
+Definition neodup m (n : network m) : network (m + m) := neomerge n n.
+
+Lemma nfun_eodup (n : network m) (t : (m + m).-tuple A) :
+  nfun (neodup n) t = teocat (nfun n (tetake t)) (nfun n (totake t)).
+```
+
+*The neighbours.* One more stage is needed. `ceswap` compares each even place
+with the odd place just after it: 0 with 1, then 2 with 3, and so on. Its
+`clink` sends an even place to the next one and an odd place to the one
+before:
+
+```coq
+Definition clink_eswap m : {ffun 'I_m -> 'I_m} :=
+  [ffun i : 'I_ _ => if odd i then ipred i else inext i].
+
+Definition ceswap {m} :=
+  connector_of (clink_eswap_proof m) (cflip_default _ false).
+```
+
+`inext i` is the place after `i` and `ipred i` the place before, both kept
+inside the array: on the last place `inext` stays where it is, so if $m$ is
+odd the last place is paired with itself and left alone. The flip is `false`
+everywhere, so the smaller value always goes to the even place. This is the
+stage that starts to mix the two halves of the second cut, and @sec-knuth uses
+it for exactly that.
+
+*What is new here.* Everything above comes with the library of the earlier
+note: `cmerge` and `ceomerge` with their duplicates, `cswap`, `ceswap`,
+`codd_jump`, and the half-cleaner of @sec-bitonic. Four connectors were added
+for this work, all of them on the vector side:
+
+- `citer b K j` is one stage of a loop nest. It pairs place $i$ with the place
+  at distance $2^j$, and its flip is bit $K$ of the place, exclusive-ored with
+  `b`, and false once $j$ reaches $K$. So one connector says what one turn of
+  the loops of the vector code does, and @sec-loops builds the whole network
+  `isort` out of these stages.
+- `cconj c` is the connector `c` read through the transpose of a square array:
+  `cfun (cconj c) t` is `ttr (cfun c (ttr t))`. What `c` does along one axis,
+  `cconj c` does along the other. This is what turns "sort the columns" into
+  "transpose, sort the rows, transpose back", which is what the code does.
+- `crow c` applies `c` to the row number of a square array, the same way in
+  every column. One stage on $m^2$ places then does $m$ copies of a stage on
+  $m$ places, which is what a vector instruction gives for free.
+- `ctflip msk c` is `c` with its direction turned round on the pairs whose two
+  ends are both selected by the mask `msk`. The code sorts downwards by
+  exclusive-oring with a mask of sign bits and not by turning comparisons
+  round, and this connector is that trick at the level of one stage.
+
+The first one is used to read the loops of the vector code as a network. The
+other three are the algebra of the $8 times 8$ transpose, and they live in
+`nalgebra.v`; @sec-files says where.
 
 == The bitonic sorter <sec-bitonic>
 
@@ -390,8 +498,30 @@ downwards, and put them together. The result goes up and then down, so it is
 bitonic, and @cleaner finishes the work.
 
 Both halves are recursions, and both are short in Rocq. Here is the merge.
-`ndup l` runs the network `l` on the first half of the array and the same
-network on the second half:
+It is built from one stage, the half-cleaner itself, a connector on $m + m$
+places:
+
+```coq
+Definition clink_half_cleaner m : {ffun 'I_(m + m) -> 'I_(m + m)} :=
+  [ffun i =>
+    match split i with
+    | inl x => rshift _ x
+    | inr x => lshift _ x
+    end].
+
+Definition half_cleaner b m :=
+  connector_of (clink_half_cleaner_proof m) (cflip_default _ b).
+```
+
+`split i` says which half the place `i` lies in: `inl x` for place `x` of the
+first half, `inr x` for place `x` of the second. `rshift m x` is place `x`
+counted from the middle, and `lshift m x` is place `x` counted from the start.
+So place `i` is paired with place `i + m`, which is the first column of
+@cleaner. `clink_half_cleaner_proof` is the proof that following the pairing
+twice comes back, and `cflip_default` gives every place the same flip `b`, so
+the whole stage goes one way and `b` says which.
+
+The recursion repeats that stage on each half, with `ndup` of @sec-glue:
 
 ```coq
 Fixpoint half_cleaner_rec b m : network (`2^ m) :=
@@ -401,10 +531,11 @@ Fixpoint half_cleaner_rec b m : network (`2^ m) :=
 
 Read it as @cleaner: one half-cleaner across the whole array, then the same
 merge again on each half. The flag `b` says which way it sorts. On one wire
-there is nothing left to do.
+there is nothing left to do. The power of two at step $m_1 + 1$ is defined as
+$2^(m_1) + 2^(m_1)$, so the half-cleaner on that many places already has the
+size the network wants, and no cast is needed.
 
-The sorter uses it. `nmerge l1 l2` runs `l1` on the first half of the array
-and `l2` on the second half:
+The sorter uses it, with `nmerge` for the two halves:
 
 ```coq
 Fixpoint bfsort (b : bool) m : network (`2^ m) :=
@@ -476,14 +607,13 @@ Fixpoint knuth_exchange m : network (`2^ m) :=
   else [::].
 ```
 
-`neodup l` runs the network `l` on the even places and the same `l` on the odd
-places. After it the values on the even places are sorted, the values on the
-odd places are sorted, and the two are interleaved. The rest of the network
-mixes them.
+`neodup` is the second cut of @sec-glue: the network `l` on the even places
+and the same `l` on the odd places. After it the values on the even places are
+sorted, the values on the odd places are sorted, and the two are interleaved.
+The rest of the network mixes them.
 
-First `ceswap`, one stage that compares each even place with the odd place
-next to it: 0 with 1, then 2 with 3, and so on. Then a run of jumps, at
-falling distances:
+First `ceswap`, the stage on neighbours. Then a run of jumps, at falling
+distances:
 
 ```coq
 Fixpoint knuth_jump_rec m k r : network m :=
