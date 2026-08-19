@@ -429,11 +429,61 @@ for this work, all of them on the vector side:
   "transpose, sort the rows, transpose back", which is what the code does.
 - `crow c` applies `c` to the row number of a square array, the same way in
   every column. One stage on $m^2$ places then does $m$ copies of a stage on
-  $m$ places, which is what a vector instruction gives for free.
+  $m$ places, which is what a vector instruction gives for free. @transp draws
+  this one and the one above.
 - `ctflip msk c` is `c` with its direction turned round on the pairs whose two
   ends are both selected by the mask `msk`. The code sorts downwards by
   exclusive-oring with a mask of sign bits and not by turning comparisons
   round, and this connector is that trick at the level of one stage.
+
+#figure(
+  cetz.canvas(length: 1cm, {
+    import cetz.draw: *
+    let s = 0.8
+    let sq(ox, rows) = {
+      for a in range(4) {
+        for b in range(4) {
+          let hl = if rows { a < 2 } else { b < 2 }
+          rect((ox + b * s, -a * s), (ox + b * s + s, -a * s - s),
+               stroke: 0.4pt + luma(150),
+               fill: if hl { luma(238) } else { white })
+          content((ox + b * s + 0.3 * s, -a * s - 0.36 * s),
+                  text(size: 7.5pt)[#(a * 4 + b)])
+        }
+      }
+    }
+    // on the left, crow c: the same comparison in every column
+    sq(0, true)
+    for b in range(4) {
+      line((b * s + 0.68 * s, -0.3 * s), (b * s + 0.68 * s, -1.7 * s),
+           mark: (end: ">", scale: 0.6), stroke: 0.9pt)
+    }
+    content((2 * s, 0.42), text(size: 8.5pt)[`crow c`])
+    content((2 * s, -4 * s - 0.4), text(size: 8pt)[rows 0 and 1: distance 4])
+    // on the right, the same thing read through the transpose
+    let ox = 5.6
+    sq(ox, false)
+    for a in range(4) {
+      line((ox + 0.42 * s, -a * s - 0.72 * s),
+           (ox + 1.62 * s, -a * s - 0.72 * s),
+           mark: (end: ">", scale: 0.6), stroke: 0.9pt)
+    }
+    content((ox + 2 * s, 0.42), text(size: 8.5pt)[`cconj (crow c)`])
+    content((ox + 2 * s, -4 * s - 0.4),
+            text(size: 8pt)[columns 0 and 1: distance 1])
+    line((4 * s + 0.4, -2 * s), (ox - 0.4, -2 * s),
+         mark: (end: ">", scale: 0.7), stroke: 0.7pt)
+    content(((4 * s + ox) / 2, -2 * s + 0.28), text(size: 8pt)[`ttr`])
+  }),
+  caption: [`crow` and `cconj` on a $4 times 4$ square, for `c` the single
+    comparison `cswap 0 1` on four places. The sixteen places are numbered
+    across the rows, so place $i$ sits at row $i \/ 4$ and column $i$ mod 4.
+    `crow c` applies `c` to the row number: it compares row 0 with row 1,
+    place by place, which on the flat array is four comparisons at distance
+    four. Reading it through the transpose gives the same comparisons on the
+    columns, at distance one, which is what one vector instruction does. An
+    arrow points at the place that receives the larger value.],
+) <transp>
 
 The first one is used to read the loops of the vector code as a network. The
 other three are the algebra of the $8 times 8$ transpose, and they live in
